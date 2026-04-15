@@ -14,18 +14,30 @@ def _factorlib_dir() -> Path:
 
 
 def _evaluation_file(factor_id: str) -> Path:
-    return _factorlib_dir() / "evaluations" / f"{factor_id}_evaluation.json"
+    """
+    获取评估文件路径，优先搜索 technicals/evaluations 和 minactors/evaluations 目录
+    """
+    filename = f"{factor_id}_evaluation.json"
+    
+    technicals_path = _factorlib_dir() / "technicals" / "evaluations" / filename
+    if technicals_path.exists():
+        return technicals_path
+    
+    minactors_path = _factorlib_dir() / "minactors" / "evaluations" / filename
+    if minactors_path.exists():
+        return minactors_path
+    
+    return technicals_path
 
 
 def save_evaluation_results(factor_id: str, results: Dict[str, Any], metadata: Dict[str, Any]) -> None:
     """
-    保存评估结果到 factorlib/evaluations/<factor_id>_evaluation.json
+    保存评估结果到 factorlib/technicals/evaluations/<factor_id>_evaluation.json
     结构为多结果列表：{"factor_id": ..., "evaluations": [{metadata, results, evaluated_at}, ...]}
     """
-    eval_dir = _factorlib_dir() / "evaluations"
-    eval_dir.mkdir(parents=True, exist_ok=True)
-
     evaluation_file = _evaluation_file(factor_id)
+    eval_dir = evaluation_file.parent
+    eval_dir.mkdir(parents=True, exist_ok=True)
 
     new_entry = {
         'metadata': metadata or {},

@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/Hazel-market_sentiment_10.py",
+    "function_file": "technicals/functions/Hazel-market_sentiment_10.py",
     "function_code": "import pandas as pd\nimport numpy as np\n\ndef calculate(data: pd.DataFrame, window: int = 10, **kwargs) -> pd.Series:\n    required = {\"close\", \"volume\"}\n    if data is None or len(data) == 0 or not required.issubset(set(data.columns)):\n        return pd.Series(dtype=float)\n    c = pd.to_numeric(data[\"close\"], errors=\"coerce\")\n    v = pd.to_numeric(data[\"volume\"], errors=\"coerce\")\n    mc = c.rolling(window).mean()\n    mv = v.rolling(window).mean()\n    return ((c > mc) & (v > mv)).astype(int)\n",
     "entry_point": "calculate",
     "imports": []

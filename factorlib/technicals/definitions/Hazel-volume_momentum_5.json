@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/Hazel-volume_momentum_5.py",
+    "function_file": "technicals/functions/Hazel-volume_momentum_5.py",
     "function_code": "import pandas as pd\nimport numpy as np\n\ndef calculate(data: pd.DataFrame, window: int = 5, **kwargs) -> pd.Series:\n    if data is None or len(data) == 0 or \"volume\" not in data.columns:\n        return pd.Series(dtype=float)\n    volume = pd.to_numeric(data[\"volume\"], errors=\"coerce\")\n    base = volume.shift(window)\n    return (volume - base) / base\n",
     "entry_point": "calculate",
     "imports": []

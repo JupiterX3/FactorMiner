@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 数据健康度检查器
 检查数据的完整性、连续性和质量

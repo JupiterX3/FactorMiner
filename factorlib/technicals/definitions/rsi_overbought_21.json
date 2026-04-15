@@ -4,11 +4,10 @@
   "description": "自动生成的rsi_overbought_21因子",
   "category": "technical",
   "subcategory": "",
-  "computation_type": "formula",
+  "computation_type": "function",
   "computation_data": {
-    "formula_file": "formulas/rsi_overbought_21.txt",
-    "formula": "# rsi_overbought_21 因子的计算公式\n# 类型: technical\n# 自动生成于 2025-09-01 15:38:18.611572",
-    "language": "pandas"
+    "function_file": "technicals/functions/rsi_overbought_21.py",
+    "entry_point": "calculate"
   },
   "parameters": {
     "period": 21

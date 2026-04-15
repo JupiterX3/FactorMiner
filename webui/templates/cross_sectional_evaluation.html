@@ -1,0 +1,2349 @@
+{% extends "base.html" %}
+
+{% block title %}截面因子评估 - {{ config.title }}{% endblock %}
+
+{% block extra_css %}
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css">
+<style>
+.factor-category .collapse-icon {
+    transition: transform 0.2s ease;
+}
+.factor-category .collapse-icon.rotated {
+    transform: rotate(-90deg);
+}
+.factor-category .form-check {
+    margin-bottom: 0.25rem;
+    padding-left: 1.5rem;
+}
+.factor-category .form-check-input {
+    margin-top: 0.15rem;
+}
+.factor-category .form-check-label {
+    cursor: pointer;
+}
+.category-select-btn {
+    opacity: 0.6;
+    transition: opacity 0.2s;
+}
+.category-select-btn:hover {
+    opacity: 1;
+}
+#factorCategoryContainer {
+    font-size: 0.875rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="row">
+    <div class="col-12">
+        <h2>📊 截面因子评估</h2>
+        <p class="text-muted">多币种截面评估：每个时间点按因子值对币种排名分组，计算多空收益</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-cog me-2"></i>评估参数</h5>
+            </div>
+            <div class="card-body">
+                <form id="csEvaluationForm">
+                    <div class="mb-3">
+                        <label class="form-label">因子（可多选，按数据需求分类）</label>
+                        <div class="mb-2">
+                            <input type="text" class="form-control form-control-sm" id="factorSearch" placeholder="搜索因子..." />
+                        </div>
+                        <div id="factorCategoryContainer" class="border rounded" style="max-height: 400px; overflow-y: auto;">
+                        </div>
+                        <input type="hidden" id="factorSelect">
+                        <div class="d-flex justify-content-between align-items-center mt-1">
+                            <div class="form-text small">已选 <span id="factorCount">0</span> 个因子</div>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllFactors()">全选</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearFactorSelection()">清空</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">交易所 / 类型</label>
+                        <div class="d-flex gap-2">
+                            <select class="form-select" id="exchangeSelect">
+                                <option value="binance" selected>Binance</option>
+                            </select>
+                            <select class="form-select" id="tradeTypeSelect">
+                                <option value="futures" selected>期货</option>
+                                <option value="spot">现货</option>
+                            </select>
+                        </div>
+                        <div class="mt-1">
+                            <button type="button" id="refreshDataBtn" class="btn btn-outline-secondary btn-sm" onclick="loadLocalSymbols(true)">
+                                <i class="fas fa-sync-alt me-1"></i>刷新数据
+                            </button>
+                            <small class="text-muted ms-1">首次加载使用缓存，点击按钮强制刷新</small>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">交易对（至少选择2个）</label>
+                        <div class="mb-2">
+                            <input type="text" class="form-control form-control-sm" id="symbolSearch" placeholder="搜索交易对..." />
+                        </div>
+                        <div class="mb-2">
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control form-control-sm" id="symbolListInput" placeholder="批量导入: [BTCUSDT,ETHUSDT,...] 或 BTCUSDT,ETHUSDT,..." />
+                                <button class="btn btn-outline-primary" type="button" onclick="importSymbolList()" title="导入并匹配交易对">
+                                    <i class="fas fa-upload"></i> 导入
+                                </button>
+                            </div>
+                            <div class="form-text small mt-1" id="importResult"></div>
+                        </div>
+                        <select class="form-select" id="symbolsSelect" multiple size="8"></select>
+                        <div class="d-flex justify-content-between align-items-center mt-1">
+                            <div class="form-text small">已选 <span id="selectedSymbolCount">0</span> 个</div>
+                            <div class="btn-group btn-group-sm">
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllSymbols()">全选</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllSymbolsExcludeStablecoins()">全选(排除稳定币)</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearSymbolSelection()">清空</button>
+                            </div>
+                        </div>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="excludeStablecoinsFilter" onchange="filterSymbolsByStablecoin()">
+                            <label class="form-check-label small" for="excludeStablecoinsFilter">
+                                列表中隐藏稳定币交易对
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">收益 / 因子时间框架</label>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <select class="form-select" id="timeframeSelect">
+                                    <option value="1m">1分钟</option>
+                                    <option value="5m">5分钟</option>
+                                    <option value="15m">15分钟</option>
+                                    <option value="1h" selected>1小时</option>
+                                    <option value="4h">4小时</option>
+                                    <option value="1d">1天</option>
+                                </select>
+                                <div class="form-text small">收益评估周期（base）</div>
+                            </div>
+                            <div class="col-6">
+                                <select class="form-select" id="factorTimeframeSelect">
+                                    <option value="1m">1分钟</option>
+                                    <option value="5m">5分钟</option>
+                                    <option value="15m">15分钟</option>
+                                    <option value="1h" selected>1小时</option>
+                                    <option value="4h">4小时</option>
+                                    <option value="1d">1天</option>
+                                </select>
+                                <div class="form-text small">因子计算周期（factor）</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">因子K线模式</label>
+                        <select class="form-select" id="factorBarModeSelect">
+                            <option value="completed" selected>仅已完成K线（推荐）</option>
+                            <option value="intrabar">盘中快照（仅适用于单bar因子，窗口因子有误差）</option>
+                            <option value="intrabar_strict">严格整点重放（高精度，较慢，推荐窗口因子使用）</option>
+                        </select>
+                        <div class="form-text small">
+                            intrabar 适合 <code>body_ratio</code>、<code>volume</code> 等单bar因子；
+                            MA/EMA/RSI 等窗口因子必须使用 strict 模式。
+                        </div>
+                    </div>
+
+                    <div class="mb-3" id="maxLookbackWrapper" style="display:none;">
+                        <label class="form-label">Strict 历史窗口上限（max_lookback）</label>
+                        <input type="number" class="form-control form-control-sm"
+                               id="maxLookbackInput" min="1" step="1" value="200" placeholder="200">
+                        <div class="form-text small">仅在 intrabar_strict 下生效，建议 100-500。</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">数据时间范围</label>
+                        <div class="text-muted small mb-2" id="rangeInfo">—</div>
+                        <div id="rangeSlider"></div>
+                        <input type="hidden" id="startDate">
+                        <input type="hidden" id="endDate">
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label class="form-label">分组数量</label>
+                        <select class="form-select" id="nGroupsSelect">
+                            <option value="3">3组</option>
+                            <option value="5" selected>5组</option>
+                            <option value="10">10组</option>
+                        </select>
+                        <div class="form-text small">按因子值将币种分成N组，做多最高组、做空最低组</div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">覆盖率筛选</label>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm"
+                                       id="minCoverageInput" min="0" max="1" step="0.01" value="0.30" placeholder="0.30">
+                                <div class="form-text small">最小覆盖率</div>
+                            </div>
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm"
+                                       id="minValidCountInput" min="1" step="1" value="30" placeholder="30">
+                                <div class="form-text small">最小有效样本</div>
+                            </div>
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm"
+                                       id="minGroupSizeInput" min="1" step="1" value="5" placeholder="5">
+                                <div class="form-text small">每组最小样本</div>
+                            </div>
+                        </div>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="treatZeroAsInvalidCheck" checked>
+                            <label class="form-check-label small" for="treatZeroAsInvalidCheck">
+                                将因子 0 值视为无效信号（稀疏因子推荐）
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label">预测与采样步长</label>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <input type="number" class="form-control form-control-sm"
+                                       id="predictStepInput" min="1" step="1" value="1" placeholder="预测时间步">
+                                <div class="form-text small">未来 N 个周期收益（如15m×4=60m）</div>
+                            </div>
+                            <div class="col-6">
+                                <input type="number" class="form-control form-control-sm"
+                                       id="sampleStepInput" min="1" step="1" value="1" placeholder="采样时间步">
+                                <div class="form-text small">每隔 M 个周期评估一次（M=1为逐周期）</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="btn btn-primary w-100" id="startBtn">
+                        <i class="fas fa-play me-2"></i>开始截面评估
+                    </button>
+                    <button type="button" class="btn btn-warning w-100 mt-2" id="continueBtn" style="display:none;" onclick="continueEvaluation()">
+                        <i class="fas fa-redo me-2"></i>继续评估 (<span id="remainingCount">0</span> 个因子)
+                    </button>
+                </form>
+
+                <div class="mt-3" id="progressBox" style="display:none;">
+                    <div class="d-flex justify-content-between small mb-1">
+                        <span>评估进度</span>
+                        <span id="progressText">0/0</span>
+                    </div>
+                    <div class="progress">
+                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary" role="progressbar" style="width:0%"></div>
+                    </div>
+                    <div class="row mt-2 small text-muted">
+                        <div class="col-4">成功：<span id="succCount" class="text-success fw-bold">0</span></div>
+                        <div class="col-4">失败：<span id="failCount" class="text-danger fw-bold">0</span></div>
+                        <div class="col-4">耗时：<span id="elapsedText">0s</span></div>
+                    </div>
+                    <div class="small mt-1" id="currentTask">—</div>
+                    <div class="mt-2 border rounded p-2" style="max-height:120px; overflow:auto;">
+                        <div class="small text-muted mb-1">最近日志</div>
+                        <ul id="progressLog" class="small mb-0" style="padding-left: 18px;"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h5><i class="fas fa-info-circle me-2"></i>截面评估说明</h5>
+            </div>
+            <div class="card-body small">
+                <p><strong>截面评估 vs 时间序列评估：</strong></p>
+                <ul class="mb-2">
+                    <li><strong>截面评估</strong>：每个时间点，按因子值对多个币种排名分组</li>
+                    <li><strong>时间序列评估</strong>：单个币种，按历史因子值分位数分组</li>
+                </ul>
+                <p class="mb-1"><strong>多空收益计算：</strong></p>
+                <ul class="mb-0">
+                    <li>每个时间点，做多因子值最高的币种组</li>
+                    <li>做空因子值最低的币种组</li>
+                    <li>计算平均收益差</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5><i class="fas fa-chart-bar me-2"></i>评估结果</h5>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary" onclick="exportResults()">
+                        <i class="fas fa-download me-1"></i>导出
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="resultsPlaceholder" class="text-center text-muted py-5">
+                    <i class="fas fa-chart-line fa-3x mb-3"></i>
+                    <p>选择因子和交易对后点击"开始截面评估"</p>
+                </div>
+                
+                <div id="resultsContainer" style="display:none;">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover" id="resultsTable">
+                            <thead>
+                                <tr>
+                                    <th><input type="checkbox" id="selectAllFactors" onchange="toggleSelectAll(this)"></th>
+                                    <th>因子</th>
+                                    <th>币种数</th>
+                                    <th>时间点</th>
+                                    <th>覆盖率</th>
+                                    <th>跳过率</th>
+                                    <th>IC均值</th>
+                                    <th>Rank IC</th>
+                                    <th>ICIR</th>
+                                    <th>多空收益</th>
+                                    <th>夏普比率</th>
+                                    <th>胜率</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="resultsBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-3" id="detailCard" style="display:none;">
+            <div class="card-header">
+                <h5><i class="fas fa-info-circle me-2"></i>因子详情: <span id="detailFactorName"></span></h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <h6>IC指标</h6>
+                        <table class="table table-sm">
+                            <tr><td>IC均值</td><td id="detailIcMean">-</td></tr>
+                            <tr><td>IC标准差</td><td id="detailIcStd">-</td></tr>
+                            <tr><td>ICIR</td><td id="detailIcir">-</td></tr>
+                            <tr><td>Rank IC均值</td><td id="detailRankIcMean">-</td></tr>
+                            <tr><td>IC正比例</td><td id="detailIcPositiveRatio">-</td></tr>
+                        </table>
+                    </div>
+                    <div class="col-md-4">
+                        <h6>收益指标</h6>
+                        <table class="table table-sm">
+                            <tr><td>多空收益</td><td id="detailLsReturn">-</td></tr>
+                            <tr><td>多头收益</td><td id="detailLongReturn">-</td></tr>
+                            <tr><td>空头收益</td><td id="detailShortReturn">-</td></tr>
+                            <tr><td>夏普比率</td><td id="detailSharpe">-</td></tr>
+                            <tr><td>胜率</td><td id="detailWinRate">-</td></tr>
+                        </table>
+                    </div>
+                    <div class="col-md-4">
+                        <h6>覆盖率诊断</h6>
+                        <table class="table table-sm">
+                            <tr><td>IC平均覆盖率</td><td id="detailCoverageIc">-</td></tr>
+                            <tr><td>收益平均覆盖率</td><td id="detailCoverageReturns">-</td></tr>
+                            <tr><td>IC跳过率</td><td id="detailSkipRateIc">-</td></tr>
+                            <tr><td>收益跳过率</td><td id="detailSkipRateReturns">-</td></tr>
+                            <tr><td>总时间点</td><td id="detailPeriodsTotal">-</td></tr>
+                            <tr><td>IC有效时间点</td><td id="detailPeriodsIc">-</td></tr>
+                            <tr><td>收益有效时间点</td><td id="detailPeriodsReturns">-</td></tr>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col-12">
+        <div class="card" id="csvImportCard">
+            <div class="card-header">
+                <h5><i class="fas fa-file-csv me-2"></i>导入评估结果</h5>
+                <small class="text-muted">可直接导入之前导出的CSV文件，无需重新评估</small>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4">
+                        <label class="form-label">导入截面评估CSV文件</label>
+                        <input type="file" class="form-control" id="csvFileInput" accept=".csv">
+                        <div class="form-text">支持导入截面评估导出的CSV文件</div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="card card-body bg-light py-2">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <label class="form-label mb-0 fw-bold">筛选参数</label>
+                                <button class="btn btn-sm btn-outline-success" onclick="selectGoodFactors()">
+                                    <i class="fas fa-filter me-1"></i>按条件筛选
+                                </button>
+                            </div>
+                            <div class="row g-2">
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0">|IC| &gt;</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterIcThreshold" value="0.02" step="0.01">
+                                </div>
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0">|ICIR| &gt;</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterIcirThreshold" value="0.1" step="0.05">
+                                </div>
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0">胜率 &gt;</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterWinRateThreshold" value="52" step="1">
+                                    <div class="form-text small">%</div>
+                                </div>
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0">多空收益 &gt;</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterLsReturnThreshold" value="0.01" step="0.01">
+                                    <div class="form-text small">%</div>
+                                </div>
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0">时间点 &gt;=</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterDataPointsThreshold" value="30" step="10">
+                                </div>
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0">筛选逻辑</label>
+                                    <select class="form-select form-select-sm" id="filterLogic">
+                                        <option value="or">满足任一条件</option>
+                                        <option value="and">满足所有条件</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-text small mt-2">
+                                <strong>当前优质标准：</strong>
+                                <span id="filterDescription">(|IC| &gt; 0.02 且 |ICIR| &gt; 0.1) 或 (胜率 &gt; 52% 且 多空收益 &gt; 0.01%)，且时间点 &gt;= 30</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div id="importedFactorsContainer" style="display:none;" class="mt-3">
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label mb-0">导入的因子列表 <span id="importedFactorStats" class="badge bg-secondary"></span></label>
+                            <div>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="selectAllImported()">全选</button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="deselectAllImported()">清空</button>
+                            </div>
+                        </div>
+                        <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
+                            <table class="table table-sm table-hover" id="importedFactorsTable">
+                                <thead class="table-light sticky-top">
+                                    <tr>
+                                        <th style="width: 40px;"><input type="checkbox" id="selectAllImported" onchange="toggleSelectAllImported(this)"></th>
+                                        <th>因子</th>
+                                        <th>时间点</th>
+                                        <th>IC均值</th>
+                                        <th>ICIR</th>
+                                        <th>多空收益</th>
+                                        <th>胜率</th>
+                                        <th>状态</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="importedFactorsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-3">
+    <div class="col-12">
+        <div class="card" id="ensembleCard" style="display:none;">
+            <div class="card-header">
+                <h5><i class="fas fa-layer-group me-2"></i>因子组合与回测</h5>
+                <small class="text-muted">选择优质因子进行组合，自动处理反向因子（IC为负时取负）</small>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">已选因子：<span id="selectedFactorCount" class="badge bg-primary">0</span> 个</label>
+                            <div id="selectedFactorsList" class="small text-muted"></div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label">组合方法</label>
+                            <select class="form-select" id="ensembleMethod">
+                                <option value="equal_weight">等权重</option>
+                                <option value="ic_weight" selected>IC加权（推荐）</option>
+                                <option value="ml_weight">机器学习加权</option>
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <div class="mb-3">
+                            <label class="form-label">回测参数</label>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <input type="number" class="form-control form-control-sm" 
+                                           id="nGroups" value="5" placeholder="分组数">
+                                    <div class="form-text small">多空分组数</div>
+                                </div>
+                                <div class="col-6">
+                                    <input type="number" class="form-control form-control-sm" 
+                                           id="transactionCost" value="0.001" step="0.0001" placeholder="交易成本">
+                                    <div class="form-text small">手续费率</div>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="autoReverse" checked>
+                                <label class="form-check-label" for="autoReverse">
+                                    自动处理反向因子（IC&lt;0时取负）
+                                </label>
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label small">IC 权重来源</label>
+                            <select class="form-select form-select-sm" id="icSource">
+                                <option value="evaluation">使用评估期 IC（推荐）</option>
+                                <option value="backtest">重算回测期 IC</option>
+                            </select>
+                            <div class="form-text small">评估期 IC 避免样本内过拟合；重算 IC 适用于回测区间与评估区间差异较大时</div>
+                        </div>
+                        
+                        <button class="btn btn-primary w-100" onclick="runEnsembleBacktest()" id="ensembleBtn">
+                            <i class="fas fa-play me-2"></i>生成组合因子并回测
+                        </button>
+                        <button class="btn btn-outline-info w-100 mt-2" onclick="runFactorCorrelation()" id="corrBtn">
+                            <i class="fas fa-project-diagram me-2"></i>计算因子相关性
+                        </button>
+                        <div class="row g-2 mt-2">
+                            <div class="col-8">
+                                <label class="form-label small text-muted mb-0">高相关阈值</label>
+                                <input type="number" class="form-control form-control-sm" id="corrThreshold" value="0.7" step="0.05" min="0" max="1">
+                            </div>
+                            <div class="col-4 d-flex align-items-end">
+                                <div class="form-text small">高于此值标红</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card mt-3" id="correlationCard" style="display:none;">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-project-diagram me-2"></i>因子相关性分析</h5>
+                <div class="btn-group btn-group-sm">
+                    <button class="btn btn-outline-secondary active" onclick="switchCorrTab('pearson')">Pearson</button>
+                    <button class="btn btn-outline-secondary" onclick="switchCorrTab('spearman')">Spearman</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="correlationContent"></div>
+            </div>
+        </div>
+
+        <div class="card mt-3" id="backtestResultCard" style="display:none;">
+            <div class="card-header">
+                <h5><i class="fas fa-chart-line me-2"></i>回测结果</h5>
+            </div>
+            <div class="card-body">
+                <div id="backtestResultContent"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+let allFactors = [];
+let allSymbols = [];
+let stablecoins = new Set();
+let localDataRows = [];
+let evaluationResults = [];
+let lastRequestData = null;
+let completedFactorIds = new Set();
+
+$(document).ready(function() {
+    loadFactors();
+    loadStablecoins();
+    loadLocalSymbols();
+    
+    $('#factorSearch').on('input', filterFactors);
+    $('#symbolSearch').on('input', filterSymbols);
+    $('#symbolsSelect').on('change', updateSelectedCount);
+    
+    $('#exchangeSelect').on('change', loadLocalSymbols);
+    $('#tradeTypeSelect').on('change', loadLocalSymbols);
+    $('#factorBarModeSelect').on('change', toggleMaxLookbackInput);
+    
+    $('#csEvaluationForm').on('submit', function(e) {
+        e.preventDefault();
+        startCrossSectionalEvaluation();
+    });
+    
+    $(document).on('show.bs.collapse', '.collapse', function() {
+        $(this).closest('.factor-category').find('.collapse-icon').removeClass('rotated');
+    });
+    $(document).on('hide.bs.collapse', '.collapse', function() {
+        $(this).closest('.factor-category').find('.collapse-icon').addClass('rotated');
+    });
+
+    toggleMaxLookbackInput();
+});
+
+function toggleMaxLookbackInput() {
+    const mode = $('#factorBarModeSelect').val();
+    if (mode === 'intrabar_strict') {
+        $('#maxLookbackWrapper').show();
+    } else {
+        $('#maxLookbackWrapper').hide();
+    }
+}
+
+function loadFactors() {
+    console.log('加载因子列表...');
+    $.get('/api/factors/list', function(res) {
+        console.log('因子列表响应:', res);
+        if (res.success) {
+            allFactors = res.factors || [];
+            console.log('加载了', allFactors.length, '个因子');
+            renderFactors(allFactors);
+        } else {
+            console.error('加载因子失败:', res.message);
+        }
+    }).fail(function(xhr, status, error) {
+        console.error('因子列表请求失败:', xhr, status, error);
+    });
+}
+
+function loadStablecoins() {
+    $.get('/api/data/stablecoins', function(res) {
+        if (res.success) {
+            stablecoins = new Set(res.data || []);
+            console.log('加载了', stablecoins.size, '个稳定币');
+        }
+    }).fail(function(xhr, status, error) {
+        console.warn('加载稳定币列表失败，使用默认列表');
+        stablecoins = new Set(['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDD', 'FRAX', 'USDP', 'GUSD']);
+    });
+}
+
+function isStablecoinSymbol(symbol) {
+    let base;
+    if (symbol.includes('_')) {
+        base = symbol.split('_')[0];
+    } else {
+        base = symbol.replace(/USDT?$/i, '');
+    }
+    return stablecoins.has(base.toUpperCase());
+}
+
+function renderFactors(factors) {
+    const container = $('#factorCategoryContainer');
+    container.empty();
+
+    function isWindowBasedKlineFactor(factor) {
+        const factorId = String(factor.id || '').toLowerCase();
+        const factorName = String(factor.name || '').toLowerCase();
+        const text = `${factorId} ${factorName}`;
+
+        // 常见窗口型技术指标关键词（MA/EMA/RSI及同类）
+        const windowKeywords = [
+            'ma', 'ema', 'sma', 'wma', 'kama', 'dema', 'tema',
+            'rsi', 'mfi', 'cci', 'adx', 'atr', 'dpo', 'kst',
+            'macd', 'bb_', 'boll', 'donchian', 'momentum',
+            'correlation', 'kurtosis', 'cv_', 'guppy'
+        ];
+        if (windowKeywords.some(k => text.includes(k))) {
+            return true;
+        }
+
+        // 带窗口参数的命名通常属于窗口因子，如 xxx_5 / xxx_20
+        if (/(^|_)\d{1,3}($|_)/.test(factorId)) {
+            return true;
+        }
+
+        return false;
+    }
+    
+    const categories = {
+        'basic_kline': {
+            name: '基础K线因子',
+            icon: 'fa-chart-candlestick',
+            color: 'primary',
+            desc: '仅需OHLCV数据即可计算',
+            factors: [],
+            subgroups: {
+                basic_kline_single_bar: {
+                    name: '单bar因子（适配 intrabar）',
+                    factors: []
+                },
+                basic_kline_window: {
+                    name: '窗口因子（MA/EMA/RSI 等，建议 strict）',
+                    factors: []
+                }
+            }
+        },
+        'event_factor': {
+            name: '事件因子（不建议）',
+            icon: 'fa-exclamation-triangle',
+            color: 'danger',
+            desc: '仅0/1取值，区分度低且稀疏，截面评估效果差',
+            factors: []
+        },
+        'extra_data': {
+            name: '额外数据因子',
+            icon: 'fa-database',
+            color: 'warning',
+            desc: '需要资金费率、持仓量等额外数据',
+            factors: []
+        },
+        'ml_pretrained': {
+            name: 'ML预训练因子',
+            icon: 'fa-brain',
+            color: 'info',
+            desc: '需要ML模型或预训练数据',
+            factors: []
+        }
+    };
+    
+    factors.forEach(f => {
+        const req = f.data_requirement || 'basic_kline';
+        if (categories[req]) {
+            if (req === 'basic_kline') {
+                const subgroupKey = isWindowBasedKlineFactor(f)
+                    ? 'basic_kline_window'
+                    : 'basic_kline_single_bar';
+                categories[req].subgroups[subgroupKey].factors.push(f);
+                categories[req].factors.push(f);
+            } else {
+                categories[req].factors.push(f);
+            }
+        } else {
+            categories['basic_kline'].factors.push(f);
+            categories['basic_kline'].subgroups.basic_kline_single_bar.factors.push(f);
+        }
+    });
+    
+    Object.entries(categories).forEach(([key, cat]) => {
+        if (cat.factors.length === 0) return;
+        
+        const collapseId = `collapse_${key}`;
+        let factorsHtml = '';
+        if (key === 'basic_kline') {
+            const singleBar = cat.subgroups.basic_kline_single_bar.factors || [];
+            const windowBar = cat.subgroups.basic_kline_window.factors || [];
+            factorsHtml = `
+                <div class="d-flex justify-content-between align-items-center small text-muted mb-1">
+                    <div><strong>${cat.subgroups.basic_kline_single_bar.name}</strong> (${singleBar.length})</div>
+                    <div class="form-check m-0">
+                        <input class="form-check-input" type="checkbox"
+                               id="subgroup_toggle_basic_kline_single_bar"
+                               onchange="toggleSubgroupSelection('basic_kline_single_bar', this.checked)">
+                        <label class="form-check-label" for="subgroup_toggle_basic_kline_single_bar">全选</label>
+                    </div>
+                </div>
+                ${singleBar.map(f => `
+                    <div class="form-check">
+                        <input class="form-check-input factor-select-checkbox" type="checkbox"
+                               value="${f.id}" id="factor_${f.id}"
+                               data-category="basic_kline_single_bar"
+                               onchange="updateFactorCount()">
+                        <label class="form-check-label small" for="factor_${f.id}"
+                               title="${f.description || ''}">
+                            ${f.name}
+                            <span class="text-muted">(${f.type || 'unknown'})</span>
+                        </label>
+                    </div>
+                `).join('')}
+                <hr class="my-2">
+                <div class="d-flex justify-content-between align-items-center small text-muted mb-1">
+                    <div><strong>${cat.subgroups.basic_kline_window.name}</strong> (${windowBar.length})</div>
+                    <div class="form-check m-0">
+                        <input class="form-check-input" type="checkbox"
+                               id="subgroup_toggle_basic_kline_window"
+                               onchange="toggleSubgroupSelection('basic_kline_window', this.checked)">
+                        <label class="form-check-label" for="subgroup_toggle_basic_kline_window">全选</label>
+                    </div>
+                </div>
+                ${windowBar.map(f => `
+                    <div class="form-check">
+                        <input class="form-check-input factor-select-checkbox" type="checkbox"
+                               value="${f.id}" id="factor_${f.id}"
+                               data-category="basic_kline_window"
+                               onchange="updateFactorCount()">
+                        <label class="form-check-label small" for="factor_${f.id}"
+                               title="${f.description || ''}">
+                            ${f.name}
+                            <span class="text-muted">(${f.type || 'unknown'})</span>
+                        </label>
+                    </div>
+                `).join('')}
+            `;
+        } else {
+            factorsHtml = cat.factors.map(f => `
+                <div class="form-check">
+                    <input class="form-check-input factor-select-checkbox" type="checkbox" 
+                           value="${f.id}" id="factor_${f.id}" 
+                           data-category="${key}"
+                           onchange="updateFactorCount()">
+                    <label class="form-check-label small" for="factor_${f.id}" 
+                           title="${f.description || ''}">
+                        ${f.name}
+                        <span class="text-muted">(${f.type || 'unknown'})</span>
+                    </label>
+                </div>
+            `).join('');
+        }
+
+        const html = `
+            <div class="factor-category">
+                <div class="d-flex justify-content-between align-items-center p-2 bg-light border-bottom" 
+                     data-bs-toggle="collapse" data-bs-target="#${collapseId}" style="cursor: pointer;">
+                    <div>
+                        <i class="fas ${cat.icon} text-${cat.color} me-2"></i>
+                        <strong>${cat.name}</strong>
+                        <span class="badge bg-secondary ms-2">${cat.factors.length}</span>
+                        <small class="text-muted ms-2 d-none d-sm-inline">${cat.desc}</small>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <button type="button" class="btn btn-link btn-sm p-0 me-2 category-select-btn" 
+                                data-category="${key}" onclick="event.stopPropagation(); toggleCategorySelection('${key}');">
+                            <i class="fas fa-check-square"></i>
+                        </button>
+                        <i class="fas fa-chevron-down collapse-icon"></i>
+                    </div>
+                </div>
+                <div id="${collapseId}" class="collapse show">
+                    <div class="p-2">
+                        ${factorsHtml}
+                    </div>
+                </div>
+            </div>
+        `;
+        container.append(html);
+    });
+    
+    updateFactorCount();
+}
+
+function toggleCategorySelection(category) {
+    let checkboxes = $(`.factor-select-checkbox[data-category="${category}"]`);
+    if (category === 'basic_kline') {
+        checkboxes = $('.factor-select-checkbox[data-category="basic_kline_single_bar"], .factor-select-checkbox[data-category="basic_kline_window"]');
+    }
+    const allChecked = checkboxes.filter(':checked').length === checkboxes.length;
+    checkboxes.prop('checked', !allChecked);
+    updateFactorCount();
+}
+
+function updateFactorCount() {
+    const count = $('.factor-select-checkbox:checked').length;
+    $('#factorCount').text(count);
+    syncSubgroupToggleState('basic_kline_single_bar');
+    syncSubgroupToggleState('basic_kline_window');
+}
+
+function toggleSubgroupSelection(subgroupCategory, checked) {
+    const checkboxes = $(`.factor-select-checkbox[data-category="${subgroupCategory}"]`);
+    checkboxes.prop('checked', !!checked);
+    updateFactorCount();
+}
+
+function syncSubgroupToggleState(subgroupCategory) {
+    const checkboxes = $(`.factor-select-checkbox[data-category="${subgroupCategory}"]`);
+    const toggle = $(`#subgroup_toggle_${subgroupCategory}`);
+    if (!toggle.length) return;
+    if (!checkboxes.length) {
+        toggle.prop('checked', false);
+        return;
+    }
+    const allChecked = checkboxes.filter(':checked').length === checkboxes.length;
+    toggle.prop('checked', allChecked);
+}
+
+function filterFactors() {
+    const query = $('#factorSearch').val().toLowerCase();
+    
+    if (!query) {
+        $('.factor-select-checkbox').closest('.form-check').show();
+        return;
+    }
+    
+    allFactors.forEach(f => {
+        const match = (f.name || '').toLowerCase().includes(query) ||
+                     (f.type || '').toLowerCase().includes(query) ||
+                     (f.id || '').toLowerCase().includes(query) ||
+                     (f.description || '').toLowerCase().includes(query);
+        const checkbox = $(`#factor_${f.id}`);
+        if (match) {
+            checkbox.closest('.form-check').show();
+        } else {
+            checkbox.closest('.form-check').hide();
+        }
+    });
+}
+
+function selectAllFactors() {
+    $('.factor-select-checkbox:visible').prop('checked', true);
+    updateFactorCount();
+}
+
+function clearFactorSelection() {
+    $('.factor-select-checkbox:visible').prop('checked', false);
+    updateFactorCount();
+}
+
+function getSelectedFactorIds() {
+    return $('.factor-select-checkbox:checked').map(function() {
+        return $(this).val();
+    }).get();
+}
+
+function loadLocalSymbols(forceRefresh) {
+    const exchange = $('#exchangeSelect').val();
+    const tradeType = $('#tradeTypeSelect').val();
+    const cacheKey = `localData_${exchange}_${tradeType}`;
+    
+    if (!forceRefresh) {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            try {
+                const parsed = JSON.parse(cached);
+                if (parsed.timestamp && Date.now() - parsed.timestamp < 300000) {
+                    localDataRows = parsed.data || [];
+                    allSymbols = [...new Set(localDataRows.map(r => r.symbol))].sort();
+                    renderSymbols(allSymbols);
+                    const starts = localDataRows.map(r => r.date_range && r.date_range.start).filter(Boolean).map(s => new Date(s));
+                    const ends = localDataRows.map(r => r.date_range && r.date_range.end).filter(Boolean).map(s => new Date(s));
+                    if (starts.length && ends.length) {
+                        updateRangeSlider(new Date(Math.min(...starts)), new Date(Math.max(...ends)));
+                    } else {
+                        initRangeSlider();
+                    }
+                    return;
+                }
+            } catch (e) {}
+        }
+    }
+
+    const btn = $('#refreshDataBtn');
+    if (btn.length) { btn.prop('disabled', true); btn.html('<i class="fas fa-spinner fa-spin me-1"></i>刷新中'); }
+    
+    const forceParam = forceRefresh ? '&force=1' : '';
+    $.get(`/api/data/local-data-cached?exchange=${exchange}&trade_type=${tradeType}${forceParam}`, function(res) {
+        if (res.success) {
+            localDataRows = res.data || [];
+            allSymbols = [...new Set(localDataRows.map(r => r.symbol))].sort();
+            localStorage.setItem(cacheKey, JSON.stringify({ data: localDataRows, timestamp: Date.now() }));
+            renderSymbols(allSymbols);
+            
+            const starts = localDataRows.map(r => r.date_range && r.date_range.start).filter(Boolean).map(s => new Date(s));
+            const ends = localDataRows.map(r => r.date_range && r.date_range.end).filter(Boolean).map(s => new Date(s));
+            if (starts.length && ends.length) {
+                updateRangeSlider(new Date(Math.min(...starts)), new Date(Math.max(...ends)));
+            } else {
+                initRangeSlider();
+            }
+        } else {
+            initRangeSlider();
+        }
+    }).fail(function() {
+        initRangeSlider();
+    }).always(function() {
+        if (btn.length) { btn.prop('disabled', false); btn.html('<i class="fas fa-sync-alt me-1"></i>刷新数据'); }
+    });
+}
+
+function renderSymbols(symbols) {
+    const select = $('#symbolsSelect');
+    const excludeStablecoins = $('#excludeStablecoinsFilter').is(':checked');
+    select.empty();
+    symbols.forEach(s => {
+        if (excludeStablecoins && isStablecoinSymbol(s)) {
+            return;
+        }
+        const isStable = isStablecoinSymbol(s);
+        const label = isStable ? `${s} (稳定币)` : s;
+        select.append(`<option value="${s}" ${isStable ? 'style="color: #888;"' : ''}>${label}</option>`);
+    });
+    updateSelectedCount();
+}
+
+function filterSymbols() {
+    const query = $('#symbolSearch').val().toLowerCase();
+    const filtered = allSymbols.filter(s => s.toLowerCase().includes(query));
+    renderSymbols(filtered);
+}
+
+function filterSymbolsByStablecoin() {
+    const query = $('#symbolSearch').val().toLowerCase();
+    const filtered = query ? allSymbols.filter(s => s.toLowerCase().includes(query)) : allSymbols;
+    renderSymbols(filtered);
+}
+
+function normalizeSymbolForMatch(rawSymbol) {
+    const raw = String(rawSymbol || '').trim().toUpperCase();
+    if (!raw) return '';
+    // 统一去掉分隔符，便于 BTCUSDT / BTC_USDT / BTC-USDT / BTC/USDT 互相匹配
+    return raw.replace(/[\s_\-\/]/g, '');
+}
+
+function buildSymbolAliasMap(symbolList) {
+    const aliasMap = new Map();
+    (symbolList || []).forEach(original => {
+        const upper = String(original || '').toUpperCase();
+        const normalized = normalizeSymbolForMatch(upper);
+        if (upper && !aliasMap.has(upper)) aliasMap.set(upper, original);
+        if (normalized && !aliasMap.has(normalized)) aliasMap.set(normalized, original);
+    });
+    return aliasMap;
+}
+
+function importSymbolList() {
+    const input = $('#symbolListInput').val().trim();
+    const $importResult = $('#importResult');
+    
+    if (!input) {
+        $importResult.html('<span class="text-warning">请输入交易对列表</span>');
+        return;
+    }
+    
+    if (!allSymbols || allSymbols.length === 0) {
+        $importResult.html('<span class="text-danger">请先加载交易对数据</span>');
+        return;
+    }
+    
+    let symbols = [];
+    
+    if (input.startsWith('[') && input.endsWith(']')) {
+        try {
+            const parsed = JSON.parse(input);
+            if (Array.isArray(parsed)) {
+                symbols = parsed.map(s => String(s).trim().toUpperCase());
+            }
+        } catch (e) {
+            $importResult.html('<span class="text-danger">JSON格式解析失败，请检查格式</span>');
+            return;
+        }
+    } else {
+        symbols = input.split(/[,\s\n]+/)
+            .map(s => s.trim().toUpperCase())
+            .filter(s => s.length > 0);
+    }
+    
+    if (symbols.length === 0) {
+        $importResult.html('<span class="text-warning">未识别到有效的交易对</span>');
+        return;
+    }
+    
+    const symbolAliasMap = buildSymbolAliasMap(allSymbols);
+    const matchedSymbols = [];
+    const unmatchedSymbols = [];
+    const matchedSet = new Set();
+    
+    symbols.forEach(s => {
+        const normalizedInput = normalizeSymbolForMatch(s);
+        const matched = symbolAliasMap.get(s) || symbolAliasMap.get(normalizedInput);
+        if (matched) {
+            if (!matchedSet.has(matched)) {
+                matchedSet.add(matched);
+                matchedSymbols.push(matched);
+            }
+        } else {
+            unmatchedSymbols.push(s);
+        }
+    });
+    
+    clearSymbolSelection();
+    
+    if (matchedSymbols.length > 0) {
+        $('#symbolsSelect option').each(function() {
+            if (matchedSymbols.includes($(this).val())) {
+                $(this).prop('selected', true);
+            }
+        });
+        updateSelectedCount();
+    }
+    
+    let resultHtml = '';
+    if (matchedSymbols.length > 0) {
+        resultHtml += `<span class="text-success">成功匹配 ${matchedSymbols.length} 个交易对</span>`;
+    }
+    if (unmatchedSymbols.length > 0) {
+        const showCount = Math.min(5, unmatchedSymbols.length);
+        const more = unmatchedSymbols.length > showCount ? ` 等${unmatchedSymbols.length}个` : '';
+        resultHtml += `<br><span class="text-warning">未匹配: ${unmatchedSymbols.slice(0, showCount).join(', ')}${more}</span>`;
+    }
+    $importResult.html(resultHtml);
+}
+
+function selectAllSymbols() {
+    $('#symbolsSelect option').prop('selected', true);
+    updateSelectedCount();
+}
+
+function selectAllSymbolsExcludeStablecoins() {
+    $('#symbolsSelect option').each(function() {
+        const symbol = $(this).val();
+        $(this).prop('selected', !isStablecoinSymbol(symbol));
+    });
+    updateSelectedCount();
+}
+
+function clearSymbolSelection() {
+    $('#symbolsSelect option').prop('selected', false);
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const count = $('#symbolsSelect option:selected').length;
+    $('#selectedSymbolCount').text(count);
+}
+
+function updateRangeSlider(startDate, endDate) {
+    const slider = document.getElementById('rangeSlider');
+    if (slider.noUiSlider) {
+        slider.noUiSlider.destroy();
+    }
+    noUiSlider.create(slider, {
+        start: [startDate, endDate],
+        connect: true,
+        range: {
+            'min': startDate.getTime(),
+            'max': endDate.getTime()
+        },
+        format: {
+            to: function(value) {
+                return new Date(value).toISOString().split('T')[0];
+            },
+            from: function(value) {
+                return new Date(value).getTime();
+            }
+        }
+    });
+    slider.noUiSlider.on('update', function(values) {
+        $('#startDate').val(values[0]);
+        $('#endDate').val(values[1]);
+        $('#rangeInfo').text(`${values[0]} 至 ${values[1]}`);
+    });
+}
+
+function initRangeSlider() {
+    const slider = document.getElementById('rangeSlider');
+    const today = new Date();
+    const oneYearAgo = new Date(today);
+    oneYearAgo.setFullYear(today.getFullYear() - 1);
+    
+    noUiSlider.create(slider, {
+        start: [oneYearAgo, today],
+        connect: true,
+        range: {
+            'min': new Date('2020-01-01').getTime(),
+            'max': today.getTime()
+        },
+        format: {
+            to: function(value) {
+                return new Date(value).toISOString().split('T')[0];
+            },
+            from: function(value) {
+                return new Date(value).getTime();
+            }
+        }
+    });
+    
+    slider.noUiSlider.on('update', function(values) {
+        $('#startDate').val(values[0]);
+        $('#endDate').val(values[1]);
+        $('#rangeInfo').text(`${values[0]} 至 ${values[1]}`);
+    });
+}
+
+function startCrossSectionalEvaluation(isContinue = false) {
+    const factorIds = getSelectedFactorIds();
+    const symbols = $('#symbolsSelect').val() || [];
+    const baseTimeframe = $('#timeframeSelect').val();
+    const factorTimeframe = $('#factorTimeframeSelect').val();
+    const factorBarMode = $('#factorBarModeSelect').val() || 'completed';
+    const maxLookback = parseInt($('#maxLookbackInput').val(), 10) || 200;
+    const startDate = $('#startDate').val();
+    const endDate = $('#endDate').val();
+    const exchange = $('#exchangeSelect').val();
+    const tradeType = $('#tradeTypeSelect').val();
+    const nGroups = parseInt($('#nGroupsSelect').val());
+    const predictStep = parseInt($('#predictStepInput').val(), 10) || 1;
+    const sampleStep = parseInt($('#sampleStepInput').val(), 10) || 1;
+    const minCoverage = parseFloat($('#minCoverageInput').val());
+    const minValidCount = parseInt($('#minValidCountInput').val(), 10) || 1;
+    const minGroupSize = parseInt($('#minGroupSizeInput').val(), 10) || 1;
+    const treatZeroAsInvalid = $('#treatZeroAsInvalidCheck').is(':checked');
+    
+    if (factorIds.length === 0) { alert('请选择至少一个因子'); return; }
+    if (symbols.length < 2) { alert('截面评估需要至少选择2个交易对'); return; }
+    if (!startDate || !endDate) { alert('请选择数据时间范围'); return; }
+    if (predictStep < 1) { alert('预测时间步必须大于等于1'); return; }
+    if (sampleStep < 1) { alert('采样时间步必须大于等于1'); return; }
+    if (!(minCoverage >= 0 && minCoverage <= 1)) { alert('最小覆盖率必须在[0,1]区间'); return; }
+    if (minValidCount < 1) { alert('最小有效样本必须大于等于1'); return; }
+    if (minGroupSize < 1) { alert('每组最小样本必须大于等于1'); return; }
+    if (factorBarMode === 'intrabar_strict' && maxLookback < 1) { alert('max_lookback 必须大于等于1'); return; }
+    
+    // ── 初始化 UI ──
+    $('#startBtn').prop('disabled', true);
+    $('#continueBtn').hide();
+    $('#progressBox').show();
+    $('#resultsPlaceholder').hide();
+    $('#resultsContainer').show();
+    $('#detailCard').hide();
+    
+    if (!isContinue) {
+        $('#resultsBody').empty();
+        $('#progressLog').empty();
+        evaluationResults = [];
+        completedFactorIds = new Set();
+    }
+    
+    const totalTasks = isContinue
+        ? (lastRequestData?.factor_ids?.length || factorIds.length)
+        : factorIds.length;
+    let succCount = evaluationResults.filter(r => r.success).length;
+    let failCount = evaluationResults.filter(r => !r.success).length;
+    const t0 = Date.now();
+    
+    $('.progress-bar')
+        .css('width', '0%')
+        .removeClass('bg-success')
+        .addClass('bg-primary progress-bar-animated');
+    $('#progressText').text(`${completedFactorIds.size}/${totalTasks}`);
+    $('#currentTask').text(isContinue ? '继续评估中...' : '正在连接服务器...');
+    $('#succCount').text(succCount);
+    $('#failCount').text(failCount);
+    $('#elapsedText').text('0s');
+    
+    const elapsedTimer = setInterval(() => {
+        const sec = Math.round((Date.now() - t0) / 1000);
+        $('#elapsedText').text(sec + 's');
+    }, 500);
+    
+    const requestData = {
+        factor_ids: isContinue ? lastRequestData.factor_ids : factorIds,
+        symbols: symbols,
+        timeframe: baseTimeframe,
+        base_timeframe: baseTimeframe,
+        factor_timeframe: factorTimeframe,
+        factor_bar_mode: factorBarMode,
+        start_date: startDate,
+        end_date: endDate,
+        exchange: exchange,
+        trade_type: tradeType,
+        n_groups: nGroups,
+        max_lookback: maxLookback,
+        predict_step: predictStep,
+        sample_step: sampleStep,
+        min_coverage: minCoverage,
+        min_valid_count: minValidCount,
+        min_group_size: minGroupSize,
+        treat_zero_as_invalid: treatZeroAsInvalid
+    };
+    
+    if (!isContinue) {
+        lastRequestData = { ...requestData };
+    }
+    
+    const remainingFactorIds = isContinue 
+        ? lastRequestData.factor_ids.filter(id => !completedFactorIds.has(id))
+        : factorIds;
+    
+    if (remainingFactorIds.length === 0) {
+        clearInterval(elapsedTimer);
+        $('#startBtn').prop('disabled', false);
+        $('#currentTask').html('<span class="text-success">所有因子已评估完成！</span>');
+        return;
+    }
+    
+    // ── SSE 流式请求（带超时和重试） ──
+    const MAX_RETRIES = 2;
+    const RETRY_DELAY = 2000;
+    let retryCount = 0;
+    let abortController = null;
+    let lastActivityTime = Date.now();
+    const INACTIVITY_TIMEOUT = 120000;
+    
+    function executeRequest() {
+        const remainingForRetry = requestData.factor_ids.filter(id => !completedFactorIds.has(id));
+        if (remainingForRetry.length === 0) {
+            clearInterval(elapsedTimer);
+            $('#startBtn').prop('disabled', false);
+            $('#continueBtn').hide();
+            $('#currentTask').html('<span class="text-success">所有因子已评估完成！</span>');
+            return;
+        }
+        const retryPayload = { ...requestData, factor_ids: remainingForRetry };
+
+        abortController = new AbortController();
+        lastActivityTime = Date.now();
+        
+        const inactivityChecker = setInterval(() => {
+            if (Date.now() - lastActivityTime > INACTIVITY_TIMEOUT) {
+                console.warn('连接超时（无活动）');
+                clearInterval(inactivityChecker);
+                abortController.abort();
+            }
+        }, 10000);
+        
+        const timeoutId = setTimeout(() => {
+            console.warn('请求超时，中止连接');
+            abortController.abort();
+        }, 600000);
+        
+        fetch('/api/factors/cross_sectional_evaluate', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(retryPayload),
+            signal: abortController.signal
+        }).then(response => {
+            clearTimeout(timeoutId);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            
+            function processChunk() {
+                return reader.read().then(({ done, value }) => {
+                    if (done) {
+                        clearInterval(inactivityChecker);
+                        clearInterval(elapsedTimer);
+                        $('#startBtn').prop('disabled', false);
+                        if (evaluationResults.length === 0) {
+                            $('#currentTask').text('评估完成，无有效结果');
+                        }
+                        return;
+                    }
+                    
+                    lastActivityTime = Date.now();
+                    buffer += decoder.decode(value, { stream: true });
+                    
+                    const events = buffer.split('\n\n');
+                    buffer = events.pop();
+                    
+                    events.forEach(eventBlock => {
+                        if (!eventBlock.trim()) return;
+                        const dataLine = eventBlock.split('\n').find(l => l.startsWith('data: '));
+                        if (!dataLine) return;
+                        
+                        try {
+                            const data = JSON.parse(dataLine.substring(6));
+                            handleSSEEvent(data, totalTasks);
+                        } catch (e) {
+                            console.warn('SSE 解析错误:', e, dataLine);
+                        }
+                    });
+                    
+                    return processChunk();
+                });
+            }
+            
+            return processChunk();
+        }).catch(err => {
+            clearTimeout(timeoutId);
+            clearInterval(inactivityChecker);
+            
+            if (err.name === 'AbortError') {
+                console.warn('请求被中止');
+                if (retryCount < MAX_RETRIES && completedFactorIds.size < totalTasks) {
+                    retryCount++;
+                    $('#currentTask').html(`<span class="text-warning">连接中断，正在重试 (${retryCount}/${MAX_RETRIES})...</span>`);
+                    setTimeout(() => {
+                        executeRequest();
+                    }, RETRY_DELAY);
+                    return;
+                }
+            }
+            
+            clearInterval(elapsedTimer);
+            console.error('SSE 请求失败:', err);
+            $('#startBtn').prop('disabled', false);
+            
+            let errorMsg = err.message;
+            if (err.name === 'AbortError') {
+                errorMsg = '连接超时或被中断';
+            } else if (err.message.includes('network')) {
+                errorMsg = '网络连接失败，请检查服务器状态';
+            }
+            
+            $('#currentTask').html(`<span class="text-danger">请求失败: ${errorMsg}</span>`);
+            
+            if (evaluationResults.length > 0) {
+                addLog(`⚠️ 已完成 ${completedFactorIds.size}/${totalTasks} 个因子评估后中断`);
+                
+                const remainingCount = totalTasks - completedFactorIds.size;
+                if (remainingCount > 0) {
+                    $('#remainingCount').text(remainingCount);
+                    $('#continueBtn').show();
+                    addLog(`💡 可点击"继续评估"按钮完成剩余 ${remainingCount} 个因子`);
+                }
+            }
+        });
+    }
+    
+    executeRequest();
+    
+    // ── SSE 事件处理 ──
+    function handleSSEEvent(data, total) {
+        switch (data.type) {
+            case 'progress':
+                $('#currentTask').text(data.message || '');
+                break;
+                
+            case 'factor_result':
+                const r = data.result;
+                if (!r || !r.factor_id || completedFactorIds.has(r.factor_id)) {
+                    break;
+                }
+                evaluationResults.push(r);
+                completedFactorIds.add(r.factor_id);
+                
+                const completed = completedFactorIds.size;
+                const pctDone = Math.round((completed / total) * 100);
+                $('.progress-bar').css('width', pctDone + '%');
+                $('#progressText').text(`${completed}/${total}`);
+                $('#currentTask').text(data.message || '');
+                
+                if (r.success) {
+                    succCount++;
+                    $('#succCount').text(succCount);
+                    addLog(`✅ ${r.factor_id}` + (r.elapsed ? ` (${r.elapsed}s)` : ''));
+                } else {
+                    failCount++;
+                    $('#failCount').text(failCount);
+                    addLog(`❌ ${r.factor_id}: ${r.message || '失败'}`);
+                }
+                
+                appendResultRow(r, evaluationResults.length - 1);
+                break;
+                
+            case 'error':
+                $('#currentTask').html(`<span class="text-danger">${data.message}</span>`);
+                addLog(`⚠️ ${data.message}`);
+                break;
+                
+            case 'done':
+                clearInterval(elapsedTimer);
+                const totalSec = Math.round((Date.now() - t0) / 1000);
+                const completedTotal = completedFactorIds.size;
+                $('#elapsedText').text(totalSec + 's');
+                $('.progress-bar')
+                    .css('width', '100%')
+                    .removeClass('progress-bar-animated bg-primary')
+                    .addClass('bg-success');
+                $('#currentTask').html(
+                    `<span class="text-success">评估完成！</span> ` +
+                    `成功 ${data.success_count || 0}/${completedTotal}，` +
+                    `耗时 ${data.total_elapsed || totalSec}s` +
+                    (data.workers ? ` (${data.workers} 并行线程)` : '')
+                );
+                $('#startBtn').prop('disabled', false);
+                $('#continueBtn').hide();
+                addLog(`🏁 全部完成: ${data.success_count}成功, ${data.fail_count}失败, ${data.total_elapsed}s`);
+                break;
+        }
+    }
+    
+}
+
+function continueEvaluation() {
+    if (!lastRequestData || completedFactorIds.size === 0) {
+        alert('没有可继续的评估任务');
+        return;
+    }
+    
+    const remainingCount = lastRequestData.factor_ids.length - completedFactorIds.size;
+    if (remainingCount === 0) {
+        alert('所有因子已评估完成');
+        $('#continueBtn').hide();
+        return;
+    }
+    
+    addLog(`🔄 继续评估剩余 ${remainingCount} 个因子...`);
+    startCrossSectionalEvaluation(true);
+}
+
+function addLog(msg) {
+    const li = document.createElement('li');
+    li.textContent = msg;
+    $('#progressLog').prepend(li);
+    while ($('#progressLog li').length > 50) {
+        $('#progressLog li:last').remove();
+    }
+}
+
+// 实时追加单条结果到表格
+function appendResultRow(r, idx) {
+    const summary = r.summary || {};
+    const ic = r.ic || {};
+    const returns = r.returns || {};
+    const coverage = r.coverage || {};
+    
+    const icMean = formatNumber(summary.ic_mean ?? ic.ic_mean);
+    const rankIc = formatNumber(summary.rank_ic_mean ?? ic.rank_ic_mean);
+    const icir = formatNumber(summary.icir ?? ic.icir);
+    const lsReturn = formatPercent(summary.long_short_return ?? returns.long_short_return);
+    const sharpe = formatNumber(summary.sharpe_ratio ?? returns.sharpe_ratio);
+    const winRate = formatPercent(summary.win_rate ?? returns.win_rate, 1);
+    const avgCoverage = formatPercent(summary.avg_coverage ?? coverage.avg_coverage_returns, 1);
+    const skipRate = formatPercent(summary.skip_rate ?? coverage.returns_skip_rate, 1);
+    
+    const rowClass = r.success ? '' : 'table-warning';
+    const statusIcon = r.success ? 
+        '<i class="fas fa-check-circle text-success"></i>' : 
+        '<i class="fas fa-times-circle text-danger"></i>';
+    
+    const icValue = summary.ic_mean ?? ic.ic_mean ?? 0;
+    const isNegativeIC = icValue < 0;
+    const reverseBadge = isNegativeIC ? '<span class="badge bg-warning text-dark ms-1">需反向</span>' : '';
+    
+    const skipRateVal = summary.skip_rate ?? coverage.returns_skip_rate ?? 0;
+    const skipBadge = skipRateVal > 0.5 ? 
+        '<span class="badge bg-danger ms-1">高跳过</span>' : 
+        (skipRateVal > 0.3 ? '<span class="badge bg-warning text-dark ms-1">中跳过</span>' : '');
+    
+    $('#resultsBody').append(`
+        <tr class="${rowClass}" data-factor-id="${r.factor_id}" data-ic="${icValue}">
+            <td><input type="checkbox" class="result-factor-checkbox" value="${r.factor_id}" onchange="updateSelectedFactors()"></td>
+            <td>${statusIcon} ${r.factor_id} ${reverseBadge}</td>
+            <td>${r.n_symbols || '-'}</td>
+            <td>${r.n_periods_returns ?? '-'}</td>
+            <td>${avgCoverage}</td>
+            <td>${skipRate} ${skipBadge}</td>
+            <td>${icMean}</td>
+            <td>${rankIc}</td>
+            <td>${icir}</td>
+            <td>${lsReturn}</td>
+            <td>${sharpe}</td>
+            <td>${winRate}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick="showDetail(${idx})">
+                    <i class="fas fa-eye"></i>
+                </button>
+            </td>
+        </tr>
+    `);
+}
+
+function showDetail(idx) {
+    const r = evaluationResults[idx];
+    if (!r || !r.success) return;
+    
+    const ic = r.ic || {};
+    const returns = r.returns || {};
+    const coverage = r.coverage || {};
+    
+    $('#detailFactorName').text(r.factor_id);
+    $('#detailIcMean').text(formatNumber(ic.ic_mean));
+    $('#detailIcStd').text(formatNumber(ic.ic_std));
+    $('#detailIcir').text(formatNumber(ic.icir));
+    $('#detailRankIcMean').text(formatNumber(ic.rank_ic_mean));
+    $('#detailIcPositiveRatio').text(formatPercent(ic.ic_positive_ratio, 1));
+    
+    $('#detailLsReturn').text(formatPercent(returns.long_short_return));
+    $('#detailLongReturn').text(formatPercent(returns.long_return));
+    $('#detailShortReturn').text(formatPercent(returns.short_return));
+    $('#detailSharpe').text(formatNumber(returns.sharpe_ratio));
+    $('#detailWinRate').text(formatPercent(returns.win_rate, 1));
+    
+    $('#detailCoverageIc').text(formatPercent(coverage.avg_coverage_ic, 1));
+    $('#detailCoverageReturns').text(formatPercent(coverage.avg_coverage_returns, 1));
+    $('#detailSkipRateIc').text(formatPercent(coverage.ic_skip_rate, 1));
+    $('#detailSkipRateReturns').text(formatPercent(coverage.returns_skip_rate, 1));
+    $('#detailPeriodsTotal').text(coverage.n_periods_total ?? '-');
+    $('#detailPeriodsIc').text(coverage.n_periods_ic ?? '-');
+    $('#detailPeriodsReturns').text(coverage.n_periods_returns ?? '-');
+    
+    $('#detailCard').show();
+}
+
+function formatNumber(val, decimals = 4) {
+    if (val === null || val === undefined || isNaN(val)) return '-';
+    return Number(val).toFixed(decimals);
+}
+
+function formatPercent(val, decimals = 4) {
+    if (val === null || val === undefined || isNaN(val)) return '-';
+    return (Number(val) * 100).toFixed(decimals) + '%';
+}
+
+function exportResults() {
+    if (evaluationResults.length === 0) {
+        alert('没有可导出的结果');
+        return;
+    }
+    
+    let csv = '因子,币种数,时间点,平均覆盖率,跳过率,IC均值,IC标准差,ICIR,Rank IC均值,IC正比例,多空收益,多头收益,空头收益,夏普比率,胜率\n';
+    
+    evaluationResults.forEach(r => {
+        const summary = r.summary || {};
+        const ic = r.ic || {};
+        const returns = r.returns || {};
+        const coverage = r.coverage || {};
+        
+        csv += `${r.factor_id},`;
+        csv += `${r.n_symbols ?? ''},`;
+        csv += `${r.n_periods_returns ?? ''},`;
+        csv += `${summary.avg_coverage ?? coverage.avg_coverage_returns ?? ''},`;
+        csv += `${summary.skip_rate ?? coverage.returns_skip_rate ?? ''},`;
+        csv += `${summary.ic_mean ?? ic.ic_mean ?? ''},`;
+        csv += `${summary.ic_std ?? ic.ic_std ?? ''},`;
+        csv += `${summary.icir ?? ic.icir ?? ''},`;
+        csv += `${summary.rank_ic_mean ?? ic.rank_ic_mean ?? ''},`;
+        csv += `${summary.ic_positive_ratio ?? ic.ic_positive_ratio ?? ''},`;
+        csv += `${summary.long_short_return ?? returns.long_short_return ?? ''},`;
+        csv += `${summary.long_return ?? returns.long_return ?? ''},`;
+        csv += `${summary.short_return ?? returns.short_return ?? ''},`;
+        csv += `${summary.sharpe_ratio ?? returns.sharpe_ratio ?? ''},`;
+        csv += `${(summary.win_rate ?? returns.win_rate ?? '')}\n`;
+    });
+    
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = `cross_sectional_evaluation_${new Date().toISOString().slice(0,10)}.csv`;
+    link.click();
+}
+
+// ========== 因子组合功能 ==========
+
+function toggleSelectAll(checkbox) {
+    const isChecked = checkbox.checked;
+    $('#resultsBody .result-factor-checkbox:visible').prop('checked', isChecked);
+    updateSelectedFactors();
+}
+
+function updateSelectedFactors() {
+    const selectedRows = $('#resultsBody .result-factor-checkbox:checked').closest('tr');
+    const count = selectedRows.length;
+    
+    $('#selectedFactorCount').text(count);
+    
+    if (count > 0) {
+        $('#ensembleCard').show();
+        
+        const factors = [];
+        selectedRows.each(function() {
+            const factorId = $(this).data('factor-id');
+            const ic = parseFloat($(this).data('ic'));
+            factors.push({id: factorId, ic: ic});
+        });
+        
+        const reversedCount = factors.filter(f => f.ic < 0).length;
+        const factorsList = factors.map(f => {
+            const badge = f.ic < 0 ? '<span class="badge bg-warning text-dark">反向</span>' : '';
+            return `${f.id} ${badge}`;
+        }).join(', ');
+        
+        $('#selectedFactorsList').html(`
+            <div>已选: ${factorsList}</div>
+            ${reversedCount > 0 ? `<div class="text-warning mt-1">⚠️ ${reversedCount} 个因子将自动反向使用</div>` : ''}
+        `);
+    } else {
+        $('#selectedFactorsList').text('请在上方表格中勾选因子');
+    }
+}
+
+$('#csvFileInput').on('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        try {
+            const csv = event.target.result;
+            const lines = csv.split('\n');
+            const headers = lines[0].split(',').map(h => h.trim());
+            
+            const colIndices = {
+                factorId: headers.indexOf('因子'),
+                dataPoints: headers.indexOf('时间点'),
+                ic: headers.indexOf('IC均值'),
+                icir: headers.indexOf('ICIR'),
+                lsReturn: headers.indexOf('多空收益'),
+                winRate: headers.indexOf('胜率')
+            };
+            
+            if (colIndices.factorId === -1) {
+                alert('CSV文件格式错误：未找到"因子"列');
+                return;
+            }
+            
+            const importedFactors = [];
+            for (let i = 1; i < lines.length; i++) {
+                const cols = lines[i].split(',');
+                if (cols.length > colIndices.factorId) {
+                    const factorId = cols[colIndices.factorId].trim();
+                    if (factorId) {
+                        const parsePercentValue = (raw) => {
+                            const cleaned = raw.replace('%', '').trim();
+                            const val = parseFloat(cleaned);
+                            if (isNaN(val)) return 0;
+                            if (val <= 1) return val;
+                            return val / 100;
+                        };
+                        importedFactors.push({
+                            id: factorId,
+                            dataPoints: colIndices.dataPoints !== -1 ? parseInt(cols[colIndices.dataPoints]) || 0 : 0,
+                            ic: colIndices.ic !== -1 ? parseFloat(cols[colIndices.ic]) || 0 : 0,
+                            icir: colIndices.icir !== -1 ? parseFloat(cols[colIndices.icir]) || 0 : 0,
+                            lsReturn: colIndices.lsReturn !== -1 ? parsePercentValue(cols[colIndices.lsReturn]) : 0,
+                            winRate: colIndices.winRate !== -1 ? parsePercentValue(cols[colIndices.winRate]) : 0,
+                            selected: true
+                        });
+                    }
+                }
+            }
+            
+            if (importedFactors.length === 0) {
+                alert('CSV文件中未找到有效因子');
+                return;
+            }
+            
+            window.importedFactors = importedFactors;
+            window.importedFactorsSelected = new Set(importedFactors.map(f => f.id));
+            
+            renderImportedFactorsTable();
+            $('#importedFactorsContainer').show();
+            $('#ensembleCard').show();
+            updateImportedFactorCount();
+            
+        } catch (err) {
+            alert('解析CSV文件失败: ' + err.message);
+        }
+    };
+    reader.readAsText(file);
+});
+
+function renderImportedFactorsTable() {
+    const factors = window.importedFactors || [];
+    $('#importedFactorsBody').empty();
+    
+    factors.forEach((f, idx) => {
+        const isNegativeIC = f.ic < 0;
+        const statusBadge = isNegativeIC ? 
+            '<span class="badge bg-warning text-dark">需反向</span>' : 
+            '<span class="badge bg-success">正常</span>';
+        
+        const rowClass = f.selected ? '' : 'table-secondary';
+        
+        $('#importedFactorsBody').append(`
+            <tr class="${rowClass}" data-factor-index="${idx}">
+                <td><input type="checkbox" class="imported-factor-checkbox" 
+                           data-factor-id="${f.id}" 
+                           ${f.selected ? 'checked' : ''} 
+                           onchange="toggleImportedFactor('${f.id}', this.checked)"></td>
+                <td>${f.id}</td>
+                <td>${f.dataPoints || '-'}</td>
+                <td>${formatNumber(f.ic)}</td>
+                <td>${formatNumber(f.icir)}</td>
+                <td>${formatPercent(f.lsReturn)}</td>
+                <td>${formatPercent(f.winRate, 1)}</td>
+                <td>${statusBadge}</td>
+            </tr>
+        `);
+    });
+    
+    updateImportedFactorStats();
+}
+
+function updateImportedFactorStats() {
+    const total = window.importedFactors ? window.importedFactors.length : 0;
+    const selected = window.importedFactorsSelected ? window.importedFactorsSelected.size : 0;
+    $('#importedFactorStats').text(`共 ${total} 个因子，已选 ${selected} 个`);
+}
+
+function toggleImportedFactor(factorId, checked) {
+    if (!window.importedFactorsSelected) {
+        window.importedFactorsSelected = new Set();
+    }
+    
+    if (checked) {
+        window.importedFactorsSelected.add(factorId);
+    } else {
+        window.importedFactorsSelected.delete(factorId);
+    }
+    
+    const factor = window.importedFactors.find(f => f.id === factorId);
+    if (factor) {
+        factor.selected = checked;
+    }
+    
+    updateImportedFactorCount();
+    
+    const row = $(`tr[data-factor-index="${window.importedFactors.findIndex(f => f.id === factorId)}"]`);
+    if (checked) {
+        row.removeClass('table-secondary');
+    } else {
+        row.addClass('table-secondary');
+    }
+}
+
+function toggleSelectAllImported(checkbox) {
+    const isChecked = checkbox.checked;
+    window.importedFactorsSelected = new Set();
+    
+    window.importedFactors.forEach(f => {
+        f.selected = isChecked;
+        if (isChecked) {
+            window.importedFactorsSelected.add(f.id);
+        }
+    });
+    
+    $('.imported-factor-checkbox').prop('checked', isChecked);
+    updateImportedFactorCount();
+    renderImportedFactorsTable();
+}
+
+function selectAllImported() {
+    $('#selectAllImported').prop('checked', true);
+    toggleSelectAllImported(document.getElementById('selectAllImported'));
+}
+
+function deselectAllImported() {
+    $('#selectAllImported').prop('checked', false);
+    toggleSelectAllImported(document.getElementById('selectAllImported'));
+}
+
+function updateFilterDescription() {
+    const icVal = parseFloat($('#filterIcThreshold').val());
+    const icirVal = parseFloat($('#filterIcirThreshold').val());
+    const winRateVal = parseFloat($('#filterWinRateThreshold').val());
+    const lsReturnVal = parseFloat($('#filterLsReturnThreshold').val());
+    const dataPointsVal = parseInt($('#filterDataPointsThreshold').val());
+    
+    const icThreshold = isNaN(icVal) ? 0.02 : icVal;
+    const icirThreshold = isNaN(icirVal) ? 0.1 : icirVal;
+    const winRateThreshold = isNaN(winRateVal) ? 52 : winRateVal;
+    const lsReturnThreshold = isNaN(lsReturnVal) ? 0.01 : lsReturnVal;
+    const dataPointsThreshold = isNaN(dataPointsVal) ? 0 : dataPointsVal;
+    const filterLogic = $('#filterLogic').val() || 'or';
+    
+    const logicText = filterLogic === 'and' ? '且' : '或';
+    const description = `(|IC| > ${icThreshold} 且 |ICIR| > ${icirThreshold}) ${logicText} (胜率 > ${winRateThreshold}% 且 多空收益 > ${lsReturnThreshold}%)，且时间点 >= ${dataPointsThreshold}`;
+    $('#filterDescription').text(description);
+}
+
+$('#filterIcThreshold, #filterIcirThreshold, #filterWinRateThreshold, #filterLsReturnThreshold, #filterDataPointsThreshold, #filterLogic').on('input change', updateFilterDescription);
+
+function selectGoodFactors() {
+    const icVal = parseFloat($('#filterIcThreshold').val());
+    const icirVal = parseFloat($('#filterIcirThreshold').val());
+    const winRateVal = parseFloat($('#filterWinRateThreshold').val());
+    const lsReturnVal = parseFloat($('#filterLsReturnThreshold').val());
+    const dataPointsVal = parseInt($('#filterDataPointsThreshold').val());
+    
+    const icThreshold = isNaN(icVal) ? 0.02 : icVal;
+    const icirThreshold = isNaN(icirVal) ? 0.1 : icirVal;
+    const winRateThreshold = (isNaN(winRateVal) ? 52 : winRateVal) / 100;
+    const lsReturnThreshold = (isNaN(lsReturnVal) ? 0.01 : lsReturnVal) / 100;
+    const dataPointsThreshold = isNaN(dataPointsVal) ? 0 : dataPointsVal;
+    const filterLogic = $('#filterLogic').val() || 'or';
+    
+    window.importedFactorsSelected = new Set();
+    
+    let matchedCount = 0;
+    let filteredByDataPoints = 0;
+    
+    window.importedFactors.forEach(f => {
+        const meetsDataPoints = (f.dataPoints || 0) >= dataPointsThreshold;
+        if (!meetsDataPoints) {
+            filteredByDataPoints++;
+            f.selected = false;
+            return;
+        }
+        
+        const isReversedFactor = f.ic < 0;
+        const effectiveWinRate = isReversedFactor ? (1 - f.winRate) : f.winRate;
+        const effectiveLsReturn = isReversedFactor ? (-f.lsReturn) : f.lsReturn;
+        
+        const meetsIcCondition = Math.abs(f.ic) > icThreshold && Math.abs(f.icir) > icirThreshold;
+        const meetsReturnCondition = effectiveWinRate > winRateThreshold && Math.abs(effectiveLsReturn) > lsReturnThreshold;
+        
+        let isGood = false;
+        if (filterLogic === 'and') {
+            isGood = meetsIcCondition && meetsReturnCondition;
+        } else {
+            isGood = meetsIcCondition || meetsReturnCondition;
+        }
+        
+        f.selected = isGood;
+        if (isGood) {
+            window.importedFactorsSelected.add(f.id);
+            matchedCount++;
+        }
+    });
+    
+    renderImportedFactorsTable();
+    updateImportedFactorCount();
+    
+    const selectedCount = window.importedFactorsSelected.size;
+    const totalFactors = window.importedFactors ? window.importedFactors.length : 0;
+    
+    let message = '';
+    if (selectedCount === 0) {
+        message = `未找到符合筛选条件的因子\n\n`;
+        message += `筛选条件：\n`;
+        message += `• |IC| > ${icThreshold} 且 |ICIR| > ${icirThreshold}\n`;
+        message += `• ${filterLogic === 'and' ? '且' : '或'} 胜率 > ${(winRateThreshold * 100).toFixed(0)}% 且 多空收益 > ${(lsReturnThreshold * 100).toFixed(2)}%\n`;
+        message += `• 时间点 >= ${dataPointsThreshold}\n\n`;
+        message += `共 ${totalFactors} 个因子，${filteredByDataPoints} 个因时间点不足被过滤`;
+        alert(message);
+    } else {
+        console.log(`筛选完成：${selectedCount}/${totalFactors} 个因子符合条件，${filteredByDataPoints} 个因时间点不足被过滤`);
+    }
+}
+
+function updateImportedFactorCount() {
+    const count = window.importedFactorsSelected ? window.importedFactorsSelected.size : 0;
+    const total = window.importedFactors ? window.importedFactors.length : 0;
+    
+    $('#selectedFactorCount').text(count);
+    
+    const reversedCount = window.importedFactors ?
+        window.importedFactors.filter(f => f.selected && f.ic < 0).length : 0;
+    
+    const selectedFactors = window.importedFactors ?
+        window.importedFactors.filter(f => f.selected) : [];
+    
+    if (count > 0) {
+        const factorsList = selectedFactors.slice(0, 5).map(f => {
+            const badge = f.ic < 0 ? '<span class="badge bg-warning text-dark">反向</span>' : '';
+            return `${f.id} ${badge}`;
+        }).join(', ');
+        
+        $('#selectedFactorsList').html(`
+            <div>已选: ${factorsList}${count > 5 ? '...' : ''}</div>
+            <div class="text-muted small">共 ${count}/${total} 个因子</div>
+            ${reversedCount > 0 ? `<div class="text-warning mt-1">⚠️ ${reversedCount} 个因子将自动反向使用</div>` : ''}
+        `);
+    } else {
+        $('#selectedFactorsList').html(`
+            <div class="text-muted">请在下方表格中勾选因子</div>
+        `);
+    }
+}
+
+function runEnsembleBacktest() {
+    let selectedFactors = [];
+    
+    if (window.importedFactors && window.importedFactorsSelected) {
+        selectedFactors = window.importedFactors.filter(f => window.importedFactorsSelected.has(f.id));
+    } else if (window.importedFactors && window.importedFactors.length > 0) {
+        selectedFactors = window.importedFactors.filter(f => f.selected);
+    } else {
+        const selectedRows = $('#resultsBody .result-factor-checkbox:checked').closest('tr');
+        selectedRows.each(function() {
+            const factorId = $(this).data('factor-id');
+            const ic = parseFloat($(this).data('ic'));
+            selectedFactors.push({id: factorId, ic: ic});
+        });
+    }
+    
+    if (selectedFactors.length === 0) {
+        alert('请先选择因子或导入CSV文件');
+        return;
+    }
+    
+    const ensembleMethod = $('#ensembleMethod').val();
+    const nGroups = parseInt($('#nGroups').val()) || 5;
+    const transactionCost = parseFloat($('#transactionCost').val()) || 0.001;
+    const autoReverse = $('#autoReverse').is(':checked');
+    const icSource = $('#icSource').val() || 'evaluation';
+    
+    const symbols = $('#symbolsSelect').val() || [];
+    const timeframe = $('#timeframeSelect').val();
+    const startDate = $('#startDate').val();
+    const endDate = $('#endDate').val();
+    const exchange = $('#exchangeSelect').val();
+    const tradeType = $('#tradeTypeSelect').val();
+    const predictStep = parseInt($('#predictStepInput').val(), 10) || 1;
+    const sampleStep = parseInt($('#sampleStepInput').val(), 10) || 1;
+    
+    if (symbols.length === 0) {
+        alert('请选择币种');
+        return;
+    }
+    if (symbols.length < 2) {
+        alert('截面组合回测至少需要选择2个币种');
+        return;
+    }
+    if (predictStep < 1 || sampleStep < 1) {
+        alert('预测步长和采样步长必须大于等于1');
+        return;
+    }
+    
+    const factorIcDict = {};
+    selectedFactors.forEach(f => {
+        factorIcDict[f.id] = f.ic;
+    });
+    
+    const btn = $('#ensembleBtn');
+    const originalText = btn.html();
+    btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i>正在组合并回测...');
+    
+    // 调用后端API
+    $.ajax({
+        url: '/api/factors/ensemble_backtest',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            factor_ids: selectedFactors.map(f => f.id),
+            factor_ic_dict: factorIcDict,
+            auto_reverse: autoReverse,
+            ic_source: icSource,
+            ensemble_method: ensembleMethod,
+            symbols: symbols,
+            timeframe: timeframe,
+            start_date: startDate,
+            end_date: endDate,
+            exchange: exchange,
+            trade_type: tradeType,
+            n_groups: nGroups,
+            transaction_cost: transactionCost,
+            predict_step: predictStep,
+            sample_step: sampleStep,
+            factor_timeframe: $('#factorTimeframeSelect').val() || timeframe,
+            factor_bar_mode: $('#factorBarModeSelect').val() || 'completed',
+            max_lookback: parseInt($('#maxLookbackInput').val(), 10) || 200,
+            min_coverage: parseFloat($('#minCoverageInput').val()) || 0.3,
+            min_valid_count: parseInt($('#minValidCountInput').val(), 10) || 30,
+            min_group_size: parseInt($('#minGroupSizeInput').val(), 10) || 5,
+            treat_zero_as_invalid: $('#treatZeroAsInvalidCheck').is(':checked')
+        }),
+        success: function(res) {
+            btn.prop('disabled', false).html(originalText);
+            
+            if (res.success) {
+                displayBacktestResults(res);
+            } else {
+                alert('组合回测失败: ' + res.message);
+            }
+        },
+        error: function(xhr, status, error) {
+            btn.prop('disabled', false).html(originalText);
+            alert('请求失败: ' + error);
+        }
+    });
+}
+
+function displayBacktestResults(result) {
+    const summary = result.performance_summary || {};
+    const csPerf = result.cross_sectional_performance || {};
+    const csIc = result.cross_sectional_ic || {};
+    const reversedFactors = result.reversed_factors || [];
+    
+    let html = `
+        <div class="alert alert-success">
+            <h6><i class="fas fa-check-circle me-2"></i>组合回测完成</h6>
+            <div class="row mt-2">
+                <div class="col-md-3">
+                    <strong>组合方法:</strong> ${result.ensemble_method}
+                </div>
+                <div class="col-md-3">
+                    <strong>因子数量:</strong> ${result.n_factors}
+                </div>
+                <div class="col-md-3">
+                    <strong>测试币种:</strong> ${result.n_symbols}
+                </div>
+                <div class="col-md-3">
+                    <strong>反向因子:</strong> ${reversedFactors.length} 个
+                </div>
+            </div>
+        </div>
+    `;
+
+    const hasCsPerf = Object.keys(csPerf).length > 0;
+    if (hasCsPerf) {
+        html += `
+            <h6 class="mt-3">截面组合表现（同一时点跨币种分组）</h6>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover">
+                    <tbody>
+                        <tr><td>平均每期多空收益</td><td>${formatPercent(csPerf.long_short_return)}</td></tr>
+                        <tr><td>扣成本后每期多空收益</td><td>${formatPercent(csPerf.long_short_return_after_cost)}</td></tr>
+                        <tr><td>每期换手成本</td><td>${formatPercent(csPerf.turnover_cost_per_period)}</td></tr>
+                        <tr><td>平均每期多头收益</td><td>${formatPercent(csPerf.long_return)}</td></tr>
+                        <tr><td>平均每期空头收益</td><td>${formatPercent(csPerf.short_return)}</td></tr>
+                        <tr><td>胜率（毛）</td><td>${formatPercent(csPerf.win_rate, 1)}</td></tr>
+                        <tr><td>夏普比率（毛）</td><td>${formatNumber(csPerf.sharpe_ratio)}</td></tr>
+                        <tr><td>夏普比率（扣成本）</td><td>${formatNumber(csPerf.sharpe_ratio_after_cost)}</td></tr>
+                        <tr><td>年化夏普（毛）</td><td>${formatNumber(csPerf.annualized_sharpe)}</td></tr>
+                        <tr><td>年化夏普（扣成本）</td><td>${formatNumber(csPerf.annualized_sharpe_after_cost)}</td></tr>
+                        <tr><td>总收益（毛）</td><td>${formatPercent(csPerf.total_return)}</td></tr>
+                        <tr><td>总收益（扣成本）</td><td>${formatPercent(csPerf.total_return_after_cost)}</td></tr>
+                        <tr><td>最大回撤（毛）</td><td>${formatPercent(csPerf.max_drawdown)}</td></tr>
+                        <tr><td>最大回撤（扣成本）</td><td>${formatPercent(csPerf.max_drawdown_after_cost)}</td></tr>
+                        <tr><td>有效期数</td><td>${csPerf.n_periods ?? '-'}</td></tr>
+                        <tr><td>分组数(生效)</td><td>${result.n_groups_effective ?? '-'}</td></tr>
+                        <tr><td>IC均值</td><td>${formatNumber(csIc.ic_mean)}</td></tr>
+                        <tr><td>Rank IC均值</td><td>${formatNumber(csIc.rank_ic_mean)}</td></tr>
+                        <tr><td>预测步长</td><td>${result.predict_step ?? '-'}</td></tr>
+                        <tr><td>采样步长</td><td>${result.sample_step ?? '-'}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    if (Object.keys(summary).length > 0) {
+        html += `
+            <h6 class="mt-3">回测摘要</h6>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover">
+                    <thead>
+                        <tr>
+                            <th>名称</th>
+                            <th>总收益(毛)</th>
+                            <th>总收益(扣成本)</th>
+                            <th>夏普(毛)</th>
+                            <th>夏普(扣成本)</th>
+                            <th>最大回撤(毛)</th>
+                            <th>最大回撤(扣成本)</th>
+                            <th>胜率</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+        
+        for (const [name, perf] of Object.entries(summary)) {
+            html += `
+                <tr>
+                    <td>${name}</td>
+                    <td>${formatPercent(perf.total_return)}</td>
+                    <td>${formatPercent(perf.total_return_after_cost)}</td>
+                    <td>${formatNumber(perf.sharpe_ratio)}</td>
+                    <td>${formatNumber(perf.sharpe_ratio_after_cost)}</td>
+                    <td>${formatPercent(perf.max_drawdown)}</td>
+                    <td>${formatPercent(perf.max_drawdown_after_cost)}</td>
+                    <td>${formatPercent(perf.win_rate, 1)}</td>
+                </tr>
+            `;
+        }
+        
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+    
+    if (reversedFactors.length > 0) {
+        html += `
+            <div class="alert alert-warning mt-3">
+                <i class="fas fa-info-circle me-2"></i>
+                <strong>已自动反向的因子:</strong> ${reversedFactors.join(', ')}
+            </div>
+        `;
+    }
+    
+    $('#backtestResultContent').html(html);
+    $('#backtestResultCard').show();
+}
+
+let correlationResult = null;
+let currentCorrTab = 'pearson';
+
+function runFactorCorrelation() {
+    let selectedFactors = [];
+
+    if (window.importedFactors && window.importedFactorsSelected) {
+        selectedFactors = window.importedFactors.filter(f => window.importedFactorsSelected.has(f.id));
+    } else if (window.importedFactors && window.importedFactors.length > 0) {
+        selectedFactors = window.importedFactors.filter(f => f.selected);
+    } else {
+        const selectedRows = $('#resultsBody .result-factor-checkbox:checked').closest('tr');
+        selectedRows.each(function() {
+            const factorId = $(this).data('factor-id');
+            const ic = parseFloat($(this).data('ic'));
+            selectedFactors.push({id: factorId, ic: ic});
+        });
+    }
+
+    if (selectedFactors.length < 2) {
+        alert('请至少选择2个因子来计算相关性');
+        return;
+    }
+
+    const autoReverse = $('#autoReverse').is(':checked');
+    const symbols = $('#symbolsSelect').val() || [];
+    const timeframe = $('#timeframeSelect').val();
+    const startDate = $('#startDate').val();
+    const endDate = $('#endDate').val();
+    const exchange = $('#exchangeSelect').val();
+    const tradeType = $('#tradeTypeSelect').val();
+    const corrThreshold = parseFloat($('#corrThreshold').val()) || 0.7;
+
+    if (symbols.length < 2) {
+        alert('截面相关性计算至少需要选择2个币种');
+        return;
+    }
+
+    const factorIcDict = {};
+    selectedFactors.forEach(f => { factorIcDict[f.id] = f.ic; });
+
+    const btn = $('#corrBtn');
+    const originalText = btn.html();
+    btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-2"></i>计算中...');
+
+    $.ajax({
+        url: '/api/factors/factor_correlation',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            factor_ids: selectedFactors.map(f => f.id),
+            factor_ic_dict: factorIcDict,
+            auto_reverse: autoReverse,
+            symbols: symbols,
+            timeframe: timeframe,
+            start_date: startDate,
+            end_date: endDate,
+            exchange: exchange,
+            trade_type: tradeType,
+            corr_threshold: corrThreshold,
+        }),
+        success: function(res) {
+            btn.prop('disabled', false).html(originalText);
+            if (res.success) {
+                correlationResult = res;
+                currentCorrTab = 'pearson';
+                renderCorrelationResult();
+            } else {
+                alert('相关性计算失败: ' + res.message);
+            }
+        },
+        error: function(xhr, status, error) {
+            btn.prop('disabled', false).html(originalText);
+            alert('请求失败: ' + error);
+        }
+    });
+}
+
+function switchCorrTab(tab) {
+    currentCorrTab = tab;
+    const btns = $('#correlationCard .btn-group .btn');
+    btns.removeClass('active');
+    btns.eq(tab === 'pearson' ? 0 : 1).addClass('active');
+    if (correlationResult) {
+        renderCorrelationResult();
+    }
+}
+
+function renderCorrelationResult() {
+    if (!correlationResult) return;
+
+    const res = correlationResult;
+    const factorIds = res.factor_ids || [];
+    const matrix = currentCorrTab === 'pearson' ? res.pearson_matrix : res.spearman_matrix;
+    const highPairs = res.high_corr_pairs || [];
+    const threshold = res.corr_threshold || 0.7;
+    const label = currentCorrTab === 'pearson' ? 'Pearson' : 'Spearman';
+
+    let html = '';
+
+    html += `<div class="small text-muted mb-2">${label} 相关系数 | ${res.n_symbols} 币种 | ${res.n_data_points} 数据点 | 阈值 ${threshold}</div>`;
+
+    if (factorIds.length <= 20) {
+        html += '<div class="table-responsive"><table class="table table-sm table-bordered" style="font-size:0.75rem;">';
+        html += '<thead><tr><th></th>';
+        factorIds.forEach(fid => {
+            const shortName = fid.length > 12 ? fid.substring(0, 12) + '…' : fid;
+            html += `<th title="${fid}" style="writing-mode:vertical-lr;text-orientation:mixed;max-width:30px;padding:2px;">${shortName}</th>`;
+        });
+        html += '</tr></thead><tbody>';
+
+        for (let i = 0; i < factorIds.length; i++) {
+            const rowName = factorIds[i].length > 12 ? factorIds[i].substring(0, 12) + '…' : factorIds[i];
+            html += `<tr><td title="${factorIds[i]}" style="white-space:nowrap;max-width:100px;overflow:hidden;text-overflow:ellipsis;">${rowName}</td>`;
+            for (let j = 0; j < factorIds.length; j++) {
+                const val = matrix[i][j];
+                if (val === null || val === undefined) {
+                    html += '<td class="text-center text-muted">-</td>';
+                } else if (i === j) {
+                    html += '<td class="text-center fw-bold" style="background:#e9ecef;">1.00</td>';
+                } else {
+                    const absVal = Math.abs(val);
+                    let bgStyle = '';
+                    if (absVal >= threshold) {
+                        bgStyle = 'background:#f8d7da;color:#842029;';
+                    } else if (absVal >= threshold * 0.8) {
+                        bgStyle = 'background:#fff3cd;color:#664d03;';
+                    }
+                    html += `<td class="text-center" style="${bgStyle}">${val.toFixed(2)}</td>`;
+                }
+            }
+            html += '</tr>';
+        }
+        html += '</tbody></table></div>';
+    } else {
+        html += '<div class="alert alert-info small">因子数量超过20，仅展示高相关因子对</div>';
+    }
+
+    if (highPairs.length > 0) {
+        html += `<h6 class="mt-3">高相关因子对（|${label}| ≥ ${threshold}）</h6>`;
+        html += '<div class="table-responsive"><table class="table table-sm table-hover">';
+        html += '<thead><tr><th>因子1</th><th>因子2</th><th>Pearson</th><th>Spearman</th><th>建议</th></tr></thead><tbody>';
+        highPairs.forEach(pair => {
+            const suggestion = Math.abs(pair.pearson) >= 0.9 ? 
+                '<span class="badge bg-danger">高度冗余，建议去其一</span>' :
+                '<span class="badge bg-warning text-dark">相关性较高，注意冗余</span>';
+            html += `<tr>
+                <td>${pair.factor_1}</td>
+                <td>${pair.factor_2}</td>
+                <td>${pair.pearson !== null ? pair.pearson.toFixed(3) : '-'}</td>
+                <td>${pair.spearman !== null ? pair.spearman.toFixed(3) : '-'}</td>
+                <td>${suggestion}</td>
+            </tr>`;
+        });
+        html += '</tbody></table></div>';
+    } else {
+        html += `<div class="alert alert-success mt-3"><i class="fas fa-check-circle me-2"></i>没有发现相关性超过 ${threshold} 的因子对，因子间独立性良好</div>`;
+    }
+
+    const avgCorr = computeAvgOffDiagonal(matrix);
+    if (avgCorr !== null) {
+        html += `<div class="small text-muted mt-2">平均绝对${label}相关系数: ${avgCorr.toFixed(3)}</div>`;
+    }
+
+    $('#correlationContent').html(html);
+    $('#correlationCard').show();
+}
+
+function computeAvgOffDiagonal(matrix) {
+    let sum = 0;
+    let count = 0;
+    for (let i = 0; i < matrix.length; i++) {
+        for (let j = i + 1; j < matrix[i].length; j++) {
+            const val = matrix[i][j];
+            if (val !== null && val !== undefined) {
+                sum += Math.abs(val);
+                count++;
+            }
+        }
+    }
+    return count > 0 ? sum / count : null;
+}
+
+</script>
+{% endblock %}

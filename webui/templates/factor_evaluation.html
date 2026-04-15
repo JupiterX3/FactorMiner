@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}因子评估 - {{ config.title }}{% endblock %}
+{% block title %}时序评估 - {{ config.title }}{% endblock %}
 
 {% block content %}
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css">
@@ -9,8 +9,8 @@
 
 <div class="row">
     <div class="col-12">
-        <h2>📊 因子评估</h2>
-        <p class="text-muted">支持多因子、多交易对、多时间框架的批量评估</p>
+        <h2>📊 时序评估</h2>
+        <p class="text-muted">支持多因子、多交易对、多时间框架的批量时序评估</p>
     </div>
 </div>
 
@@ -27,21 +27,15 @@
                     <div class="mb-2">
                         <div class="input-group">
                             <span class="input-group-text"><i class="fas fa-search"></i></span>
-                            <input type="text" class="form-control" id="factorSearch" placeholder="搜索因子名称、描述或类型..." />
-                            <select class="form-select" id="factorSort" style="max-width: 150px;">
-                                <option value="name">按名称排序</option>
-                                <option value="type">按类型排序</option>
-                                <option value="created">按创建时间排序</option>
-                            </select>
-                        </div>
-                        <div class="form-text small">
-                            💡 支持按因子名称、描述或类型进行搜索，实时过滤结果
+                            <input type="text" class="form-control" id="factorSearch" placeholder="搜索因子名称、描述或类型..." oninput="filterFactors()" />
                         </div>
                     </div>
-                    <select class="form-select" id="factorSelect" multiple size="8"></select>
-                    <div class="d-flex justify-content-between align-items-center mb-2">
+                    <div id="factorListContainer" style="max-height: 350px; overflow-y: auto; border: 1px solid #dee2e6; border-radius: 4px;">
+                        <div class="text-center text-muted p-3">加载中...</div>
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mb-2 mt-2">
                         <div class="form-text">
-                            <span id="factorCount">0</span> 个因子可用
+                            已选 <span id="selectedFactorCount">0</span> / <span id="totalFactorCount">0</span> 个因子
                         </div>
                         <div class="btn-group btn-group-sm">
                             <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllFactors()">全选</button>
@@ -59,6 +53,12 @@
                                 <option value="futures" selected>期货</option>
                                 <option value="spot">现货</option>
                         </select>
+                        </div>
+                        <div class="mt-1">
+                            <button type="button" id="refreshDataBtn" class="btn btn-outline-secondary btn-sm" onclick="refreshLocalMeta(true)">
+                                <i class="fas fa-sync-alt me-1"></i>刷新数据
+                            </button>
+                            <small class="text-muted ms-1">首次加载使用缓存，点击按钮强制刷新</small>
                         </div>
                     </div>
                     <div class="mb-3">
@@ -111,7 +111,7 @@
                 <div id="evaluationResults" style="display:none;">
                     <div class="row mb-3 text-center">
                         <div class="col-3"><div class="border rounded p-2"><div class="text-muted small">平均IC</div><div id="avgIC">0.0000</div></div></div>
-                        <div class="col-3"><div class="border rounded p-2"><div class="text-muted small">平均IR</div><div id="avgIR">0.0000</div></div></div>
+                        <div class="col-3"><div class="border rounded p-2"><div class="text-muted small">平均夏普</div><div id="avgSharpe">0.0000</div></div></div>
                         <div class="col-3"><div class="border rounded p-2"><div class="text-muted small">平均胜率</div><div id="avgWinRate">0.0%</div></div></div>
                         <div class="col-3"><div class="border rounded p-2"><div class="text-muted small">样本数</div><div id="totalCount">0</div></div></div>
                                 </div>
@@ -124,8 +124,8 @@
                         </div>
                         <div class="col-md-6">
                             <div class="card">
-                                <div class="card-header"><span class="small text-muted">按因子聚合</span> IR 条形图</div>
-                                <div class="card-body"><canvas id="irBarChart" height="160"></canvas></div>
+                                <div class="card-header"><span class="small text-muted">按因子聚合</span> 夏普条形图</div>
+                                <div class="card-body"><canvas id="sharpeBarChart" height="160"></canvas></div>
                             </div>
                         </div>
                     </div>
@@ -165,209 +165,269 @@ document.addEventListener('DOMContentLoaded', async () => {
     await refreshLocalMeta();
 });
 
-// 全局变量存储所有因子数据
 let allFactors = [];
-let filteredFactors = [];
-let searchTimeout = null; // 用于防抖
+
+function isWindowBasedKlineFactor(factor) {
+    const factorId = factor.id || '';
+    const windowPatterns = ['ma_', 'ema_', 'sma_', 'rsi_', 'macd', 'atr_', 'std_', 'var_', 
+                            'max_', 'min_', 'sum_', 'roc_', 'momentum', 'adx', 'cci', 
+                            'willr', 'stoch', 'bb_', 'kc_', 'dc_', 'obv', 'mfi', 
+                            '_ma', '_ema', '_sma', 'volatility', 'trend'];
+    for (const p of windowPatterns) {
+        if (factorId.toLowerCase().includes(p)) return true;
+    }
+    if (/(^|_)\d{1,3}($|_)/.test(factorId)) return true;
+    return false;
+}
 
 async function loadFactors() {
-    const sel = document.getElementById('factorSelect');
-    sel.innerHTML = '';
     try {
         const res = await fetch('/api/factors/list');
         const data = await res.json();
         if (data.success) {
             allFactors = data.factors || [];
-            // 初始化时按名称排序
-            filteredFactors = [...allFactors].sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
-            updateFactorDisplay();
-            updateFactorCount();
+            renderFactorList(allFactors);
         }
     } catch (error) {
         console.error('加载因子失败:', error);
     }
 }
 
-// 更新因子显示
-function updateFactorDisplay() {
-    const sel = document.getElementById('factorSelect');
-    sel.innerHTML = '';
+function renderFactorList(factors) {
+    const container = document.getElementById('factorListContainer');
     
-    // 按类型分组
-    const groupedFactors = {};
-    filteredFactors.forEach(f => {
-        const type = f.type || '其他';
-        if (!groupedFactors[type]) {
-            groupedFactors[type] = [];
+    const categories = {
+        'basic_kline': {
+            name: '基础K线因子',
+            icon: 'fa-chart-line',
+            color: 'primary',
+            desc: '仅需OHLCV数据即可计算',
+            factors: [],
+            subgroups: {
+                'single_bar': { name: '单bar因子', factors: [] },
+                'window': { name: '窗口因子（MA/RSI等）', factors: [] }
+            }
+        },
+        'event_factor': {
+            name: '事件因子',
+            icon: 'fa-bolt',
+            color: 'danger',
+            desc: '方向信号/交叉突破等离散事件类因子',
+            factors: []
+        },
+        'extra_data': {
+            name: '额外数据因子',
+            icon: 'fa-database',
+            color: 'warning',
+            desc: '需要资金费率、持仓量等额外数据',
+            factors: []
+        },
+        'ml_pretrained': {
+            name: 'ML预训练因子',
+            icon: 'fa-brain',
+            color: 'info',
+            desc: '需要ML模型或预训练数据',
+            factors: []
         }
-        groupedFactors[type].push(f);
+    };
+    
+    factors.forEach(f => {
+        const req = f.data_requirement || 'basic_kline';
+        if (categories[req]) {
+            categories[req].factors.push(f);
+            if (req === 'basic_kline') {
+                const subgroup = isWindowBasedKlineFactor(f) ? 'window' : 'single_bar';
+                categories[req].subgroups[subgroup].factors.push(f);
+            }
+        } else {
+            categories['basic_kline'].factors.push(f);
+            categories['basic_kline'].subgroups['single_bar'].factors.push(f);
+        }
     });
     
-    // 按类型排序，然后按名称排序
-    const sortedTypes = Object.keys(groupedFactors).sort();
-    
-    sortedTypes.forEach(type => {
-        // 添加分组标签
-        const groupOpt = document.createElement('option');
-        groupOpt.value = `group_${type}`;
-        groupOpt.textContent = `━━━ ${type} (${groupedFactors[type].length}) ━━━`;
-        groupOpt.disabled = true;
-        groupOpt.style.fontWeight = 'bold';
-        groupOpt.style.backgroundColor = '#e9ecef';
-        groupOpt.style.color = '#495057';
-        groupOpt.style.borderTop = '1px solid #dee2e6';
-        sel.appendChild(groupOpt);
+    let html = '';
+    Object.entries(categories).forEach(([key, cat]) => {
+        if (cat.factors.length === 0) return;
         
-        // 添加该类型下的因子
-        groupedFactors[type].forEach(f => {
-            const opt = document.createElement('option');
-            opt.value = f.id;
-            opt.textContent = `  ${f.name}`; // 添加缩进
-            opt.style.paddingLeft = '20px';
-            sel.appendChild(opt);
-        });
+        const collapseId = `collapse_${key}`;
+        let factorsHtml = '';
+        
+        if (key === 'basic_kline' && cat.subgroups) {
+            Object.entries(cat.subgroups).forEach(([subKey, subGroup]) => {
+                if (subGroup.factors.length === 0) return;
+                factorsHtml += `
+                    <div class="subgroup-header d-flex justify-content-between align-items-center small text-muted mb-1 px-1">
+                        <div><strong>${subGroup.name}</strong> (${subGroup.factors.length})</div>
+                        <div class="form-check m-0">
+                            <input class="form-check-input" type="checkbox"
+                                   id="subgroup_toggle_${key}_${subKey}"
+                                   onchange="toggleSubgroupSelection('${key}_${subKey}', this.checked)">
+                            <label class="form-check-label" for="subgroup_toggle_${key}_${subKey}">全选</label>
+                        </div>
+                    </div>
+                    ${subGroup.factors.map(f => `
+                        <div class="form-check factor-item" data-factor-id="${f.id}" data-subgroup="${key}_${subKey}">
+                            <input class="form-check-input factor-checkbox" type="checkbox"
+                                   value="${f.id}" id="factor_${f.id}"
+                                   onchange="updateFactorCount()">
+                            <label class="form-check-label small" for="factor_${f.id}"
+                                   title="${f.description || ''}">
+                                ${f.name}
+                                <span class="text-muted">(${f.type || ''})</span>
+                            </label>
+                        </div>
+                    `).join('')}
+                    <hr class="my-2">
+                `;
+            });
+        } else {
+            factorsHtml = cat.factors.map(f => `
+                <div class="form-check factor-item" data-factor-id="${f.id}" data-category="${key}">
+                    <input class="form-check-input factor-checkbox" type="checkbox"
+                           value="${f.id}" id="factor_${f.id}"
+                           onchange="updateFactorCount()">
+                    <label class="form-check-label small" for="factor_${f.id}"
+                           title="${f.description || ''}">
+                        ${f.name}
+                        <span class="text-muted">(${f.type || ''})</span>
+                    </label>
+                </div>
+            `).join('');
+        }
+        
+        html += `
+            <div class="factor-category">
+                <div class="d-flex justify-content-between align-items-center p-2 bg-light border-bottom"
+                     data-bs-toggle="collapse" data-bs-target="#${collapseId}" style="cursor: pointer;">
+                    <div>
+                        <i class="fas ${cat.icon} text-${cat.color} me-2"></i>
+                        <strong>${cat.name}</strong>
+                        <span class="badge bg-secondary ms-2">${cat.factors.length}</span>
+                        <small class="text-muted ms-2 d-none d-sm-inline">${cat.desc}</small>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <button type="button" class="btn btn-link btn-sm p-0 me-2"
+                                onclick="event.stopPropagation(); toggleCategorySelection('${key}');">
+                            <i class="fas fa-check-square"></i>
+                        </button>
+                        <i class="fas fa-chevron-down collapse-icon"></i>
+                    </div>
+                </div>
+                <div id="${collapseId}" class="collapse show">
+                    <div class="p-2">
+                        ${factorsHtml}
+                    </div>
+                </div>
+            </div>
+        `;
     });
-}
-
-// 更新因子计数
-function updateFactorCount() {
-    const countElement = document.getElementById('factorCount');
-    if (countElement) {
-        countElement.textContent = filteredFactors.length;
-    }
-}
-
-// 搜索和过滤因子
-function filterFactors() {
-    const searchTerm = document.getElementById('factorSearch').value.toLowerCase();
-    const sortBy = document.getElementById('factorSort').value;
     
-    // 过滤
-    if (searchTerm) {
-        filteredFactors = allFactors.filter(f => 
-            f.name.toLowerCase().includes(searchTerm) ||
-            (f.description && f.description.toLowerCase().includes(searchTerm)) ||
-            (f.type && f.type.toLowerCase().includes(searchTerm))
-        );
-    } else {
-        // 如果没有搜索词，显示所有因子
-        filteredFactors = [...allFactors];
-    }
-    
-    // 排序
-    switch (sortBy) {
-        case 'name':
-            filteredFactors.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
-            break;
-        case 'type':
-            filteredFactors.sort((a, b) => {
-                const typeA = a.type || '';
-                const typeB = b.type || '';
-                if (typeA === typeB) {
-                    return a.name.localeCompare(b.name, 'zh-CN');
-                }
-                return typeA.localeCompare(typeB, 'zh-CN');
-            });
-            break;
-        case 'created':
-            filteredFactors.sort((a, b) => {
-                const dateA = new Date(a.created_at || 0);
-                const dateB = new Date(b.created_at || 0);
-                if (dateA.getTime() === dateB.getTime()) {
-                    return a.name.localeCompare(b.name, 'zh-CN');
-                }
-                return dateB.getTime() - dateA.getTime(); // 最新的在前
-            });
-            break;
-    }
-    
-    updateFactorDisplay();
+    container.innerHTML = html || '<div class="text-center text-muted p-3">暂无因子</div>';
+    document.getElementById('totalFactorCount').textContent = factors.length;
     updateFactorCount();
 }
 
-// 全选因子
+function toggleSubgroupSelection(subgroupId, checked) {
+    const items = document.querySelectorAll(`.factor-item[data-subgroup="${subgroupId}"] .factor-checkbox`);
+    items.forEach(cb => cb.checked = checked);
+    updateFactorCount();
+}
+
+function toggleCategorySelection(categoryKey) {
+    const checkboxes = document.querySelectorAll(`#collapse_${categoryKey} .factor-checkbox`);
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    checkboxes.forEach(cb => cb.checked = !allChecked);
+    updateFactorCount();
+}
+
+function updateFactorCount() {
+    const checked = document.querySelectorAll('.factor-checkbox:checked').length;
+    document.getElementById('selectedFactorCount').textContent = checked;
+}
+
+function filterFactors() {
+    const keyword = document.getElementById('factorSearch').value.toLowerCase().trim();
+    const items = document.querySelectorAll('.factor-item');
+    items.forEach(item => {
+        const label = item.querySelector('label').textContent.toLowerCase();
+        item.style.display = keyword && !label.includes(keyword) ? 'none' : '';
+    });
+}
+
 function selectAllFactors() {
-    const factorSelect = document.getElementById('factorSelect');
-    Array.from(factorSelect.options).forEach(option => {
-        if (!option.disabled && !option.value.startsWith('group_')) {
-            option.selected = true;
-        }
-    });
+    document.querySelectorAll('.factor-checkbox').forEach(cb => cb.checked = true);
+    updateFactorCount();
 }
 
-// 清空因子选择
 function clearFactorSelection() {
-    const factorSelect = document.getElementById('factorSelect');
-    Array.from(factorSelect.options).forEach(option => {
-        option.selected = false;
-    });
+    document.querySelectorAll('.factor-checkbox').forEach(cb => cb.checked = false);
+    updateFactorCount();
 }
 
-// 添加搜索和排序事件监听器
-document.getElementById('factorSearch').addEventListener('input', function() {
-    // 防抖处理，300ms 后执行搜索
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(filterFactors, 300);
-});
-document.getElementById('factorSort').addEventListener('change', filterFactors);
-
-// 添加键盘快捷键支持
-document.getElementById('factorSearch').addEventListener('keydown', function(e) {
-    if (e.key === 'Escape') {
-        // ESC 键清空搜索
-        this.value = '';
-        filterFactors();
-        this.focus();
-    } else if (e.key === 'Enter') {
-        // Enter 键聚焦到因子选择框
-        document.getElementById('factorSelect').focus();
-    }
-});
-
-// 为因子选择框添加键盘导航
-document.getElementById('factorSelect').addEventListener('keydown', function(e) {
-    if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
-        // Ctrl+A 全选
-        e.preventDefault();
-        selectAllFactors();
-    }
-});
+function getSelectedFactorIds() {
+    return Array.from(document.querySelectorAll('.factor-checkbox:checked')).map(cb => cb.value);
+}
 
 document.getElementById('exchangeSelect').addEventListener('change', refreshLocalMeta);
 document.getElementById('tradeTypeSelect').addEventListener('change', refreshLocalMeta);
 document.getElementById('symbolsSelect').addEventListener('change', updateTimeframesForSelection);
 document.getElementById('timeframesSelect').addEventListener('change', updateRangeForSelection);
 
-async function refreshLocalMeta() {
+async function refreshLocalMeta(forceRefresh) {
     const ex = document.getElementById('exchangeSelect').value;
     const tt = document.getElementById('tradeTypeSelect').value;
-    const url = `/api/data/local-data?exchange=${ex}&trade_type=${tt}`;
+    const cacheKey = `localData_${ex}_${tt}`;
     const symbolsSel = document.getElementById('symbolsSelect');
     const tfsSel = document.getElementById('timeframesSelect');
     symbolsSel.innerHTML = '';
     tfsSel.innerHTML = '';
+
+    if (!forceRefresh) {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+            try {
+                const parsed = JSON.parse(cached);
+                if (parsed.timestamp && Date.now() - parsed.timestamp < 300000) {
+                    localDataRows = parsed.data || [];
+                    populateSymbolsAndTimeframes(localDataRows, symbolsSel, tfsSel);
+                    return;
+                }
+            } catch (e) {}
+        }
+    }
+
+    const btn = document.getElementById('refreshDataBtn');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>刷新中'; }
+
     try {
-        const res = await fetch(url);
+        const forceParam = forceRefresh ? '&force=1' : '';
+        const res = await fetch(`/api/data/local-data-cached?exchange=${ex}&trade_type=${tt}${forceParam}`);
         const data = await res.json();
         if (data.success) {
             const rows = data.data || [];
             localDataRows = rows;
-            const symbols = [...new Set(rows.map(r => r.symbol))].sort();
-            symbols.forEach(s => { const o = document.createElement('option'); o.value=s; o.textContent=s; symbolsSel.appendChild(o);});
-            // 初始时间框架：基于全部数据的去重并按分钟排序
-            const tfs = [...new Set(rows.map(r => r.timeframe))].sort((a,b)=>timeframeToMinutes(a)-timeframeToMinutes(b));
-            tfs.forEach(tf => { const o = document.createElement('option'); o.value=tf; o.textContent=tf; tfsSel.appendChild(o);});
-            // 计算全局可用时间范围
-            const starts = rows.map(r => r.date_range && r.date_range.start).filter(Boolean).map(s => new Date(s));
-            const ends = rows.map(r => r.date_range && r.date_range.end).filter(Boolean).map(s => new Date(s));
-            if (starts.length && ends.length) {
-                setupRangeSlider(new Date(Math.min(...starts)), new Date(Math.max(...ends)));
-            }
+            localStorage.setItem(cacheKey, JSON.stringify({ data: rows, timestamp: Date.now() }));
+            populateSymbolsAndTimeframes(rows, symbolsSel, tfsSel);
         }
-    } catch {}
+    } catch (e) {
+        console.error('获取本地数据失败:', e);
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fas fa-sync-alt me-1"></i>刷新数据'; }
+    }
 }
 
-// 根据已选择交易对，动态过滤并排序时间框架（按从小到大）
+function populateSymbolsAndTimeframes(rows, symbolsSel, tfsSel) {
+    const symbols = [...new Set(rows.map(r => r.symbol))].sort();
+    symbols.forEach(s => { const o = document.createElement('option'); o.value=s; o.textContent=s; symbolsSel.appendChild(o);});
+    const tfs = [...new Set(rows.map(r => r.timeframe))].sort((a,b)=>timeframeToMinutes(a)-timeframeToMinutes(b));
+    tfs.forEach(tf => { const o = document.createElement('option'); o.value=tf; o.textContent=tf; tfsSel.appendChild(o);});
+    const starts = rows.map(r => r.date_range && r.date_range.start).filter(Boolean).map(s => new Date(s));
+    const ends = rows.map(r => r.date_range && r.date_range.end).filter(Boolean).map(s => new Date(s));
+    if (starts.length && ends.length) {
+        setupRangeSlider(new Date(Math.min(...starts)), new Date(Math.max(...ends)));
+    }
+}
+
 function updateTimeframesForSelection() {
     const tfsSel = document.getElementById('timeframesSelect');
     const selectedSymbols = Array.from(document.getElementById('symbolsSelect').selectedOptions).map(o=>o.value);
@@ -449,7 +509,7 @@ function setupRangeSlider(startDate, endDate) {
 
 document.getElementById('evaluationForm').addEventListener('submit', async (e) => {
     e.preventDefault();
-    const factor_ids = Array.from(document.getElementById('factorSelect').selectedOptions).map(o=>o.value);
+    const factor_ids = getSelectedFactorIds();
     const symbols = Array.from(document.getElementById('symbolsSelect').selectedOptions).map(o=>o.value);
     const timeframes = Array.from(document.getElementById('timeframesSelect').selectedOptions).map(o=>o.value);
     const start_date = document.getElementById('startDate').value;
@@ -542,10 +602,10 @@ function renderResults() {
             if (!v.length) return null; return v.reduce((a,b)=>a+b,0)/v.length;
         };
         const ic = mean('ic_pearson');
-        const ir = mean('sharpe_ratio');
+        const sharpe = mean('sharpe_ratio');
         const wr = mean('win_rate');
         document.getElementById('avgIC').textContent = ic!=null? ic.toFixed(4):'0.0000';
-        document.getElementById('avgIR').textContent = ir!=null? ir.toFixed(4):'0.0000';
+        document.getElementById('avgSharpe').textContent = sharpe!=null? sharpe.toFixed(4):'0.0000';
         document.getElementById('avgWinRate').textContent = wr!=null? (wr*100).toFixed(1)+'%':'0.0%';
         document.getElementById('totalCount').textContent = resultsData.length;
     }
@@ -580,7 +640,7 @@ function sortResults(field){
 function fmtNum(v){ return (typeof v==='number')? v.toFixed(4):''; }
 function fmtPct(v){ return (typeof v==='number')? (v*100).toFixed(2)+'%':''; }
 
-let icChartInstance=null, irChartInstance=null;
+let icChartInstance=null, sharpeChartInstance=null;
 function renderCharts(){
     // 聚合到因子层面
     const byFactor = {};
@@ -591,13 +651,13 @@ function renderCharts(){
     });
     const labels = Object.keys(byFactor);
     const icMeans = labels.map(k => byFactor[k].ic.length? byFactor[k].ic.reduce((a,b)=>a+b,0)/byFactor[k].ic.length : 0);
-    const irMeans = labels.map(k => byFactor[k].ir.length? byFactor[k].ir.reduce((a,b)=>a+b,0)/byFactor[k].ir.length : 0);
+    const sharpeMeans = labels.map(k => byFactor[k].ir.length? byFactor[k].ir.reduce((a,b)=>a+b,0)/byFactor[k].ir.length : 0);
     const icCtx = document.getElementById('icBarChart').getContext('2d');
-    const irCtx = document.getElementById('irBarChart').getContext('2d');
+    const sharpeCtx = document.getElementById('sharpeBarChart').getContext('2d');
     if (icChartInstance) icChartInstance.destroy();
-    if (irChartInstance) irChartInstance.destroy();
+    if (sharpeChartInstance) sharpeChartInstance.destroy();
     icChartInstance = new Chart(icCtx, { type:'bar', data:{ labels, datasets:[{ label:'IC', data: icMeans, backgroundColor:'rgba(54,162,235,0.5)' }] }, options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } } });
-    irChartInstance = new Chart(irCtx, { type:'bar', data:{ labels, datasets:[{ label:'IR', data: irMeans, backgroundColor:'rgba(255,159,64,0.5)' }] }, options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } } });
+    sharpeChartInstance = new Chart(sharpeCtx, { type:'bar', data:{ labels, datasets:[{ label:'Sharpe', data: sharpeMeans, backgroundColor:'rgba(255,159,64,0.5)' }] }, options:{ responsive:true, plugins:{ legend:{ display:false } }, scales:{ y:{ beginAtZero:true } } } });
 }
 
 document.getElementById('exportBtn').addEventListener('click', ()=>{

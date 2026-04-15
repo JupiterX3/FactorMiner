@@ -7,6 +7,6 @@ def calculate(data, oi_col='open_interest', price_col='close', window=50, **kwar
         # 将索引位置映射到价格（近似）
         price = data[price_col]
         lvl_series = price.rolling(window=window).apply(lambda s: s.iloc[-1], raw=False)
-        return lvl_series.fillna(method='ffill').fillna(0.0)
+        return lvl_series.ffill().fillna(0.0)
     return pd.Series(0.0, index=data.index)
 

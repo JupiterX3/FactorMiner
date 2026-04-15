@@ -6,11 +6,15 @@
 import pandas as pd
 import numpy as np
 import logging
+import threading
 from typing import Dict, List, Optional, Union, Any
 from pathlib import Path
 from factor_miner.core.factor_storage import TransparentFactorStorage, get_global_storage
 
 logger = logging.getLogger(__name__)
+
+_module_cache: Dict[str, Any] = {}
+_module_cache_lock = threading.Lock()
 
 
 class FactorEngine:
@@ -28,7 +32,11 @@ class FactorEngine:
     
     def compute_single_factor(self, factor_id: str, data: pd.DataFrame, **kwargs) -> Optional[pd.Series]:
         """
-        计算单个因子（直接调用user_algo中的函数）
+        计算单个因子
+        
+        支持两种因子类型：
+        1. function - 函数类型因子，使用 function_file 和 entry_point
+        2. ml_model - 机器学习模型因子，使用 algorithm_name
         
         Args:
             factor_id: 因子ID
@@ -41,38 +49,271 @@ class FactorEngine:
         try:
             logger.debug(f"开始计算因子: {factor_id}")
             
-            # 从因子定义中获取算法信息
+            # 从因子定义中获取计算信息
             factor_def = self.storage.load_factor_definition(factor_id)
             if not factor_def:
                 logger.error(f"找不到因子定义: {factor_id}")
                 return None
             
-            # 获取算法名称
-            algorithm_name = factor_def.computation_data.get('algorithm_name')
-            if not algorithm_name:
-                logger.error(f"因子定义中缺少算法名称: {factor_id}")
-                return None
+            computation_type = factor_def.computation_type
+            comp_data = factor_def.computation_data or {}
             
-            # 动态导入算法模块
-            algorithm_module = self._load_algorithm_module(algorithm_name)
-            if not algorithm_module:
-                logger.error(f"无法加载算法模块: {algorithm_name}")
-                return None
-            
-            # 调用算法的calculate_single_factor函数
-            factor_name = factor_def.name
-            result = algorithm_module.calculate_single_factor(data, factor_name)
-            
-            if result is not None:
-                logger.debug(f"因子计算成功: {factor_id}")
-                return result
+            if computation_type == "function":
+                return self._compute_function_factor(factor_def, data, kwargs)
+            elif computation_type == "ml_model":
+                return self._compute_ml_model_factor(factor_def, data, kwargs)
+            elif computation_type == "formula":
+                return self._compute_formula_factor(factor_def, data, kwargs)
             else:
-                logger.warning(f"因子计算返回空结果: {factor_id}")
+                logger.error(f"不支持的计算类型: {computation_type}")
                 return None
                 
         except Exception as e:
             logger.error(f"计算因子失败 {factor_id}: {e}")
-            raise
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _compute_function_factor(self, factor_def, data: pd.DataFrame, kwargs: dict) -> Optional[pd.Series]:
+        """计算函数类型因子"""
+        import importlib.util
+        import sys
+        
+        comp_data = factor_def.computation_data or {}
+        
+        function_file = comp_data.get('function_file')
+        if not function_file:
+            logger.error(f"因子定义中缺少 function_file: {factor_def.factor_id}")
+            return None
+        
+        possible_paths = [
+            self.storage.storage_dir / function_file,
+            self.storage.storage_dir / "technicals" / function_file,
+            self.storage.storage_dir / "minactors" / function_file,
+        ]
+        
+        func_path = None
+        for path in possible_paths:
+            if path.exists():
+                func_path = path
+                break
+        
+        if not func_path:
+            logger.error(f"函数文件不存在，尝试的路径: {[str(p) for p in possible_paths]}")
+            return None
+        
+        cache_key = str(func_path)
+        
+        with _module_cache_lock:
+            if cache_key in _module_cache:
+                module = _module_cache[cache_key]
+            else:
+                factorlib_path = self.storage.storage_dir.parent
+                if str(factorlib_path) not in sys.path:
+                    sys.path.insert(0, str(factorlib_path))
+                
+                try:
+                    spec = importlib.util.spec_from_file_location(
+                        f"factor_{factor_def.factor_id}", func_path
+                    )
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    _module_cache[cache_key] = module
+                except Exception as e:
+                    logger.error(f"加载函数模块失败: {e}")
+                    return None
+        
+        entry_point = comp_data.get('entry_point', 'calculate')
+        if not hasattr(module, entry_point):
+            logger.error(f"函数中未找到入口点: {entry_point}")
+            return None
+        
+        func = getattr(module, entry_point)
+        
+        params = (factor_def.parameters or {}).copy()
+        params.update(kwargs)
+        
+        try:
+            result = func(data, **params)
+            if result is not None:
+                logger.debug(f"因子计算成功: {factor_def.factor_id}")
+                return result
+            else:
+                logger.warning(f"因子计算返回空结果: {factor_def.factor_id}")
+                return None
+        except Exception as e:
+            logger.error(f"调用因子函数失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _compute_formula_factor(self, factor_def, data: pd.DataFrame, kwargs: dict) -> Optional[pd.Series]:
+        """计算公式类型因子"""
+        comp_data = factor_def.computation_data or {}
+        formula = comp_data.get('formula', '')
+        
+        if not formula:
+            logger.error(f"因子定义中缺少 formula: {factor_def.factor_id}")
+            return None
+        
+        if formula.strip().startswith('#'):
+            logger.info(f"公式为注释，尝试使用函数文件: {factor_def.factor_id}")
+            return self._compute_formula_as_function(factor_def, data, kwargs)
+        
+        params = (factor_def.parameters or {}).copy()
+        params.update(kwargs)
+        
+        try:
+            local_vars = {
+                'close': data['close'],
+                'open': data['open'],
+                'high': data['high'],
+                'low': data['low'],
+                'volume': data['volume'],
+                'data': data,
+                'pd': pd,
+                'np': np,
+                'abs': abs,
+                'min': min,
+                'max': max,
+                'sum': sum,
+                'len': len,
+                'round': round,
+                'float': float,
+                'int': int,
+                'str': str,
+            }
+            
+            local_vars.update(params)
+            
+            result = eval(formula, {"__builtins__": {}}, local_vars)
+            
+            if isinstance(result, pd.Series):
+                logger.debug(f"公式因子计算成功: {factor_def.factor_id}")
+                return result
+            else:
+                logger.warning(f"公式因子返回非Series类型: {type(result)}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"公式因子计算失败 {factor_def.factor_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _compute_formula_as_function(self, factor_def, data: pd.DataFrame, kwargs: dict) -> Optional[pd.Series]:
+        """将公式类型因子作为函数类型处理"""
+        import importlib.util
+        import sys
+        
+        factor_id = factor_def.factor_id
+        
+        base_name = factor_id.split('_')[0]
+        name_without_suffix = '_'.join(factor_id.split('_')[:-1]) if '_' in factor_id else factor_id
+        
+        possible_paths = [
+            self.storage.storage_dir / "technicals" / "functions" / f"{factor_id}.py",
+            self.storage.storage_dir / "minactors" / "functions" / f"{factor_id}.py",
+            self.storage.storage_dir / "technicals" / "functions" / f"{name_without_suffix}.py",
+            self.storage.storage_dir / "technicals" / "functions" / f"{base_name}.py",
+        ]
+        
+        func_path = None
+        for path in possible_paths:
+            if path.exists():
+                func_path = path
+                break
+        
+        if not func_path:
+            comp_data = factor_def.computation_data or {}
+            formula = comp_data.get('formula', '')
+            if formula and not formula.strip().startswith('#'):
+                return self._execute_formula(formula, data, factor_def.parameters or {}, kwargs)
+            
+            logger.warning(f"找不到函数文件且公式为空/注释，跳过因子: {factor_id}")
+            return None
+        
+        factorlib_path = self.storage.storage_dir.parent
+        if str(factorlib_path) not in sys.path:
+            sys.path.insert(0, str(factorlib_path))
+        
+        try:
+            spec = importlib.util.spec_from_file_location(f"factor_{factor_id}", func_path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+        except Exception as e:
+            logger.error(f"加载函数模块失败: {e}")
+            return None
+        
+        if not hasattr(module, 'calculate'):
+            logger.error(f"函数中未找到 calculate 入口点")
+            return None
+        
+        func = getattr(module, 'calculate')
+        
+        params = (factor_def.parameters or {}).copy()
+        params.update(kwargs)
+        
+        try:
+            result = func(data, **params)
+            if result is not None:
+                logger.debug(f"公式因子(函数模式)计算成功: {factor_id}")
+                return result
+            else:
+                logger.warning(f"公式因子(函数模式)返回空结果: {factor_id}")
+                return None
+        except Exception as e:
+            logger.error(f"调用因子函数失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def _execute_formula(self, formula: str, data: pd.DataFrame, 
+                         factor_params: dict, kwargs: dict) -> Optional[pd.Series]:
+        """执行公式计算"""
+        import pandas as pd
+        import numpy as np
+        
+        params = factor_params.copy()
+        params.update(kwargs)
+        
+        local_vars = {
+            'data': data,
+            'pd': pd,
+            'np': np,
+            **params
+        }
+        
+        try:
+            exec(formula, local_vars)
+            if 'result' in local_vars:
+                return local_vars['result']
+            else:
+                logger.error("公式执行后未找到 'result' 变量")
+                return None
+        except Exception as e:
+            logger.error(f"公式执行失败: {e}")
+            return None
+    
+    def _compute_ml_model_factor(self, factor_def, data: pd.DataFrame, kwargs: dict) -> Optional[pd.Series]:
+        """计算机器学习模型类型因子"""
+        comp_data = factor_def.computation_data or {}
+        
+        # 尝试使用 algorithm_name 方式
+        algorithm_name = comp_data.get('algorithm_name')
+        if algorithm_name:
+            algorithm_module = self._load_algorithm_module(algorithm_name)
+            if algorithm_module:
+                factor_name = factor_def.name
+                if hasattr(algorithm_module, 'calculate_single_factor'):
+                    return algorithm_module.calculate_single_factor(data, factor_name)
+        
+        # 尝试使用 storage 的 compute_factor 方法
+        try:
+            return self.storage.compute_factor(factor_def.factor_id, data, **kwargs)
+        except Exception as e:
+            logger.error(f"ML模型因子计算失败: {e}")
+            return None
     
     def _load_algorithm_module(self, algorithm_name: str):
         """动态加载算法模块"""

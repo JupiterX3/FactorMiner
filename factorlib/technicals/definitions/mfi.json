@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/mfi.py",
+    "function_file": "technicals/functions/mfi.py",
     "function_code": "def calculate(data, period=14, **kwargs):\n    tp = (data['high']+data['low']+data['close'])/3\n    mf = tp * data['volume']\n    pos = mf.where(tp>tp.shift(1), 0).rolling(window=period).sum()\n    neg = mf.where(tp<tp.shift(1), 0).rolling(window=period).sum()\n    mr = pos/neg\n    return 100 - (100/(1+mr))\n",
     "entry_point": "calculate",
     "imports": [

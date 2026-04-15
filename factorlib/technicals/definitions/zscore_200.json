@@ -4,11 +4,10 @@
   "description": "自动生成的zscore_200因子",
   "category": "statistical",
   "subcategory": "",
-  "computation_type": "formula",
+  "computation_type": "function",
   "computation_data": {
-    "formula_file": "formulas/zscore_200.txt",
-    "formula": "# zscore_200 因子的计算公式\n# 类型: statistical\n# 自动生成于 2025-09-01 15:38:18.644120",
-    "language": "pandas"
+    "function_file": "technicals/functions/zscore_200.py",
+    "entry_point": "calculate"
   },
   "parameters": {},
   "dependencies": [],

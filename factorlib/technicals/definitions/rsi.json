@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/rsi.py",
+    "function_file": "technicals/functions/rsi.py",
     "function_code": "def calculate(data, period=14, **kwargs):\n    delta = data['close'].diff()\n    gain = delta.where(delta>0, 0).rolling(window=period).mean()\n    loss = (-delta.where(delta<0, 0)).rolling(window=period).mean()\n    rs = gain / loss\n    return 100 - (100/(1+rs))\n",
     "entry_point": "calculate",
     "imports": [

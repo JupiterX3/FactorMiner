@@ -6,13 +6,25 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/kst.py",
+    "function_file": "technicals/functions/kst.py",
     "entry_point": "calculate",
     "imports": []
   },
-  "parameters": { "rp": [10,15,20,30], "sp": [10,10,10,15] },
+  "parameters": {
+    "rp": [
+      10,
+      15,
+      20,
+      30
+    ],
+    "sp": [
+      10,
+      10,
+      10,
+      15
+    ]
+  },
   "dependencies": [],
   "output_type": "series",
   "metadata": {}
 }
-

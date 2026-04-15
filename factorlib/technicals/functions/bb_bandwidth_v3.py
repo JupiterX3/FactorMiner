@@ -1,23 +1,23 @@
-
-def calculate(data, period=20, std_dev=2):
-    """
-    计算布林带指标
-    
-    参数:
-        - period: 周期
-        - std_dev: 标准差倍数
-    """
-    # 1. 计算中轨(SMA)
-    middle = data['close'].rolling(window=period).mean()
-    
-    # 2. 计算标准差
-    std = data['close'].rolling(window=period).std()
-    
-    # 3. 计算上轨和下轨
-    upper = middle + (std * std_dev)
-    lower = middle - (std * std_dev)
-    
-    # 4. 计算带宽
-    bandwidth = (upper - lower) / middle
-    
-    return bandwidth  # 返回带宽
+
+def calculate(data, period=20, std_dev=2):
+    """
+    è®¡ç®å¸æå¸¦ææ ?
+    
+    åæ°:
+        - period: å¨æ
+        - std_dev: æ åå·®åæ°
+    """
+    # 1. è®¡ç®ä¸­è½¨(SMA)
+    middle = data['close'].rolling(window=period).mean()
+    
+    # 2. è®¡ç®æ åå·?
+    std = data['close'].rolling(window=period).std()
+    
+    # 3. è®¡ç®ä¸è½¨åä¸è½?
+    upper = middle + (std * std_dev)
+    lower = middle - (std * std_dev)
+    
+    # 4. è®¡ç®å¸¦å®½
+    bandwidth = (upper - lower) / middle
+    
+    return bandwidth  # è¿åå¸¦å®½

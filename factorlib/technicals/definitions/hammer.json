@@ -1,16 +1,19 @@
 {
   "factor_id": "hammer",
-  "name": "hammer",
-  "description": "自动生成的hammer因子",
-  "category": "technical",
+  "name": "锤子线形态",
+  "description": "Hammer Pattern - 下跌趋势中的看涨反转形态",
+  "category": "pattern",
   "subcategory": "",
   "computation_type": "formula",
   "computation_data": {
     "formula_file": "formulas/hammer.txt",
-    "formula": "# hammer 因子的计算公式\n# 类型: technical\n# 自动生成于 2025-09-01 15:38:18.622709",
+    "formula": "(((np.minimum(close, open) - low) > 2 * abs(close - open)) & ((high - np.maximum(close, open)) < abs(close - open)) & (abs(close - open) > 0)).astype(float)",
     "language": "pandas"
   },
-  "parameters": {},
+  "parameters": {
+    "body_ratio": 0.3,
+    "shadow_ratio": 2.0
+  },
   "dependencies": [],
   "output_type": "series",
   "metadata": {

@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/Hazel-volatility_change.py",
+    "function_file": "technicals/functions/Hazel-volatility_change.py",
     "function_code": "import pandas as pd\nimport numpy as np\n\ndef calculate(data: pd.DataFrame, window: int = 10, **kwargs) -> pd.Series:\n    if data is None or len(data) == 0 or \"close\" not in data.columns:\n        return pd.Series(dtype=float)\n    c = pd.to_numeric(data[\"close\"], errors=\"coerce\")\n    vol = c.rolling(window).std() / c.rolling(window).mean()\n    return vol - vol.shift(1)\n",
     "entry_point": "calculate",
     "imports": []

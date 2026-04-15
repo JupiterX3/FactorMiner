@@ -1,14 +1,13 @@
 {
   "factor_id": "technical_mining_price_position_10",
   "name": "price_position_10",
-  "description": "由 technical_mining 算法生成的 price_position_10 因子",
+  "description": "价格在10周期内的相对位置 (0-1)",
   "category": "technical",
   "subcategory": "",
-  "computation_type": "ml_model",
+  "computation_type": "function",
   "computation_data": {
-    "algorithm_name": "technical_mining",
-    "model_file": "technical_mining_price_position_10.pkl",
-    "performance_metrics": {}
+    "function_file": "minactors/functions/technical_mining_price_position_10.py",
+    "entry_point": "calculate"
   },
   "parameters": {},
   "dependencies": [],

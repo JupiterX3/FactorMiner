@@ -25,40 +25,58 @@ class DataDownloader:
         """初始化数据下载器"""
         self.logger = logging.getLogger(__name__)
 
-    def get_exchange_instance(self, config_id: int = None) -> Optional[ccxt.Exchange]:
+    def get_exchange_instance(self, config_id: int = None, exchange_id: str = 'binance') -> Optional[ccxt.Exchange]:
         """
         获取交易所实例
         
         Args:
             config_id: 配置ID，如果为None则使用默认配置
+            exchange_id: 交易所ID，默认为binance
             
         Returns:
             交易所实例
         """
         try:
-            if config_id is None:
-                # 使用默认的 Binance 配置
-                exchange_class = getattr(ccxt, 'binance')
-                # 检测环境变量中的代理配置
-                http_proxy = os.getenv('HTTP_PROXY')
-                https_proxy = os.getenv('HTTPS_PROXY')
-                proxies = {}
-                if http_proxy:
-                    proxies['http'] = http_proxy
-                if https_proxy:
-                    proxies['https'] = https_proxy
+            http_proxy = os.getenv('HTTP_PROXY')
+            https_proxy = os.getenv('HTTPS_PROXY')
+            proxies = {}
+            if http_proxy:
+                proxies['http'] = http_proxy
+            if https_proxy:
+                proxies['https'] = https_proxy
 
-                exchange = exchange_class({
+            if config_id is None:
+                exchange_class = getattr(ccxt, exchange_id)
+                
+                options = {
                     'enableRateLimit': True,
                     'timeout': 30000,
                     'proxies': proxies if proxies else None,
                     'headers': {
                         'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'
                     }
-                })
+                }
+                
+                is_futures = hasattr(self, 'trade_type') and self.trade_type in ['futures', 'perpetual', 'delivery']
+                if is_futures:
+                    if exchange_id == 'binance':
+                        options['defaultType'] = 'swap'
+                        options['options'] = {
+                            'defaultSubType': 'linear',
+                            'fetchMarkets': ['linear']
+                        }
+                    elif exchange_id == 'okx':
+                        options['defaultType'] = 'swap'
+                    elif exchange_id == 'bybit':
+                        options['defaultType'] = 'linear'
+                else:
+                    options['defaultType'] = 'spot'
+                    if exchange_id == 'binance':
+                        options['options'] = {'fetchMarkets': ['spot']}
+                
+                exchange = exchange_class(options)
                 return exchange
 
-            # 使用配置文件
             config = config_manager.get_exchange_config(config_id)
             if not config:
                 self.logger.error(f"配置不存在: {config_id}")
@@ -103,9 +121,87 @@ class DataDownloader:
             if not exchange:
                 return {'success': False, 'error': '无法创建交易所实例'}
 
-            # 转换日期格式
+            try:
+                exchange.load_markets()
+            except Exception as e:
+                self.logger.error(f"加载市场数据失败: {e}")
+                return {'success': False, 'error': f'加载市场数据失败: {e}'}
+            
+            if not exchange.markets or symbol not in exchange.markets:
+                if not exchange.markets:
+                    return {'success': False, 'error': '市场数据未加载，请检查网络连接或API配置'}
+                available_symbols = [s for s in exchange.markets.keys() if '/USDT' in s]
+                suggestions = [s for s in available_symbols if symbol.split('/')[0] in s][:5]
+                return {
+                    'success': False, 
+                    'error': f'交易对 {symbol} 不存在',
+                    'suggestions': suggestions
+                }
+
             start_dt = datetime.strptime(start_date, '%Y-%m-%d')
             end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+            
+            safe_symbol = symbol.replace('/', '_').replace(':', '_')
+            if hasattr(self, 'trade_type') and self.trade_type:
+                if self.trade_type == 'futures':
+                    local_file = Path(f"data/binance/futures/{safe_symbol}-{timeframe}-futures.feather")
+                elif self.trade_type == 'spot':
+                    local_file = Path(f"data/binance/spot/{safe_symbol}-{timeframe}-spot.feather")
+                else:
+                    local_file = Path(f"data/binance/{self.trade_type}/{safe_symbol}-{timeframe}-{self.trade_type}.feather")
+            else:
+                local_file = Path(f"data/binance/{safe_symbol}-{timeframe}.feather")
+            
+            if local_file.exists():
+                try:
+                    existing_df = pd.read_feather(local_file)
+                    time_col = None
+                    for col in ['date', 'datetime', 'timestamp', 'time']:
+                        if col in existing_df.columns:
+                            time_col = col
+                            break
+                    
+                    if time_col:
+                        existing_df[time_col] = pd.to_datetime(existing_df[time_col], errors='coerce')
+                        existing_start = existing_df[time_col].min()
+                        existing_end = existing_df[time_col].max()
+                        
+                        if hasattr(existing_start, 'tz') and existing_start.tz is not None:
+                            existing_start = existing_start.tz_localize(None)
+                        if hasattr(existing_end, 'tz') and existing_end.tz is not None:
+                            existing_end = existing_end.tz_localize(None)
+                        
+                        request_start = pd.Timestamp(start_dt)
+                        request_end = pd.Timestamp(end_dt)
+                        
+                        if existing_start <= request_start and existing_end >= request_end:
+                            if progress_callback:
+                                progress_callback(100, f"✅ 本地数据已完全覆盖请求范围，跳过下载")
+                            return {
+                                'success': True,
+                                'skipped': True,
+                                'reason': '本地数据已完全覆盖请求范围',
+                                'local_file': str(local_file),
+                                'local_range': {
+                                    'start': existing_start.strftime('%Y-%m-%d'),
+                                    'end': existing_end.strftime('%Y-%m-%d')
+                                },
+                                'requested_range': {
+                                    'start': start_date,
+                                    'end': end_date
+                                }
+                            }
+                        
+                        if existing_end >= request_start and existing_end < request_end:
+                            new_start_dt = existing_end + timedelta(hours=1)
+                            if new_start_dt < end_dt:
+                                if progress_callback:
+                                    progress_callback(0, f"本地数据覆盖至 {existing_end.strftime('%Y-%m-%d')}，从 {new_start_dt.strftime('%Y-%m-%d')} 继续下载")
+                                start_dt = new_start_dt
+                                start_date = new_start_dt.strftime('%Y-%m-%d')
+                        
+                except Exception as e:
+                    print(f"检查本地数据失败，继续正常下载: {e}")
 
             # 获取时间框架的毫秒数
             timeframe_ms = exchange.parse_timeframe(timeframe) * 1000
@@ -208,19 +304,19 @@ class DataDownloader:
 
             print(f"最终验证通过，准备保存: {len(df_save)} 条数据")
 
-            # 保存数据 - 使用与现有文件一致的命名格式
-            # 例如：BTC_USDT_USDT-2h-futures.feather
+            safe_symbol = symbol.replace('/', '_').replace(':', '_')
+
             if hasattr(self, 'trade_type') and self.trade_type:
                 if self.trade_type == 'futures':
-                    filename = f"{symbol.replace('/', '_')}_USDT-{timeframe}-futures.feather"
+                    filename = f"{safe_symbol}-{timeframe}-futures.feather"
                 elif self.trade_type == 'spot':
-                    filename = f"{symbol.replace('/', '_')}_USDT-{timeframe}-spot.feather"
+                    filename = f"{safe_symbol}-{timeframe}-spot.feather"
                 elif self.trade_type in ['perpetual', 'delivery']:
-                    filename = f"{symbol.replace('/', '_')}_USDT-{timeframe}-{self.trade_type}.feather"
+                    filename = f"{safe_symbol}-{timeframe}-{self.trade_type}.feather"
                 else:
-                    filename = f"{symbol}_{timeframe}_{start_date}_{end_date}.feather"
+                    filename = f"{safe_symbol}_{timeframe}_{start_date}_{end_date}.feather"
             else:
-                filename = f"{symbol}_{timeframe}_{start_date}_{end_date}.feather"
+                filename = f"{safe_symbol}_{timeframe}_{start_date}_{end_date}.feather"
 
             # 根据交易类型确定存储目录
             if hasattr(self, 'trade_type') and self.trade_type:
@@ -321,13 +417,13 @@ class DataDownloader:
                     merge_successful = True
                 except Exception as e:
                     merge_successful = False
-                    print(f"合并数据失败，源文件将保持不变，新数据将另存为新文件: {e}")
+                    print(f"⚠️ 合并数据失败（{e}），将用新数据直接覆盖旧文件")
 
             save_path.parent.mkdir(parents=True, exist_ok=True)
 
             # 安全写入：
             # 1) 若合并成功，写入临时文件并原子替换源文件
-            # 2) 若合并失败且存在源文件，则源文件不变，另存新文件
+            # 2) 若合并失败且存在源文件，直接用新数据覆盖旧文件
             # 3) 若不存在源文件，直接写入目标文件
             complete_message = None
             actual_path = save_path
@@ -337,13 +433,9 @@ class DataDownloader:
                 tmp_path.replace(save_path)
                 complete_message = f"下载完成并合并！共 {len(df_save)} 条数据"
             elif save_path.exists() and merge_attempted and not merge_successful:
-                # 生成另存文件名
-                ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-                alt_path = save_path.with_name(f"{save_path.stem}-new-{ts}{save_path.suffix}")
-                df_save.to_feather(alt_path)
-                actual_path = alt_path
-                alt_saved = True
-                complete_message = f"下载完成，但合并失败，已另存为新文件（不影响原文件）。共 {len(df_save)} 条数据"
+                df_save.to_feather(save_path)
+                actual_path = save_path
+                complete_message = f"下载完成，合并失败已用新数据覆盖旧文件。共 {len(df_save)} 条数据"
             else:
                 # 不存在源文件，直接写入
                 df_save.to_feather(save_path)
@@ -400,19 +492,20 @@ class DataDownloader:
             合并后的数据
         """
         try:
-            # 构建文件路径
+            safe_symbol = symbol.replace('/', '_').replace(':', '_')
+            
             if hasattr(self, 'trade_type') and self.trade_type:
                 if self.trade_type == 'futures':
-                    filename = f"{symbol.replace('/', '_')}_USDT-{timeframe}-futures.feather"
+                    filename = f"{safe_symbol}-{timeframe}-futures.feather"
                     save_path = Path("data/binance/futures") / filename
                 elif self.trade_type == 'spot':
-                    filename = f"{symbol.replace('/', '_')}_USDT-{timeframe}-spot.feather"
+                    filename = f"{safe_symbol}-{timeframe}-spot.feather"
                     save_path = Path("data/binance/spot") / filename
                 else:
-                    filename = f"{symbol}_{timeframe}_{start_date}_{end_date}.feather"
+                    filename = f"{safe_symbol}_{timeframe}_{start_date}_{end_date}.feather"
                     save_path = Path("data/binance") / filename
             else:
-                filename = f"{symbol}_{timeframe}_{start_date}_{end_date}.feather"
+                filename = f"{safe_symbol}_{timeframe}_{start_date}_{end_date}.feather"
                 save_path = Path("data/binance") / filename
 
             # 检查是否存在现有文件
@@ -434,10 +527,19 @@ class DataDownloader:
 
                 # 转换时间列
                 existing_df['date'] = pd.to_datetime(existing_df['date'])
+                
+                if hasattr(existing_df['date'].dtype, 'tz') and existing_df['date'].dtype.tz is not None:
+                    existing_df['date'] = existing_df['date'].dt.tz_localize(None)
+                    print("现有数据时区已移除")
+                
                 existing_df = existing_df.set_index('date')
 
-                # 合并数据
-                combined_df = pd.concat([existing_df, new_df], ignore_index=False)
+                new_df_copy = new_df.copy()
+                if new_df_copy.index.dtype.tz is not None:
+                    new_df_copy.index = new_df_copy.index.tz_localize(None)
+                    print("新数据时区已移除")
+
+                combined_df = pd.concat([existing_df, new_df_copy], ignore_index=False)
 
                 # 去重（保留最新的数据）- 按 index（时间点）去重
                 combined_df = combined_df[~combined_df.index.duplicated(keep='last')].sort_index()
@@ -616,11 +718,13 @@ class DataDownloader:
                     # 分批下载缺失数据
                     missing_data = []
                     current_ts = start_timestamp
+                    timeframe_ms = exchange.parse_timeframe(timeframe) * 1000
+                    consecutive_empty_count = 0
+                    max_empty_retries = 3
 
                     while current_ts < end_timestamp:
                         # 计算剩余时间区间
                         remaining_time = end_timestamp - current_ts
-                        timeframe_ms = exchange.parse_timeframe(timeframe) * 1000
 
                         # 计算理论上剩余的数据条数
                         remaining_candles = remaining_time // timeframe_ms
@@ -637,16 +741,27 @@ class DataDownloader:
                         )
 
                         if not ohlcv:
-                            print(f"没有数据，继续用当前的current_ts尝试下载")
-                            # 如果没有数据，继续用当前的current_ts尝试下载
-                            # 不要推进时间，因为可能这个时间点确实没有数据
+                            consecutive_empty_count += 1
+                            if consecutive_empty_count >= max_empty_retries:
+                                # 防止在同一个时间戳无限重试导致卡死：多次无数据后推进一个周期
+                                current_ts += timeframe_ms
+                                print(f"连续 {max_empty_retries} 次无数据，推进到下一个时间点继续尝试")
+                                consecutive_empty_count = 0
+                            else:
+                                print(f"没有数据，继续用当前的current_ts尝试下载 ({consecutive_empty_count}/{max_empty_retries})")
+                            # 无数据时也限速，避免空转占满 CPU
+                            time.sleep(exchange.rateLimit / 1000)
                             continue
                         else:
+                            consecutive_empty_count = 0
                             # 如果有数据，使用最后一条数据的时间戳推进
                             missing_data.extend(ohlcv)
                             last_timestamp = ohlcv[-1][0]  # 最后一条数据的时间戳
                             #print(f"last_timestamp: {last_timestamp}")
-                            current_ts = last_timestamp + timeframe_ms
+                            if last_timestamp < current_ts:
+                                current_ts += timeframe_ms
+                            else:
+                                current_ts = last_timestamp + timeframe_ms
 
                         # 限速
                         time.sleep(exchange.rateLimit / 1000)
@@ -1318,7 +1433,7 @@ class DataDownloader:
             for col in ['open', 'high', 'low', 'close']:
                 if col in df_fixed.columns:
                     df_fixed[col] = df_fixed[col].replace([0, -np.inf, np.inf], np.nan)
-                    df_fixed[col] = df_fixed[col].fillna(method='ffill')
+                    df_fixed[col] = df_fixed[col].ffill()
 
             return df_fixed
         except Exception as e:
@@ -1343,11 +1458,11 @@ class DataDownloader:
                             # 如果转换失败，用前一个有效值填充
                             if df_fixed[col].isna().all():
                                 self.logger.error(f"无法修复 {col} 列，将使用前一个有效值")
-                                df_fixed[col] = df_fixed[col].fillna(method='ffill')
+                                df_fixed[col] = df_fixed[col].ffill()
                         except Exception as e:
                             self.logger.error(f"修复 {col} 列失败: {e}")
                             # 使用前一个有效值填充
-                            df_fixed[col] = df_fixed[col].fillna(method='ffill')
+                            df_fixed[col] = df_fixed[col].ffill()
 
             return df_fixed
 

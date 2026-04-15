@@ -37,8 +37,8 @@
         <div class="card h-100">
             <div class="card-body text-center">
                 <div style="font-size: 3rem; color: var(--success-color); margin-bottom: 1rem;">📈</div>
-                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">因子评估</h5>
-                <p class="card-text">使用IC、IR、胜率等多种指标全面评估因子的有效性和稳定性。</p>
+                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">时序评估</h5>
+                <p class="card-text">使用IC、IR、胜率等多种指标全面评估因子的时序有效性和稳定性。</p>
                 <a href="{{ url_for('main.factor_evaluation') }}" class="btn btn-outline-success">
                     开始评估
                 </a>
@@ -46,47 +46,74 @@
         </div>
     </div>
     
-                    <div class="col-md-4">
-                        <div class="card h-100">
-                            <div class="card-body text-center">
-                                <div style="font-size: 3rem; color: var(--info-color); margin-bottom: 1rem;">📚</div>
-                                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">因子库</h5>
-                                <p class="card-text">管理和查看所有已挖掘的因子，使用行情数据进行评估和分析。</p>
-                                <a href="{{ url_for('main.factor_library') }}" class="btn btn-outline-info">
-                                    进入因子库
-                                </a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-            <!-- 第二行：数据管理功能 -->
-            <div class="row mt-5">
-                <div class="col-md-6">
-                    <div class="card h-100">
-                        <div class="card-body text-center">
-                            <div style="font-size: 3rem; color: var(--warning-color); margin-bottom: 1rem;">📥</div>
-                            <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">数据下载</h5>
-                            <p class="card-text">从交易所下载历史行情数据，支持现货、期货等多种交易类型。</p>
-                            <a href="{{ url_for('main.data_download') }}" class="btn btn-outline-warning">
-                                开始下载
-                            </a>
-                        </div>
-                    </div>
-                </div>
-                
-                <div class="col-md-6">
-                    <div class="card h-100">
-                        <div class="card-body text-center">
-                            <div style="font-size: 3rem; color: var(--secondary-color); margin-bottom: 1rem;">📁</div>
-                            <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">数据查看</h5>
-                            <p class="card-text">查看和管理本地数据文件，进行数据分析和可视化。</p>
-                            <a href="{{ url_for('main.data_viewer') }}" class="btn btn-outline-secondary">
-                                查看数据
-                            </a>
-                        </div>
-                    </div>
-                </div>
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div style="font-size: 3rem; color: var(--info-color); margin-bottom: 1rem;">📚</div>
+                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">因子库</h5>
+                <p class="card-text">管理和查看所有已挖掘的因子，使用行情数据进行评估和分析。</p>
+                <a href="{{ url_for('main.factor_library') }}" class="btn btn-outline-info">
+                    进入因子库
+                </a>
             </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-5">
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div style="font-size: 3rem; color: #6f42c1; margin-bottom: 1rem;">📊</div>
+                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">截面评估</h5>
+                <p class="card-text">截面因子评估，分析因子在横截面上的收益预测能力。</p>
+                <a href="{{ url_for('main.cross_sectional_evaluation') }}" class="btn btn-outline-primary" style="color: #6f42c1; border-color: #6f42c1;">
+                    开始评估
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div style="font-size: 3rem; color: #e83e8c; margin-bottom: 1rem;">🤖</div>
+                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">模型训练</h5>
+                <p class="card-text">使用机器学习模型预测未来时间步标签，支持LightGBM、XGBoost等算法。</p>
+                <a href="{{ url_for('main.model_training') }}" class="btn btn-outline-primary" style="color: #e83e8c; border-color: #e83e8c;">
+                    开始训练
+                </a>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div style="font-size: 3rem; color: var(--warning-color); margin-bottom: 1rem;">📥</div>
+                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">数据下载</h5>
+                <p class="card-text">从交易所下载历史行情数据，支持现货、期货等多种交易类型。</p>
+                <a href="{{ url_for('main.data_download') }}" class="btn btn-outline-warning">
+                    开始下载
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-5">
+    <div class="col-md-4 offset-md-4">
+        <div class="card h-100">
+            <div class="card-body text-center">
+                <div style="font-size: 3rem; color: var(--secondary-color); margin-bottom: 1rem;">📁</div>
+                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">数据查看</h5>
+                <p class="card-text">查看和管理本地数据文件，进行数据分析和可视化。</p>
+                <a href="{{ url_for('main.data_viewer') }}" class="btn btn-outline-secondary">
+                    查看数据
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
 
 {% endblock %} 

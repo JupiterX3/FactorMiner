@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/rsi.py",
+    "function_file": "technicals/functions/rsi.py",
     "entry_point": "calculate",
     "imports": []
   },

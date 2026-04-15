@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/ema.py",
+    "function_file": "technicals/functions/ema.py",
     "function_code": "def calculate(data, period=20, **kwargs):\n    return data['close'].ewm(span=period).mean()\n",
     "entry_point": "calculate",
     "imports": [

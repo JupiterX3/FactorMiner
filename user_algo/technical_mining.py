@@ -50,13 +50,6 @@ ALGORITHM_INFO = {
     'tags': ['technical', 'factor_mining'],
     'created_at': '2024-01-01',
     'updated_at': '2024-01-01'
-},
-        'min_ic': {'type': 'float', 'default': 0.04, 'description': '最小IC阈值'},
-        'min_ir': {'type': 'float', 'default': 0.09, 'description': '最小IR阈值'},
-        'max_correlation': {'type': 'float', 'default': 0.8, 'description': '最大相关性阈值'},
-        'indicator_windows': {'type': 'list', 'default': [5, 10, 20, 50], 'description': '技术指标窗口列表'},
-        'evaluation_periods': {'type': 'list', 'default': [1, 3, 5, 10], 'description': '评估周期列表'}
-    }
 }
 
 

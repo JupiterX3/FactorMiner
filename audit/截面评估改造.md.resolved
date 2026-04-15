@@ -1,0 +1,105 @@
+# Intrabar UI 标注 + Intrabar Strict 性能优化
+
+## 背景
+
+`intrabar` 模式对窗口类因子（MA/EMA/ATR等）存在严重精度问题，需要在 UI 上清晰标注其适用范围。  
+`intrabar_strict` 模式精度高但非常慢（每个基础时点调用一次引擎），需要在不牺牲精度的前提下优化性能。
+
+## Proposed Changes
+
+### 1. UI 标注改进
+
+#### [MODIFY] [cross_sectional_evaluation.html](file:///d:/PythonProject/FactorMiner/webui/templates/cross_sectional_evaluation.html)
+
+**因子K线模式下拉框**（L143-153）：
+- `intrabar` 选项文案改为 `盘中快照（仅适用于单bar因子，窗口因子有误差）`
+- `intrabar_strict` 选项文案改为 `严格整点重放（高精度，较慢，推荐窗口因子使用）`
+- 底部提示文字增加具体说明：intrabar 适合 `body_ratio`、`volume` 等单bar因子；MA/EMA/RSI 等窗口因子必须用 strict 模式
+
+---
+
+### 2. Intrabar Strict 性能优化
+
+#### [MODIFY] [factor_evaluator.py](file:///d:/PythonProject/FactorMiner/factor_miner/core/factor_evaluator.py)
+
+**优化 `_build_intrabar_strict_factor_series` 方法**，三个层面的改进：
+
+##### a) 截断历史窗口（减少每次引擎调用的输入大小）
+
+当前：每个时间点 t 喂入**全部**已完成 bar → 随时间增长，后期输入可达数千行  
+优化：只取最近 `max_lookback` 根已完成 bar（默认 200）
+
+```python
+# 之前
+hist = completed_bars[completed_bars.index < current_bucket_end]
+
+# 之后
+hist = completed_bars[completed_bars.index < current_bucket_end].iloc[-max_lookback:]
+```
+
+##### b) 按桶分组（避免重复查找 hist）
+
+当前：每个基础时点独立查找 hist  
+优化：同一 4h 桶内的所有 1h 时点共享同一份 hist，只查一次
+
+```python
+for bucket_start, group in partial.groupby('bucket_start'):
+    bucket_end = bucket_start + tf_delta
+    hist = completed_bars[completed_bars.index < bucket_end].iloc[-max_lookback:]
+    for ts in group.index:
+        # 复用 hist
+        replay = concat(hist, partial_bar_at_ts)
+        ...
+```
+
+##### c) 桶间并行（利用多线程加速）
+
+不同桶的计算完全独立，使用 `ThreadPoolExecutor` 并行处理不同桶。
+
+> [!IMPORTANT]
+> 这里使用线程级并行（ThreadPoolExecutor），因为不同桶之间无状态共享。
+> 调用引擎时 pandas/numpy 运算会释放 GIL，可获得实际并行加速。
+
+##### d) 添加 `max_lookback` 参数
+
+- `CrossSectionalEvaluator.__init__` 新增 `max_lookback: int = 200` 参数
+- 传递到 `_build_intrabar_strict_factor_series` 中使用
+- 默认值 200 对 MA/EMA/RSI 等常见因子足够
+
+#### [MODIFY] [factors.py](file:///d:/PythonProject/FactorMiner/webui/routes/factors.py)
+
+- `cross_sectional_evaluate` 路由接收前端的 `max_lookback` 参数
+- `_evaluate_factor_process_worker` 函数透传 `max_lookback` 参数
+- 两处 `CrossSectionalEvaluator` 构造均需传入 `max_lookback`
+
+#### [MODIFY] [cross_sectional_evaluation.html](file:///d:/PythonProject/FactorMiner/webui/templates/cross_sectional_evaluation.html)
+
+- 当选择 `intrabar_strict` 时，动态显示 `max_lookback` 输入框（默认 200）
+- `startCrossSectionalEvaluation` 中读取并传入请求
+
+---
+
+### 3. 便捷函数同步更新
+
+#### [MODIFY] [factor_evaluator.py](file:///d:/PythonProject/FactorMiner/factor_miner/core/factor_evaluator.py)
+
+- 文件底部的 `evaluate_cross_sectional` 便捷函数签名增加 `max_lookback` 参数并透传
+
+## 预估加速效果
+
+| 优化 | 说明 | 加速倍数 |
+|------|------|---------|
+| 截断 lookback (200) | 输入从~500行降到~200行 | ~2-3× |
+| 按桶分组 | 减少 hist 查找和 DataFrame 创建 | ~1.3× |
+| 桶间并行 (4线程) | 独立桶并行计算 | ~3-4× |
+| **综合** | | **~8-15×** |
+
+## Verification Plan
+
+### Manual Verification
+- 在 UI 上切换 `intrabar` / `intrabar_strict` 模式，检查提示文案是否正确显示
+- 选择 `intrabar_strict` 模式确认 `max_lookback` 输入框出现
+- 运行截面评估，对比优化前后的结果一致性和耗时
+
+### Automated Tests
+- 比较优化前后 `_build_intrabar_strict_factor_series` 在相同数据上的输出，确认截断 lookback=200 时因子值与全量历史一致（MA20等常见因子）

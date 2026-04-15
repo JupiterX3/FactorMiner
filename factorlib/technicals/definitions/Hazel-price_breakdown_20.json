@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/Hazel-price_breakdown_20.py",
+    "function_file": "technicals/functions/Hazel-price_breakdown_20.py",
     "function_code": "import pandas as pd\nimport numpy as np\n\ndef calculate(data: pd.DataFrame, window: int = 20, **kwargs) -> pd.Series:\n    if data is None or len(data) == 0 or \"close\" not in data.columns:\n        return pd.Series(dtype=float)\n    s = pd.to_numeric(data[\"close\"], errors=\"coerce\")\n    thresh = s.rolling(window).min().shift(1)\n    return (s < thresh).astype(int)\n",
     "entry_point": "calculate",
     "imports": []

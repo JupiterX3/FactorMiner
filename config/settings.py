@@ -40,6 +40,12 @@ DATA_SOURCES = {
     }
 }
 
+# 稳定币列表 - 用于过滤交易对
+STABLECOINS = {
+    'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDD', 'FRAX', 'USDP', 'GUSD', 'USDJ',
+    'HUSD', 'SUSD', 'MIM', 'LUSD', 'USDX', 'DUSD', 'AUSD', 'CUSD', 'USDN', 'RSV'
+}
+
 # 因子配置
 FACTOR_CONFIG = {
     'default_windows': [5, 10, 20, 50, 100, 200],

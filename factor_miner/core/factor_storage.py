@@ -1,4 +1,4 @@
-"""
+﻿"""
 透明因子保存系统 v3.0
 完全透明的因子计算逻辑存储
 
@@ -182,20 +182,30 @@ class TransparentFactorStorage:
         """基于已训练的.pkl模型进行推理的因子计算"""
         import pickle
         from .feature_pipeline import build_ml_features
-        import pandas as pd  # 确保本地作用域有pd
+        import pandas as pd
 
         comp_data = factor_def.computation_data
-        artifact_relpath = comp_data.get("artifact_path")
+        
+        artifact_relpath = comp_data.get("artifact_path") or comp_data.get("model_file")
+        
         if not artifact_relpath:
-            raise ValueError("ml_model 定义缺少 artifact_path")
+            algorithm_name = comp_data.get("algorithm_name")
+            if algorithm_name:
+                logger.info(f"ml_model 因子无模型文件，尝试使用算法模块: {algorithm_name}")
+                return self._compute_via_algorithm(algorithm_name, factor_def.name, data, params)
+            
+            raise ValueError("ml_model 定义缺少 artifact_path 或 model_file")
 
         artifact_file = self.storage_dir / artifact_relpath
         if not artifact_file.exists():
-            # 兼容：若提供的相对路径不在factorlib下，尝试models目录
             candidate = self.models_dir / Path(artifact_relpath).name
             if candidate.exists():
                 artifact_file = candidate
             else:
+                algorithm_name = comp_data.get("algorithm_name")
+                if algorithm_name:
+                    logger.info(f"模型文件不存在，尝试使用算法模块: {algorithm_name}")
+                    return self._compute_via_algorithm(algorithm_name, factor_def.name, data, params)
                 raise FileNotFoundError(f"找不到模型文件: {artifact_file}")
 
         with open(artifact_file, "rb") as f:
@@ -205,28 +215,46 @@ class TransparentFactorStorage:
         feature_columns = artifact.get("feature_columns") or []
         scaler = artifact.get("scaler")
 
-        # 构建与训练一致的特征
         features = build_ml_features(data)
 
-        # 对齐所需列
         missing = [c for c in feature_columns if c not in features.columns]
         if missing:
-            # 对缺失列补NaN，保持列齐全
             for c in missing:
                 features[c] = np.nan
         X = features[feature_columns]
 
-        # 清洗与标准化
         X = X.replace([np.inf, -np.inf], np.nan)
-        X = X.fillna(method='ffill').fillna(method='bfill')
+        X = X.ffill().bfill()
         if scaler is not None:
             X_scaled = scaler.transform(X)
         else:
             X_scaled = X.values
 
-        # 预测
         y_pred = model.predict(X_scaled)
         return pd.Series(y_pred, index=data.index)
+    
+    def _compute_via_algorithm(self, algorithm_name: str, factor_name: str, 
+                               data: pd.DataFrame, params: Dict) -> pd.Series:
+        """通过算法模块计算因子"""
+        import importlib.util
+        import sys
+        
+        algo_dir = Path(__file__).parent.parent.parent / "user_algo"
+        if str(algo_dir) not in sys.path:
+            sys.path.insert(0, str(algo_dir))
+        
+        algo_file = algo_dir / f"{algorithm_name}.py"
+        if not algo_file.exists():
+            raise FileNotFoundError(f"算法文件不存在: {algo_file}")
+        
+        spec = importlib.util.spec_from_file_location(algorithm_name, algo_file)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        
+        if hasattr(module, 'calculate_single_factor'):
+            return module.calculate_single_factor(data, factor_name, **params)
+        else:
+            raise ValueError(f"算法模块 {algorithm_name} 缺少 calculate_single_factor 函数")
 
     def save_ml_model_factor(self, factor_id: str, name: str,
                              artifact_filename: str,

@@ -1,5 +1,6 @@
 def calculate(data, x='close', y='volume', period=20, method='pearson', **kwargs):
     import pandas as pd
+    import numpy as np
     s1 = data[x]
     s2 = data[y]
     if method == 'spearman':
@@ -9,6 +10,6 @@ def calculate(data, x='close', y='volume', period=20, method='pearson', **kwargs
     cov = cov.rolling(period).mean()
     std1 = s1.rolling(period).std()
     std2 = s2.rolling(period).std()
-    corr = cov / (std1 * std2).replace(0, pd.NA)
+    corr = cov / (std1 * std2).replace(0, np.nan)
     return corr.fillna(0.0)
 

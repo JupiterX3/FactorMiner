@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/custom_momentum.py",
+    "function_file": "technicals/functions/custom_momentum.py",
     "entry_point": "calculate",
     "imports": []
   },

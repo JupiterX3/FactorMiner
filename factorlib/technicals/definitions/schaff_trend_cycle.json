@@ -6,13 +6,17 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/schaff_trend_cycle.py",
+    "function_file": "technicals/functions/schaff_trend_cycle.py",
     "entry_point": "calculate",
     "imports": []
   },
-  "parameters": { "fast": 23, "slow": 50, "k_period": 10, "d_period": 3 },
+  "parameters": {
+    "fast": 23,
+    "slow": 50,
+    "k_period": 10,
+    "d_period": 3
+  },
   "dependencies": [],
   "output_type": "series",
   "metadata": {}
 }
-

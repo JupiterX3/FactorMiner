@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/williams_r.py",
+    "function_file": "technicals/functions/williams_r.py",
     "function_code": "def calculate(data, period=14, **kwargs):\n    highest = data['high'].rolling(window=period).max()\n    lowest = data['low'].rolling(window=period).min()\n    return (highest - data['close'])/(highest - lowest) * -100\n",
     "entry_point": "calculate",
     "imports": [

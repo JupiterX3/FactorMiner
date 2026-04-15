@@ -44,12 +44,24 @@ def factor_library():
 
 @bp.route('/factor-evaluation')
 def factor_evaluation():
-    """因子评估页面"""
+    """时序评估页面"""
     config = current_app.config['FRONTEND_CONFIG']
     return render_template('factor_evaluation.html', config=config)
+
+@bp.route('/cross-sectional-evaluation')
+def cross_sectional_evaluation():
+    """截面因子评估页面"""
+    config = current_app.config['FRONTEND_CONFIG']
+    return render_template('cross_sectional_evaluation.html', config=config)
 
 @bp.route('/factor-mining')
 def factor_mining():
     """因子挖掘页面"""
     config = current_app.config['FRONTEND_CONFIG']
-    return render_template('factor_mining.html', config=config) 
+    return render_template('factor_mining.html', config=config)
+
+@bp.route('/model-training')
+def model_training():
+    """模型训练页面"""
+    config = current_app.config['FRONTEND_CONFIG']
+    return render_template('model_training.html', config=config) 

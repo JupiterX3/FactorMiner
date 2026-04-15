@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/dema.py",
+    "function_file": "technicals/functions/dema.py",
     "function_code": "def calculate(data, period=21, **kwargs):\n    ema1 = data['close'].ewm(span=period).mean()\n    ema2 = ema1.ewm(span=period).mean()\n    return 2*ema1 - ema2\n",
     "entry_point": "calculate",
     "imports": [

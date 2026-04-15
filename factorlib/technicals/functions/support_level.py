@@ -1,5 +1,5 @@
-def calculate(data, period=20, **kwargs):
-    import pandas as pd
-    # 近period内的局部最低作为支撑估计
-    return data['low'].rolling(window=period).min().fillna(0.0)
-
+def calculate(data, period=20, **kwargs):
+    import pandas as pd
+    # è¿periodåçå±é¨æä½ä½ä¸ºæ¯æä¼°è®?
+    return data['low'].rolling(window=period).min().fillna(0.0)
+

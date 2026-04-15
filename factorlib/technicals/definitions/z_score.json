@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/z_score.py",
+    "function_file": "technicals/functions/z_score.py",
     "function_code": "def calculate(data, period=20, **kwargs):\n    mean = data['close'].rolling(window=period).mean()\n    std = data['close'].rolling(window=period).std()\n    return (data['close']-mean)/std\n",
     "entry_point": "calculate",
     "imports": [

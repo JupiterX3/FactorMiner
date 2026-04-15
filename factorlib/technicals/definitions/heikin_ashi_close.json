@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/heikin_ashi_close.py",
+    "function_file": "technicals/functions/heikin_ashi_close.py",
     "entry_point": "calculate",
     "imports": []
   },
@@ -15,4 +15,3 @@
   "output_type": "series",
   "metadata": {}
 }
-

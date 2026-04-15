@@ -4,11 +4,10 @@
   "description": "由 technical_mining 算法生成的 bb_upper_10 因子",
   "category": "technical",
   "subcategory": "",
-  "computation_type": "ml_model",
+  "computation_type": "function",
   "computation_data": {
-    "algorithm_name": "technical_mining",
-    "model_file": "technical_mining_bb_upper_10.pkl",
-    "performance_metrics": {}
+    "function_file": "minactors/functions/technical_mining_bb_upper_10.py",
+    "entry_point": "calculate"
   },
   "parameters": {},
   "dependencies": [],

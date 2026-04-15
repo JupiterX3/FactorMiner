@@ -6,13 +6,14 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/dpo.py",
+    "function_file": "technicals/functions/dpo.py",
     "entry_point": "calculate",
     "imports": []
   },
-  "parameters": { "period": 20 },
+  "parameters": {
+    "period": 20
+  },
   "dependencies": [],
   "output_type": "series",
   "metadata": {}
 }
-

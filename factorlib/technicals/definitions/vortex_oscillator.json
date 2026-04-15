@@ -6,13 +6,15 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/vortex_oscillator.py",
+    "function_file": "technicals/functions/vortex_oscillator.py",
     "entry_point": "calculate",
     "imports": []
   },
-  "parameters": { "period": 14, "mode": "osc" },
+  "parameters": {
+    "period": 14,
+    "mode": "osc"
+  },
   "dependencies": [],
   "output_type": "series",
   "metadata": {}
 }
-

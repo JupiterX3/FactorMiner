@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/Hazel-volume_price_ratio.py",
+    "function_file": "technicals/functions/Hazel-volume_price_ratio.py",
     "function_code": "import pandas as pd\nimport numpy as np\n\ndef calculate(data: pd.DataFrame, **kwargs) -> pd.Series:\n    if data is None or len(data) == 0 or \"close\" not in data.columns or \"volume\" not in data.columns:\n        return pd.Series(dtype=float)\n    close = pd.to_numeric(data[\"close\"], errors=\"coerce\")\n    volume = pd.to_numeric(data[\"volume\"], errors=\"coerce\")\n    denom = close.replace(0, np.nan)\n    return volume / denom\n",
     "entry_point": "calculate",
     "imports": []

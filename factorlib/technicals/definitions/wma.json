@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/wma.py",
+    "function_file": "technicals/functions/wma.py",
     "function_code": "def calculate(data, period=20, **kwargs):\n    weights = np.arange(1, period+1)\n    return data['close'].rolling(window=period).apply(lambda x: np.dot(x, weights)/weights.sum(), raw=True)\n",
     "entry_point": "calculate",
     "imports": [

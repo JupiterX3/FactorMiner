@@ -33,8 +33,7 @@
                         <select class="form-select form-select-sm" id="tradeType" name="tradeType">
                             <option value="">请先选择交易所</option>
                             <option value="spot">现货 (Spot)</option>
-                            <option value="perpetual">永续合约 (Perpetual)</option>
-                            <option value="delivery">交割合约 (Delivery)</option>
+                            <option value="futures">期货 (Futures)</option>
                         </select>
                     </div>
                     
@@ -215,10 +214,9 @@
 <script>
 // 数据管理页面的JavaScript代码
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('数据管理页面初始化');
-    
     // 初始化表单
     initDataConfigForm();
+    ensureDownloadStatusPolling();
 });
 
 function initDataConfigForm() {
@@ -253,9 +251,9 @@ function initDataConfigForm() {
     });
     
     // 交易类型变化时更新交易对和时间框架
-    tradeTypeSelect.addEventListener('change', function() {
-        updateSymbols();
-        updateTimeframes();
+    tradeTypeSelect.addEventListener('change', async function() {
+        await refreshSymbols();
+        await refreshTimeframes();
         clearDataCoverage();
     });
     
@@ -307,187 +305,132 @@ function updateTradeTypes(exchange) {
     tradeTypeSelect.appendChild(futuresOption);
 }
 
-async function updateSymbols() {
+async function loadSymbolsData(exchange) {
+    const response = await fetch(`/api/data/symbols/${exchange}`);
+    return response.json();
+}
+
+function populateSymbolsSelect(markets, targetSelect, placeholder) {
+    targetSelect.innerHTML = `<option value="">${placeholder}</option>`;
+    if (!markets || markets.length === 0) {
+        targetSelect.innerHTML = '<option value="">暂无可用交易对</option>';
+        return;
+    }
+
+    const filteredMarkets = markets.filter(item =>
+        item.quote === 'USDT' && item.active === true
+    );
+
+    if (filteredMarkets.length === 0) {
+        targetSelect.innerHTML = '<option value="">暂无符合条件的交易对</option>';
+        return;
+    }
+
+    filteredMarkets.forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.symbol;
+        option.textContent = `${item.symbol} (${item.name})`;
+        targetSelect.appendChild(option);
+    });
+}
+
+async function refreshSymbols() {
     const exchange = document.getElementById('exchange').value;
     const tradeType = document.getElementById('tradeType').value;
     const symbolSelect = document.getElementById('symbol');
-    
-    if (!tradeType) {
-        symbolSelect.innerHTML = '<option value="">请先选择交易类型</option>';
-        return;
-    }
-    
-    symbolSelect.innerHTML = '<option value="">加载中...</option>';
-    
-    try {
-        const response = await fetch(`/api/data/symbols/${exchange}`);
-        const result = await response.json();
-        
-        // futures 直接显示永续合约
-        if (result.success && result.data[tradeType]) {
-            symbolSelect.innerHTML = '<option value="">请选择交易对</option>';
-            
-            const markets = result.data[tradeType] || [];
-            if (markets && markets.length > 0) {
-                // 过滤：只显示 USDT 计价且状态为 active 的交易对
-                const filteredMarkets = markets.filter(item => 
-                    item.quote === 'USDT' && item.active === true
-                );
-                
-                if (filteredMarkets.length > 0) {
-                    filteredMarkets.forEach(item => {
-                        const option = document.createElement('option');
-                        option.value = item.symbol;
-                        
-                        // 期货只显示永续合约，不需要显示到期日
-                        option.textContent = `${item.symbol} (${item.name})`;
-                        
-                        symbolSelect.appendChild(option);
-                    });
-                    
-                    console.log(`显示 ${filteredMarkets.length} 个符合条件的交易对`);
-                } else {
-                    symbolSelect.innerHTML = '<option value="">暂无符合条件的交易对</option>';
-                }
-            } else {
-                symbolSelect.innerHTML = '<option value="">暂无可用交易对</option>';
-            }
-        } else {
-            symbolSelect.innerHTML = '<option value="">加载失败</option>';
-        }
-    } catch (error) {
-        console.error('加载交易对失败:', error);
-        symbolSelect.innerHTML = '<option value="">加载失败</option>';
-    }
-    
-    // 同时更新批量下载的交易对选择框
-    updateBatchSymbols();
-}
-
-async function updateBatchSymbols() {
-    const exchange = document.getElementById('exchange').value;
-    const tradeType = document.getElementById('tradeType').value;
     const batchSymbolSelect = document.getElementById('batchSymbols');
     
     if (!tradeType) {
+        symbolSelect.innerHTML = '<option value="">请先选择交易类型</option>';
         batchSymbolSelect.innerHTML = '<option value="">请先选择交易类型</option>';
         return;
     }
     
+    symbolSelect.innerHTML = '<option value="">加载中...</option>';
     batchSymbolSelect.innerHTML = '<option value="">加载中...</option>';
     
     try {
-        const response = await fetch(`/api/data/symbols/${exchange}`);
-        const result = await response.json();
+        const result = await loadSymbolsData(exchange);
         
         if (result.success && result.data[tradeType]) {
-            batchSymbolSelect.innerHTML = '<option value="">请选择交易对 (可多选)</option>';
-            
             const markets = result.data[tradeType] || [];
-            if (markets && markets.length > 0) {
-                // 过滤：只显示 USDT 计价且状态为 active 的交易对
-                const filteredMarkets = markets.filter(item => 
-                    item.quote === 'USDT' && item.active === true
-                );
-                
-                if (filteredMarkets.length > 0) {
-                    filteredMarkets.forEach(item => {
-                        const option = document.createElement('option');
-                        option.value = item.symbol;
-                        option.textContent = `${item.symbol} (${item.name})`;
-                        batchSymbolSelect.appendChild(option);
-                    });
-                    
-                    console.log(`批量下载显示 ${filteredMarkets.length} 个符合条件的交易对`);
-                } else {
-                    batchSymbolSelect.innerHTML = '<option value="">暂无符合条件的交易对</option>';
-                }
-            } else {
-                batchSymbolSelect.innerHTML = '<option value="">暂无可用交易对</option>';
-            }
+
+            populateSymbolsSelect(markets, symbolSelect, '请选择交易对');
+            populateSymbolsSelect(markets, batchSymbolSelect, '请选择交易对 (可多选)');
         } else {
+            symbolSelect.innerHTML = '<option value="">加载失败</option>';
             batchSymbolSelect.innerHTML = '<option value="">加载失败</option>';
         }
     } catch (error) {
-        console.error('加载批量下载交易对失败:', error);
+        console.error('加载交易对失败:', error);
+        symbolSelect.innerHTML = '<option value="">加载失败</option>';
         batchSymbolSelect.innerHTML = '<option value="">加载失败</option>';
     }
 }
 
-async function updateTimeframes() {
+async function updateSymbols() {
+    await refreshSymbols();
+}
+
+async function updateBatchSymbols() {
+    await refreshSymbols();
+}
+
+async function loadTimeframesData(exchange, tradeType) {
+    const response = await fetch(`/api/data/timeframes?exchange=${exchange}&trade_type=${tradeType}`);
+    return response.json();
+}
+
+function populateTimeframeSelect(timeframes, targetSelect, placeholder) {
+    targetSelect.innerHTML = `<option value="">${placeholder}</option>`;
+    (timeframes || []).forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.value;
+        option.textContent = `${item.name} (${item.value})`;
+        option.title = item.description;
+        targetSelect.appendChild(option);
+    });
+}
+
+async function refreshTimeframes() {
     const exchange = document.getElementById('exchange').value;
     const tradeType = document.getElementById('tradeType').value;
     const timeframeSelect = document.getElementById('timeframe');
+    const batchTimeframeSelect = document.getElementById('batchTimeframes');
     
     if (!exchange || !tradeType) {
         timeframeSelect.innerHTML = '<option value="">请先选择交易所和交易类型</option>';
+        batchTimeframeSelect.innerHTML = '<option value="">请先选择交易所和交易类型</option>';
         return;
     }
     
     timeframeSelect.innerHTML = '<option value="">加载中...</option>';
+    batchTimeframeSelect.innerHTML = '<option value="">加载中...</option>';
     
     try {
-        const response = await fetch(`/api/data/timeframes?exchange=${exchange}&trade_type=${tradeType}`);
-        const result = await response.json();
+        const result = await loadTimeframesData(exchange, tradeType);
         
         if (result.success) {
-            timeframeSelect.innerHTML = '<option value="">请选择时间框架</option>';
-            
-            result.data.forEach(item => {
-                const option = document.createElement('option');
-                option.value = item.value;
-                option.textContent = `${item.name} (${item.value})`;
-                option.title = item.description;
-                timeframeSelect.appendChild(option);
-            });
-            
-            console.log(`加载了 ${result.data.length} 个时间框架选项`);
+            populateTimeframeSelect(result.data, timeframeSelect, '请选择时间框架');
+            populateTimeframeSelect(result.data, batchTimeframeSelect, '请选择时间框架 (可多选)');
         } else {
             timeframeSelect.innerHTML = '<option value="">加载失败</option>';
+            batchTimeframeSelect.innerHTML = '<option value="">加载失败</option>';
             console.error('加载时间框架失败:', result.error);
         }
     } catch (error) {
         console.error('加载时间框架失败:', error);
         timeframeSelect.innerHTML = '<option value="">加载失败</option>';
+        batchTimeframeSelect.innerHTML = '<option value="">加载失败</option>';
     }
-    
-    // 同时更新批量下载的时间框架选择框
-    updateBatchTimeframes();
+}
+
+async function updateTimeframes() {
+    await refreshTimeframes();
 }
 
 async function updateBatchTimeframes() {
-    const exchange = document.getElementById('exchange').value;
-    const tradeType = document.getElementById('tradeType').value;
-    const batchTimeframeSelect = document.getElementById('batchTimeframes');
-    
-    if (!exchange || !tradeType) {
-        batchTimeframeSelect.innerHTML = '<option value="">请先选择交易所和交易类型</option>';
-        return;
-    }
-    
-    batchTimeframeSelect.innerHTML = '<option value="">加载中...</option>';
-    
-    try {
-        const response = await fetch(`/api/data/timeframes?exchange=${exchange}&trade_type=${tradeType}`);
-        const result = await response.json();
-        
-        if (result.success) {
-            batchTimeframeSelect.innerHTML = '<option value="">请选择时间框架 (可多选)</option>';
-            
-            result.data.forEach(item => {
-                const option = document.createElement('option');
-                option.value = item.value;
-                option.textContent = `${item.name} (${item.value})`;
-                option.title = item.description;
-                batchTimeframeSelect.appendChild(option);
-            });
-        } else {
-            batchTimeframeSelect.innerHTML = '<option value="">加载失败</option>';
-        }
-    } catch (error) {
-        console.error('加载批量下载时间框架失败:', error);
-        batchTimeframeSelect.innerHTML = '<option value="">加载失败</option>';
-    }
+    await refreshTimeframes();
 }
 
 async function startDownload() {
@@ -522,20 +465,6 @@ async function startDownload() {
         return;
     }
     
-    if (!downloadData.start_date || !downloadData.end_date) {
-        alert('请选择开始和结束日期');
-        return;
-    }
-    
-    console.log('开始下载:', downloadData);
-    console.log('表单数据详情:');
-    console.log('  exchange:', formData.get('exchange'));
-    console.log('  tradeType:', formData.get('tradeType'));
-    console.log('  symbol:', formData.get('symbol'));
-    console.log('  timeframe:', formData.get('timeframe'));
-    console.log('  startDate:', formData.get('startDate'));
-    console.log('  endDate:', formData.get('endDate'));
-    
     // 显示下载进度
     document.getElementById('downloadProgress').style.display = 'block';
     document.getElementById('progressText').textContent = '正在启动下载...';
@@ -552,18 +481,15 @@ async function startDownload() {
         const result = await response.json();
         
         if (result.success) {
-            console.log('下载启动成功:', result.data);
-            
             // 显示合并信息
             if (result.data.merge_info) {
                 const mergeInfo = result.data.merge_info;
-                console.log('合并信息:', mergeInfo);
                 document.getElementById('progressText').textContent = 
                     `检测到现有数据，将使用${mergeInfo.merge_strategy}模式合并`;
             }
             
-            // 开始监控下载进度
-            monitorDownloadProgress(result.data.id, downloadData);
+            // 使用统一轮询机制更新下载状态
+            ensureDownloadStatusPolling();
         } else {
             console.error('下载启动失败:', result.error);
             alert('下载失败: ' + result.error);
@@ -599,6 +525,10 @@ async function monitorDownloadProgress(downloadId, downloadData) {
                     setTimeout(() => {
                         document.getElementById('downloadProgress').style.display = 'none';
                     }, 1000);
+                } else if (status.status === 'failed') {
+                    clearInterval(interval);
+                    progressText.textContent = status.message || '下载失败';
+                    alert('下载失败: ' + (status.message || '未知错误'));
                 }
             } else {
                 clearInterval(interval);
@@ -618,7 +548,7 @@ function addToDownloadHistory(downloadData) {
     const historyItem = document.createElement('div');
     historyItem.className = 'list-group-item d-flex justify-content-between align-items-center';
     
-    const tradeTypeText = downloadData.trade_type === 'futures' ? '期货' : '现货';
+    const tradeTypeText = tradeTypeToText(downloadData.trade_type);
     
     historyItem.innerHTML = `
         <div>
@@ -816,62 +746,89 @@ function applySuggestion(index) {
     
     const suggestion = suggestionsData.recommended_downloads[index];
     
-    // 自动填充表单
-    document.getElementById('exchange').value = 'binance'; // 默认binance
-    document.getElementById('tradeType').value = suggestion.data_type;
+    const currentExchange = suggestionsData.exchange || document.getElementById('exchange').value || 'binance';
+    const symbolFromSuggestion = suggestionsData.symbol || document.getElementById('symbol').value;
+    const timeframeFromSuggestion = suggestionsData.timeframe || document.getElementById('timeframe').value;
     
-    // 获取当前选择的symbol和timeframe（从全局变量或表单中获取）
-    const currentSymbol = document.getElementById('symbol').value || 'BTC/USDT';
-    const currentTimeframe = document.getElementById('timeframe').value || '1h';
-    
-    // 更新交易对列表和时间框架列表
-    Promise.all([
-        updateSymbols(),
-        updateTimeframes()
-    ]).then(() => {
-        // 等待列表更新完成后设置值
+    const applyAsync = async () => {
+        document.getElementById('exchange').value = currentExchange;
+        updateTradeTypes(currentExchange);
+        document.getElementById('tradeType').value = suggestion.data_type;
+
+        await Promise.all([
+            refreshSymbols(),
+            refreshTimeframes()
+        ]);
+
+        if (symbolFromSuggestion) {
+            document.getElementById('symbol').value = symbolFromSuggestion;
+        }
+        if (timeframeFromSuggestion) {
+            document.getElementById('timeframe').value = timeframeFromSuggestion;
+        }
+        
+        if (suggestion.start_date) {
+            document.getElementById('startDate').value = suggestion.start_date.split(' ')[0];
+        }
+        if (suggestion.end_date) {
+            document.getElementById('endDate').value = suggestion.end_date.split(' ')[0];
+        }
+        
+        if (suggestionsData.existing_data && suggestionsData.existing_data.length > 0) {
+            document.getElementById('mergeWithExisting').checked = true;
+        }
+        
+        const successDiv = document.createElement('div');
+        successDiv.className = 'alert alert-success alert-dismissible fade show';
+        successDiv.innerHTML = `
+            <strong>✅ 建议已应用!</strong> 
+            已自动填充下载参数：${tradeTypeToText(suggestion.data_type)} ${symbolFromSuggestion || ''} ${timeframeFromSuggestion || ''}
+            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        `;
+        
+        const form = document.getElementById('dataConfigForm');
+        form.parentNode.insertBefore(successDiv, form);
+        
         setTimeout(() => {
-            // 设置symbol（使用当前选择的或默认值）
-            document.getElementById('symbol').value = currentSymbol;
-            
-            // 设置时间框架（使用当前选择的或默认值）
-            document.getElementById('timeframe').value = currentTimeframe;
-            
-            // 设置日期范围
-            if (suggestion.start_date) {
-                document.getElementById('startDate').value = suggestion.start_date.split(' ')[0];
+            if (successDiv.parentNode) {
+                successDiv.remove();
             }
-            if (suggestion.end_date) {
-                document.getElementById('endDate').value = suggestion.end_date.split(' ')[0];
-            }
-            
-            // 如果有现有数据，智能合并总是启用的
-            if (suggestionsData.existing_data && suggestionsData.existing_data.length > 0) {
-                document.getElementById('mergeWithExisting').checked = true;
-            }
-            
-            // 显示成功消息
-            const successDiv = document.createElement('div');
-            successDiv.className = 'alert alert-success alert-dismissible fade show';
-            successDiv.innerHTML = `
-                <strong>✅ 建议已应用!</strong> 
-                已自动填充下载参数：${suggestion.data_type} ${currentSymbol} ${currentTimeframe}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            `;
-            
-            // 插入到表单前面
-            const form = document.getElementById('dataConfigForm');
-            form.parentNode.insertBefore(successDiv, form);
-            
-            // 3秒后自动隐藏
-            setTimeout(() => {
-                if (successDiv.parentNode) {
-                    successDiv.remove();
-                }
-            }, 3000);
-            
-        }, 500);
+        }, 3000);
+    };
+
+    applyAsync().catch((error) => {
+        console.error('应用建议失败:', error);
+        alert('应用建议失败: ' + error.message);
     });
+}
+
+let downloadStatusTimer = null;
+let isUpdatingDownloadStatus = false;
+
+function ensureDownloadStatusPolling() {
+    if (downloadStatusTimer !== null || isUpdatingDownloadStatus) {
+        return;
+    }
+    downloadStatusTimer = setTimeout(runDownloadStatusPolling, 0);
+}
+
+async function runDownloadStatusPolling() {
+    downloadStatusTimer = null;
+    if (isUpdatingDownloadStatus) {
+        return;
+    }
+
+    isUpdatingDownloadStatus = true;
+    let hasActiveDownloads = false;
+    try {
+        hasActiveDownloads = await updateDownloadStatus();
+    } finally {
+        isUpdatingDownloadStatus = false;
+    }
+
+    if (hasActiveDownloads) {
+        downloadStatusTimer = setTimeout(runDownloadStatusPolling, 2000);
+    }
 }
 
 // 下载状态更新函数
@@ -885,10 +842,12 @@ async function updateDownloadStatus() {
             const downloads = result.data;
             updateDownloadProgress(downloads);
             updateDownloadHistory(downloads);
+            return downloads.some(d => d.status === 'downloading' || d.status === 'starting');
         }
     } catch (error) {
         console.error('更新下载状态失败:', error);
     }
+    return false;
 }
 
 function updateDownloadProgress(downloads) {
@@ -896,7 +855,6 @@ function updateDownloadProgress(downloads) {
     const progressBar = progressDiv.querySelector('.progress-bar');
     const progressText = document.getElementById('progressText');
     
-    // 查找正在进行的下载任务
     const activeDownload = downloads.find(d => d.status === 'downloading' || d.status === 'starting');
     
     if (activeDownload) {
@@ -904,8 +862,17 @@ function updateDownloadProgress(downloads) {
         progressBar.style.width = `${activeDownload.progress}%`;
         progressText.textContent = activeDownload.message;
         
-        // 如果是批量下载，显示详细信息
         if (activeDownload.type === 'batch') {
+            let failedDetails = '';
+            if (activeDownload.task_results && activeDownload.task_results.length > 0) {
+                const failedTasks = activeDownload.task_results.filter(t => t.status === 'failed');
+                if (failedTasks.length > 0) {
+                    failedDetails = '<br><small class="text-danger">失败详情: ' + 
+                        failedTasks.map(t => `${t.symbol}(${t.timeframe}): ${t.message}`).join('; ') + 
+                        '</small>';
+                }
+            }
+            
             progressText.innerHTML = `
                 ${activeDownload.message}<br>
                 <small class="text-muted">
@@ -914,6 +881,7 @@ function updateDownloadProgress(downloads) {
                     失败: ${activeDownload.failed_tasks || 0} | 
                     总计: ${activeDownload.total_tasks || 0}
                 </small>
+                ${failedDetails}
             `;
         }
     } else {
@@ -926,15 +894,13 @@ function updateDownloadHistory(downloads) {
     
     if (!historyList) return;
     
-    // 清空现有历史
     historyList.innerHTML = '';
     
-    // 显示最近的下载任务
     const recentDownloads = downloads.slice(-5).reverse();
     
     recentDownloads.forEach(download => {
         const listItem = document.createElement('div');
-        listItem.className = 'list-group-item d-flex justify-content-between align-items-center';
+        listItem.className = 'list-group-item';
         
         let statusBadge = '';
         if (download.status === 'completed') {
@@ -954,12 +920,25 @@ function updateDownloadHistory(downloads) {
             downloadInfo = `${download.symbol} ${download.timeframe}`;
         }
         
+        let failedDetailsHtml = '';
+        if (download.type === 'batch' && download.task_results && download.task_results.length > 0) {
+            const failedTasks = download.task_results.filter(t => t.status === 'failed');
+            if (failedTasks.length > 0) {
+                failedDetailsHtml = '<div class="mt-1"><small class="text-danger">失败: ' + 
+                    failedTasks.map(t => `${t.symbol}(${t.timeframe}): ${t.message}`).join('; ') + 
+                    '</small></div>';
+            }
+        }
+        
         listItem.innerHTML = `
-            <div>
-                <strong>${downloadInfo}</strong><br>
-                <small class="text-muted">${download.message}</small>
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>${downloadInfo}</strong><br>
+                    <small class="text-muted">${download.message}</small>
+                    ${failedDetailsHtml}
+                </div>
+                ${statusBadge}
             </div>
-            ${statusBadge}
         `;
         
         historyList.appendChild(listItem);
@@ -969,9 +948,6 @@ function updateDownloadHistory(downloads) {
         historyList.innerHTML = '<div class="text-muted text-center">暂无下载历史</div>';
     }
 }
-
-// 定期更新下载状态
-setInterval(updateDownloadStatus, 2000); // 每2秒更新一次
 
 // 批量下载辅助函数
 function selectAllSymbols() {
@@ -1091,10 +1067,12 @@ async function startBatchDownload() {
         end_date: endDate
     };
     
+    // 在 try 块之前保存按钮引用和原始文本
+    const batchButton = document.querySelector('button[onclick="startBatchDownload()"]');
+    const originalText = batchButton.textContent;
+    
     try {
         // 显示加载状态
-        const batchButton = document.querySelector('button[onclick="startBatchDownload()"]');
-        const originalText = batchButton.textContent;
         batchButton.textContent = '🔄 正在启动...';
         batchButton.disabled = true;
         
@@ -1129,6 +1107,7 @@ async function startBatchDownload() {
             if (typeof updateDownloadStatus === 'function') {
                 updateDownloadStatus();
             }
+            ensureDownloadStatusPolling();
             
             // 显示成功消息3秒后自动隐藏
             setTimeout(() => {
@@ -1146,7 +1125,6 @@ async function startBatchDownload() {
         alert(`批量下载请求失败: ${error.message}`);
     } finally {
         // 恢复按钮状态
-        const batchButton = document.querySelector('button[onclick="startBatchDownload()"]');
         batchButton.textContent = originalText;
         batchButton.disabled = false;
     }

@@ -1,4 +1,4 @@
-"""
+﻿"""
 数据获取模块
 支持多种数据源的数据获取和预处理
 """
@@ -298,8 +298,8 @@ class DataLoader:
             预处理后的数据
         """
         # 处理缺失值
-        data = data.fillna(method='ffill')
-        data = data.fillna(method='bfill')
+        data = data.ffill()
+        data = data.bfill()
         
         # 删除全为NaN的行
         data = data.dropna(how='all')

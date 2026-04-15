@@ -129,7 +129,13 @@ class FactorAPI:
         """
         try:
             if metrics is None:
-                metrics = ['ic', 'ir', 'win_rate', 'effectiveness_score']
+                metrics = [
+                    'ic_pearson',
+                    'ic_spearman',
+                    'long_short_return',
+                    'sharpe_ratio',
+                    'win_rate'
+                ]
             
             evaluation_results = self.evaluator.evaluate_multiple_factors(
                 factors_df, returns, metrics=metrics
@@ -242,7 +248,8 @@ class FactorAPI:
                 return data_result
             
             data = data_result['data']
-            returns = data['close'].pct_change().shift(-1).dropna()
+            # 统一口径：returns 使用当期收益，因子在评估器内部 shift(1) 对齐到可交易时点
+            returns = data['close'].pct_change().dropna()
             
             # 2. 构建因子
             factors_result = self.build_factors(data, factor_types, **kwargs)

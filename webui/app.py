@@ -28,12 +28,13 @@ def create_app():
     CORS(app)
     
     # 注册路由
-    from .routes import main, factors, api, data_api, mining_api
+    from .routes import main, factors, api, data_api, mining_api, training_api
     app.register_blueprint(main.bp)
     app.register_blueprint(factors.bp, url_prefix='/api/factors')  # 仅保留API路由
     app.register_blueprint(api.bp, url_prefix='/api')
     app.register_blueprint(data_api.bp, url_prefix='/api/data')
     app.register_blueprint(mining_api.bp, url_prefix='/api/mining')
+    app.register_blueprint(training_api.bp, url_prefix='/api/training')
     
     # 全局变量
     app.config['FACTOR_API'] = FactorAPI()

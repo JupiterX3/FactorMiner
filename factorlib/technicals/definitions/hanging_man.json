@@ -6,8 +6,8 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/hanging_man.py",
-    "function_code": "def calculate(data, **kwargs):\n    import pandas as pd\n    # TODO: 实现该因子计算逻辑\n    return pd.Series([float('nan')]*len(data), index=data.index)\n",
+    "function_file": "technicals/functions/hanging_man.py",
+    "function_code": "def calculate(data, **kwargs):\n    import pandas as pd\n    import numpy as np\n    \n    close_col = 'close' if 'close' in data.columns else 'S_DQ_CLOSE'\n    high_col = 'high' if 'high' in data.columns else 'S_DQ_HIGH'\n    low_col = 'low' if 'low' in data.columns else 'S_DQ_LOW'\n    open_col = 'open' if 'open' in data.columns else 'S_DQ_OPEN'\n    \n    close = data[close_col]\n    high = data[high_col]\n    low = data[low_col]\n    open_ = data[open_col]\n    \n    body = np.abs(close - open_)\n    upper_shadow = high - np.maximum(close, open_)\n    lower_shadow = np.minimum(close, open_) - low\n    \n    result = ((lower_shadow > 2 * body) & (upper_shadow < body) & (body > 0)).astype(float)\n    return result\n",
     "entry_point": "calculate",
     "imports": []
   },

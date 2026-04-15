@@ -6,13 +6,16 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/fractal_down.py",
+    "function_file": "technicals/functions/fractal_down.py",
     "entry_point": "calculate",
     "imports": []
   },
-  "parameters": { "window": 5 },
+  "parameters": {
+    "window": 5
+  },
   "dependencies": [],
   "output_type": "series",
-  "metadata": {}
+  "metadata": {
+    "lookahead": 2
+  }
 }
-

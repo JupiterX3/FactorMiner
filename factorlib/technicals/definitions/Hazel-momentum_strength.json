@@ -6,7 +6,7 @@
   "subcategory": "",
   "computation_type": "function",
   "computation_data": {
-    "function_file": "functions/Hazel-momentum_strength.py",
+    "function_file": "technicals/functions/Hazel-momentum_strength.py",
     "function_code": "import pandas as pd\nimport numpy as np\n\ndef calculate(data: pd.DataFrame, window: int = 5, **kwargs) -> pd.Series:\n    required = {\"close\", \"volume\"}\n    if data is None or len(data) == 0 or not required.issubset(set(data.columns)):\n        return pd.Series(dtype=float)\n    c = pd.to_numeric(data[\"close\"], errors=\"coerce\")\n    v = pd.to_numeric(data[\"volume\"], errors=\"coerce\")\n    pm = (c - c.shift(window)) / c.shift(window)\n    vm = (v - v.shift(window)) / v.shift(window)\n    return pm.abs() * vm\n",
     "entry_point": "calculate",
     "imports": []
