@@ -53,16 +53,7 @@ ALGORITHM_INFO = {
     'tags': ['advanced', 'factor_mining'],
     'created_at': '2024-01-01',
     'updated_at': '2024-01-01'
-},
-        'min_ic': {'type': 'float', 'default': 0.03, 'description': '最小IC阈值'},
-        'min_ir': {'type': 'float', 'default': 0.08, 'description': '最小IR阈值'},
-        'max_correlation': {'type': 'float', 'default': 0.75, 'description': '最大相关性阈值'},
-        'interaction_windows': {'type': 'list', 'default': [5, 10, 20, 50], 'description': '交互因子窗口列表'},
-        'pca_components': {'type': 'int', 'default': 10, 'description': 'PCA主成分数量'},
-        'evaluation_periods': {'type': 'list', 'default': [1, 3, 5, 10], 'description': '评估周期列表'}
-    }
 }
-
 
 def validate_data(data: pd.DataFrame) -> bool:
     """

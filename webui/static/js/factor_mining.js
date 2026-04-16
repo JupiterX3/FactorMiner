@@ -8,6 +8,9 @@ let rangeSlider = null;
 let miningSession = null;
 let progressInterval = null;
 let progressEventSource = null;
+let currentMiningMode = 'standard';
+let allSymbols = [];
+let stablecoins = new Set();
 
 // 步骤名称映射（后端步骤名称 -> 前端步骤ID）
 const STEP_MAPPING = {
@@ -52,6 +55,9 @@ function initializePage() {
     // 初始化数据选择器
     initializeDataSelectors();
     console.log('数据选择器初始化完成');
+
+    // 加载稳定币列表（用于交易对筛选）
+    loadStablecoins();
     
     // 加载挖掘历史
     loadMiningHistory();
@@ -72,6 +78,20 @@ function bindEventListeners() {
     } else {
         console.error('找不到挖掘表单元素');
     }
+
+    // 兜底：截面模式下直接响应按钮点击，避免浏览器原生表单拦截导致“无反应”
+    const startMiningBtn = document.getElementById('startMiningBtn');
+    if (startMiningBtn) {
+        startMiningBtn.addEventListener('click', async (event) => {
+            if (currentMiningMode === 'cross_sectional') {
+                event.preventDefault();
+                await handleCrossSectionalMining();
+            } else if (currentMiningMode === 'cross_sectional_rl') {
+                event.preventDefault();
+                await handleRLCrossSectionalMining();
+            }
+        });
+    }
     
     // 数据选择器变化
     const exchangeSelect = document.getElementById('exchangeSelect');
@@ -86,12 +106,35 @@ function bindEventListeners() {
     
     const symbolsSelect = document.getElementById('symbolsSelect');
     if (symbolsSelect) {
-        symbolsSelect.addEventListener('change', updateTimeframesForSelection);
+        symbolsSelect.addEventListener('change', () => {
+            updateSelectedSymbolCount();
+            updateTimeframesForSelection();
+        });
     }
     
     const timeframesSelect = document.getElementById('timeframesSelect');
     if (timeframesSelect) {
         timeframesSelect.addEventListener('change', updateRangeForSelection);
+    }
+
+    const symbolSearchInput = document.getElementById('symbolSearchInput');
+    if (symbolSearchInput) {
+        symbolSearchInput.addEventListener('input', filterSymbolsByKeyword);
+    }
+
+    const excludeStablecoinsFilter = document.getElementById('excludeStablecoinsFilter');
+    if (excludeStablecoinsFilter) {
+        excludeStablecoinsFilter.addEventListener('change', filterSymbolsByStablecoin);
+    }
+
+    const startDateDisplay = document.getElementById('startDateDisplay');
+    if (startDateDisplay) {
+        startDateDisplay.addEventListener('change', onManualDateInputChanged);
+    }
+
+    const endDateDisplay = document.getElementById('endDateDisplay');
+    if (endDateDisplay) {
+        endDateDisplay.addEventListener('change', onManualDateInputChanged);
     }
 }
 
@@ -179,6 +222,7 @@ async function refreshLocalMeta() {
             if (localDataRows.length > 0) {
                 updateSymbolsSelect();
                 updateTimeframesSelect();
+                updateRangeForSelection();
                 console.log('数据选择器更新完成');
             } else {
                 console.log('没有找到数据');
@@ -198,23 +242,42 @@ async function refreshLocalMeta() {
  * 更新交易对选择器
  */
 function updateSymbolsSelect() {
+    allSymbols = [...new Set(localDataRows.map(row => row.symbol))].sort();
+    renderSymbolsSelect();
+}
+
+function renderSymbolsSelect() {
     const symbolsSelect = document.getElementById('symbolsSelect');
     if (!symbolsSelect) return;
-    
-    console.log('更新交易对选择器，数据行数:', localDataRows.length);
-    
-    // 获取唯一的交易对
-    const symbols = [...new Set(localDataRows.map(row => row.symbol))];
-    console.log('找到的交易对:', symbols);
-    
-    symbolsSelect.innerHTML = '<option value="">请选择...</option>';
-    symbols.forEach(symbol => {
+
+    const selectedSymbols = new Set(
+        Array.from(symbolsSelect.selectedOptions).map(opt => opt.value)
+    );
+
+    const query = (document.getElementById('symbolSearchInput')?.value || '').trim().toLowerCase();
+    const excludeStablecoins = !!document.getElementById('excludeStablecoinsFilter')?.checked;
+    const viewSymbols = allSymbols.filter(symbol => {
+        if (excludeStablecoins && isStablecoinSymbol(symbol)) return false;
+        if (query && !String(symbol).toLowerCase().includes(query)) return false;
+        return true;
+    });
+
+    symbolsSelect.innerHTML = '';
+    viewSymbols.forEach(symbol => {
         const option = document.createElement('option');
         option.value = symbol;
-        option.textContent = symbol;
+        const stableTag = isStablecoinSymbol(symbol) ? ' (稳定币)' : '';
+        option.textContent = `${symbol}${stableTag}`;
+        if (isStablecoinSymbol(symbol)) {
+            option.style.color = '#888';
+        }
+        if (selectedSymbols.has(symbol)) {
+            option.selected = true;
+        }
         symbolsSelect.appendChild(option);
     });
-    
+
+    updateSelectedSymbolCount();
     console.log('交易对选择器已更新，选项数:', symbolsSelect.options.length);
 }
 
@@ -361,13 +424,42 @@ function setupRangeSlider(startDate, endDate) {
         const sv = parseInt(values[0], 10), ev = parseInt(values[1], 10);
         const s = new Date(startDate.getTime() + (sv/100)*totalMs);
         const e = new Date(startDate.getTime() + (ev/100)*totalMs);
-        document.getElementById('startDate').value = s.toISOString().slice(0,10);
-        document.getElementById('endDate').value = e.toISOString().slice(0,10);
-        updateRangeInfo(`${s.toISOString().slice(0,10)} ~ ${e.toISOString().slice(0,10)}`);
+        const startStr = s.toISOString().slice(0, 10);
+        const endStr = e.toISOString().slice(0, 10);
+
+        const startDateEl = document.getElementById('startDate');
+        const endDateEl = document.getElementById('endDate');
+        const startDateDisplayEl = document.getElementById('startDateDisplay');
+        const endDateDisplayEl = document.getElementById('endDateDisplay');
+
+        if (startDateEl) startDateEl.value = startStr;
+        if (endDateEl) endDateEl.value = endStr;
+        if (startDateDisplayEl) startDateDisplayEl.value = startStr;
+        if (endDateDisplayEl) endDateDisplayEl.value = endStr;
+        updateRangeInfo(`${startStr} ~ ${endStr}`);
     };
     
     container.noUiSlider.on('update', update);
     update([0, 100]);
+}
+
+function onManualDateInputChanged() {
+    const startDateDisplay = document.getElementById('startDateDisplay');
+    const endDateDisplay = document.getElementById('endDateDisplay');
+    const startDate = startDateDisplay?.value;
+    const endDate = endDateDisplay?.value;
+    if (!startDate || !endDate) return;
+
+    if (startDate > endDate) {
+        showAlert('warning', '开始日期不能晚于结束日期');
+        return;
+    }
+
+    const startHidden = document.getElementById('startDate');
+    const endHidden = document.getElementById('endDate');
+    if (startHidden) startHidden.value = startDate;
+    if (endHidden) endHidden.value = endDate;
+    updateRangeInfo(`${startDate} ~ ${endDate}`);
 }
 
 /**
@@ -380,13 +472,196 @@ function updateRangeInfo(message) {
     }
 }
 
+async function loadStablecoins() {
+    try {
+        const response = await fetch('/api/data/stablecoins');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const result = await response.json();
+        if (result.success) {
+            stablecoins = new Set((result.data || []).map(item => String(item).toUpperCase()));
+            return;
+        }
+    } catch (error) {
+        console.warn('加载稳定币列表失败，使用默认列表', error);
+    }
+    stablecoins = new Set(['USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'USDD', 'FRAX', 'USDP', 'GUSD']);
+}
+
+function isStablecoinSymbol(symbol) {
+    const text = String(symbol || '').toUpperCase();
+    if (!text) return false;
+
+    let base;
+    if (text.includes('_')) {
+        base = text.split('_')[0];
+    } else {
+        base = text.replace(/USDT?$/i, '');
+    }
+    return stablecoins.has(base.toUpperCase());
+}
+
+function filterSymbolsByKeyword() {
+    renderSymbolsSelect();
+}
+
+function filterSymbolsByStablecoin() {
+    renderSymbolsSelect();
+}
+
+function updateSelectedSymbolCount() {
+    const symbolsSelect = document.getElementById('symbolsSelect');
+    const countEl = document.getElementById('selectedSymbolCount');
+    if (!symbolsSelect || !countEl) return;
+    countEl.textContent = String(symbolsSelect.selectedOptions.length);
+}
+
+function selectAllSymbols() {
+    const symbolsSelect = document.getElementById('symbolsSelect');
+    if (!symbolsSelect) return;
+    Array.from(symbolsSelect.options).forEach(opt => { opt.selected = true; });
+    updateSelectedSymbolCount();
+    updateTimeframesForSelection();
+}
+
+function selectAllSymbolsExcludeStablecoins() {
+    const symbolsSelect = document.getElementById('symbolsSelect');
+    if (!symbolsSelect) return;
+    Array.from(symbolsSelect.options).forEach(opt => {
+        opt.selected = !isStablecoinSymbol(opt.value);
+    });
+    updateSelectedSymbolCount();
+    updateTimeframesForSelection();
+}
+
+function clearSymbolSelection() {
+    const symbolsSelect = document.getElementById('symbolsSelect');
+    if (!symbolsSelect) return;
+    Array.from(symbolsSelect.options).forEach(opt => { opt.selected = false; });
+    updateSelectedSymbolCount();
+    updateTimeframesForSelection();
+}
+
+function normalizeSymbolForMatch(rawSymbol) {
+    const raw = String(rawSymbol || '').trim().toUpperCase();
+    if (!raw) return '';
+    return raw.replace(/[\s_\-\/]/g, '');
+}
+
+function buildSymbolAliasMap(symbolList) {
+    const aliasMap = new Map();
+    (symbolList || []).forEach(original => {
+        const upper = String(original || '').toUpperCase();
+        const normalized = normalizeSymbolForMatch(upper);
+        if (upper && !aliasMap.has(upper)) aliasMap.set(upper, original);
+        if (normalized && !aliasMap.has(normalized)) aliasMap.set(normalized, original);
+    });
+    return aliasMap;
+}
+
+function importSymbolList() {
+    const inputEl = document.getElementById('symbolListInput');
+    const resultEl = document.getElementById('importResult');
+    if (!inputEl || !resultEl) return;
+
+    const input = inputEl.value.trim();
+    if (!input) {
+        resultEl.innerHTML = '<span class="text-warning">请输入交易对列表</span>';
+        return;
+    }
+
+    if (!allSymbols || allSymbols.length === 0) {
+        resultEl.innerHTML = '<span class="text-danger">请先加载交易对数据</span>';
+        return;
+    }
+
+    let symbols = [];
+    if (input.startsWith('[') && input.endsWith(']')) {
+        try {
+            const parsed = JSON.parse(input);
+            if (Array.isArray(parsed)) {
+                symbols = parsed.map(item => String(item).trim().toUpperCase());
+            }
+        } catch (error) {
+            resultEl.innerHTML = '<span class="text-danger">JSON格式解析失败，请检查格式</span>';
+            return;
+        }
+    } else {
+        symbols = input.split(/[,\s\n]+/)
+            .map(item => item.trim().toUpperCase())
+            .filter(Boolean);
+    }
+
+    if (symbols.length === 0) {
+        resultEl.innerHTML = '<span class="text-warning">未识别到有效的交易对</span>';
+        return;
+    }
+
+    const symbolAliasMap = buildSymbolAliasMap(allSymbols);
+    const matchedSymbols = [];
+    const unmatchedSymbols = [];
+    const matchedSet = new Set();
+
+    symbols.forEach(item => {
+        const normalized = normalizeSymbolForMatch(item);
+        const matched = symbolAliasMap.get(item) || symbolAliasMap.get(normalized);
+        if (matched) {
+            if (!matchedSet.has(matched)) {
+                matchedSet.add(matched);
+                matchedSymbols.push(matched);
+            }
+        } else {
+            unmatchedSymbols.push(item);
+        }
+    });
+
+    const excludeStablecoinsFilter = document.getElementById('excludeStablecoinsFilter');
+    if (excludeStablecoinsFilter?.checked) {
+        excludeStablecoinsFilter.checked = false;
+    }
+    renderSymbolsSelect();
+    clearSymbolSelection();
+
+    const symbolsSelect = document.getElementById('symbolsSelect');
+    if (symbolsSelect) {
+        Array.from(symbolsSelect.options).forEach(opt => {
+            if (matchedSet.has(opt.value)) {
+                opt.selected = true;
+            }
+        });
+    }
+
+    updateSelectedSymbolCount();
+    updateTimeframesForSelection();
+
+    let resultHtml = '';
+    if (matchedSymbols.length > 0) {
+        resultHtml += `<span class="text-success">成功匹配 ${matchedSymbols.length} 个交易对</span>`;
+    }
+    if (unmatchedSymbols.length > 0) {
+        const showCount = Math.min(5, unmatchedSymbols.length);
+        const more = unmatchedSymbols.length > showCount ? ` 等${unmatchedSymbols.length}个` : '';
+        resultHtml += `<br><span class="text-warning">未匹配: ${unmatchedSymbols.slice(0, showCount).join(', ')}${more}</span>`;
+    }
+    resultEl.innerHTML = resultHtml;
+}
+
 /**
  * 处理挖掘表单提交
  */
 async function handleMiningSubmit(event) {
     event.preventDefault();
-    console.log('挖掘表单提交');
-    
+    console.log('挖掘表单提交, 模式:', currentMiningMode);
+
+    if (currentMiningMode === 'cross_sectional') {
+        await handleCrossSectionalMining();
+        return;
+    }
+
+    if (currentMiningMode === 'cross_sectional_rl') {
+        await handleRLCrossSectionalMining();
+        return;
+    }
+
     try {
         // 获取表单数据
         const formData = new FormData(event.target);
@@ -716,8 +991,8 @@ function startProgressMonitoring(sessionId) {
                 if (data.status === 'completed') {
                     // 挖掘完成，获取完整结果
                     handleMiningCompleted(sessionId);
-                } else if (data.status === 'error') {
-                    handleMiningError(data.error);
+                } else if (data.status === 'error' || data.status === 'failed') {
+                    handleMiningError(data.error || data.message || '挖掘任务失败');
                 }
             } else {
                 addDebugInfo(`进度更新失败: ${data.error || '未知错误'}`, 'error');
@@ -759,8 +1034,8 @@ function fallbackToPolling(sessionId) {
                     if (data.status === 'completed') {
                         // 挖掘完成，获取完整结果
                         handleMiningCompleted(sessionId);
-                    } else if (data.status === 'error') {
-                        handleMiningError(data.error);
+                    } else if (data.status === 'error' || data.status === 'failed') {
+                        handleMiningError(data.error || data.message || '挖掘任务失败');
                     }
                 } else {
                     addDebugInfo(`轮询获取状态失败: ${data.error || '未知错误'}`, 'error');
@@ -943,7 +1218,22 @@ async function handleMiningCompleted(sessionId) {
             if (resultData.success !== false) {
                 // 显示结果
                 addDebugInfo('挖掘结果获取成功，正在显示...', 'success');
-                showMiningResults(resultData);
+
+                const isCrossSectional = resultData.results?.mode === 'cross_sectional'
+                    || resultData.config?.mode === 'cross_sectional';
+                const isRL = resultData.results?.mode === 'cross_sectional_rl'
+                    || resultData.config?.mode === 'cross_sectional_rl';
+
+                if (isRL) {
+                    showMiningResults(resultData);
+                    showRLResults(resultData);
+                } else if (isCrossSectional) {
+                    showMiningResults(resultData);
+                    showCrossSectionalResults(resultData);
+                } else {
+                    showMiningResults(resultData);
+                }
+
                 // 追加加载对比报告
                 loadDiffReport(sessionId);
             } else {
@@ -996,19 +1286,30 @@ function handleMiningError(error) {
  * 显示挖掘结果
  */
 function showMiningResults(data) {
-    // 隐藏进度界面
     const miningProgress = document.getElementById('miningProgress');
     if (miningProgress) {
         miningProgress.style.display = 'none';
     }
-    
-    // 显示结果界面
+
     const miningResults = document.getElementById('miningResults');
     if (miningResults) {
         miningResults.style.display = 'block';
-        updateResultsOverview(data);
-        updateResultsTable(data);
-        // 准备对比报告容器
+
+        const isCrossSectional = data.results?.mode === 'cross_sectional'
+            || data.config?.mode === 'cross_sectional';
+        const isRL = data.results?.mode === 'cross_sectional_rl'
+            || data.config?.mode === 'cross_sectional_rl';
+
+        if (isCrossSectional || isRL) {
+            const totalFactorsEl = document.getElementById('totalFactors');
+            const selectedFactorsEl = document.getElementById('selectedFactors');
+            if (totalFactorsEl) totalFactorsEl.textContent = '-';
+            if (selectedFactorsEl) selectedFactorsEl.textContent = '-';
+        } else {
+            updateResultsOverview(data);
+            updateResultsTable(data);
+        }
+
         ensureDiffContainer();
     }
 }
@@ -1600,10 +1901,10 @@ async function loadMiningHistory() {
         }
         
         console.log('挖掘历史数据:', data);
-        
+
         if (data.success) {
-            console.log(`成功获取历史数据，共 ${data.sessions?.length || 0} 个会话`);
-            updateHistoryTable(data.sessions);
+            console.log(`成功获取历史数据，共 ${data.history?.length || 0} 个会话`);
+            updateHistoryTable(data.history);
         } else {
             console.error('加载挖掘历史失败:', data.error);
             // 显示错误信息
@@ -1987,6 +2288,145 @@ function resetSubProgress() {
     });
 }
 
+function showRLResults(data) {
+    const miningResults = document.getElementById('miningResults');
+    if (!miningResults) return;
+
+    const results = data.results || data;
+    const factors = results.factors || {};
+    const factorList = Object.entries(factors);
+
+    const totalFactorsEl = document.getElementById('totalFactors');
+    const selectedFactorsEl = document.getElementById('selectedFactors');
+    const avgICEl = document.getElementById('avgIC');
+    const avgReturnEl = document.getElementById('avgReturn');
+
+    if (totalFactorsEl) totalFactorsEl.textContent = factorList.length;
+    if (selectedFactorsEl) selectedFactorsEl.textContent = factorList.length;
+    if (avgICEl) avgICEl.textContent = 'N/A';
+
+    if (factorList.length > 0) {
+        const avgRet = factorList.reduce((s, [, f]) => s + (f.avg_return || 0), 0) / factorList.length;
+        if (avgReturnEl) avgReturnEl.textContent = `${(avgRet * 100).toFixed(2)}%`;
+    }
+
+    const tableContainer = miningResults.querySelector('.table-responsive');
+    if (!tableContainer) return;
+
+    tableContainer.innerHTML = '';
+
+    if (factorList.length === 0) {
+        tableContainer.innerHTML = '<div class="alert alert-warning">未发现有效RL截面因子</div>';
+        return;
+    }
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm table-striped table-hover align-middle';
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>因子ID</th>
+                <th>表达式</th>
+                <th>回测得分</th>
+                <th>平均收益</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    const sorted = factorList.sort(([, a], [, b]) => (b.score || 0) - (a.score || 0));
+
+    sorted.forEach(([fid, f]) => {
+        const row = document.createElement('tr');
+        const scoreClass = (f.score || 0) > 0 ? 'text-success' : (f.score || 0) < 0 ? 'text-danger' : '';
+        const expr = (f.expression || '').length > 80 ? (f.expression || '').substring(0, 77) + '...' : (f.expression || '');
+        row.innerHTML = `
+            <td><code>${fid}</code></td>
+            <td title="${escapeHtml(f.expression || '')}"><small>${escapeHtml(expr)}</small></td>
+            <td class="${scoreClass}"><strong>${(f.score || 0).toFixed(4)}</strong></td>
+            <td>${((f.avg_return || 0) * 100).toFixed(2)}%</td>
+        `;
+        tbody.appendChild(row);
+    });
+
+    tableContainer.appendChild(table);
+
+    const trainHistory = results.training_history || [];
+    if (trainHistory.length > 0) {
+        const chartDiv = document.createElement('div');
+        chartDiv.className = 'mt-4';
+        chartDiv.innerHTML = `
+            <h5>RL训练曲线</h5>
+            <canvas id="rlTrainingChart" height="200"></canvas>
+        `;
+        tableContainer.parentElement.appendChild(chartDiv);
+
+        setTimeout(() => renderRLTrainingChart(trainHistory), 100);
+    }
+}
+
+function renderRLTrainingChart(history) {
+    const canvas = document.getElementById('rlTrainingChart');
+    if (!canvas) return;
+
+    if (canvas._chartInstance) canvas._chartInstance.destroy();
+
+    const sampled = history.filter((_, i) => i % Math.max(1, Math.floor(history.length / 200)) === 0 || i === history.length - 1);
+
+    const ctx = canvas.getContext('2d');
+    canvas._chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: sampled.map(h => `Step ${h.step}`),
+            datasets: [
+                {
+                    label: '平均奖励',
+                    data: sampled.map(h => h.avg_reward || 0),
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                },
+                {
+                    label: '最佳得分',
+                    data: sampled.map(h => h.best_score || 0),
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    fill: false,
+                    tension: 0.3,
+                },
+                {
+                    label: '策略损失',
+                    data: sampled.map(h => h.policy_loss || 0),
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    fill: false,
+                    tension: 0.3,
+                    borderDash: [5, 5],
+                    yAxisID: 'y1',
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'top' },
+                title: { display: true, text: 'RL训练过程' }
+            },
+            scales: {
+                y: { title: { display: true, text: '奖励/得分' } },
+                y1: {
+                    position: 'right',
+                    title: { display: true, text: '损失' },
+                    grid: { drawOnChartArea: false },
+                },
+                x: { title: { display: true, text: '训练步数' } }
+            }
+        }
+    });
+}
+
 /**
  * 加载算法列表
  */
@@ -2113,7 +2553,384 @@ function collectMiningParams() {
  * 收集特定算法的参数（可扩展）
  */
 function collectAlgorithmParams(algoId) {
-    // 这里可以根据算法ID收集特定参数
-    // 目前返回空对象，后续可以扩展
     return {};
+}
+
+
+// ==================== 截面因子挖掘（GP遗传编程） ====================
+
+function switchMiningMode(mode) {
+    currentMiningMode = mode;
+
+    const standardConfig = document.getElementById('standardMiningConfig');
+    const csConfig = document.getElementById('crossSectionalConfig');
+    const rlConfig = document.getElementById('rlConfig');
+    const algoSelector = document.getElementById('algorithm_selector');
+    const csAlgoInfo = document.getElementById('csAlgoInfo');
+    const standardParams = document.getElementById('standardParams');
+
+    if (mode === 'cross_sectional') {
+        if (standardConfig) standardConfig.style.display = 'none';
+        if (csConfig) csConfig.style.display = 'block';
+        if (rlConfig) rlConfig.style.display = 'none';
+        if (algoSelector) algoSelector.style.display = 'none';
+        if (csAlgoInfo) csAlgoInfo.style.display = 'block';
+        if (standardParams) standardParams.style.display = 'none';
+    } else if (mode === 'cross_sectional_rl') {
+        if (standardConfig) standardConfig.style.display = 'none';
+        if (csConfig) csConfig.style.display = 'none';
+        if (rlConfig) rlConfig.style.display = 'block';
+        if (algoSelector) algoSelector.style.display = 'none';
+        if (csAlgoInfo) csAlgoInfo.style.display = 'none';
+        if (standardParams) standardParams.style.display = 'none';
+        checkRLTorchStatus();
+    } else {
+        if (standardConfig) standardConfig.style.display = 'block';
+        if (csConfig) csConfig.style.display = 'none';
+        if (rlConfig) rlConfig.style.display = 'none';
+        if (algoSelector) algoSelector.style.display = 'block';
+        if (csAlgoInfo) csAlgoInfo.style.display = 'none';
+        if (standardParams) standardParams.style.display = 'block';
+    }
+}
+
+async function checkRLTorchStatus() {
+    const statusEl = document.getElementById('rlTorchStatus');
+    if (!statusEl) return;
+
+    try {
+        const resp = await fetch('/api/mining/cross_sectional_rl/check_torch');
+        const data = await resp.json();
+
+        if (data.torch_available) {
+            const deviceInfo = data.cuda_available
+                ? `<span class="badge bg-success">CUDA: ${data.device_name}</span>`
+                : `<span class="badge bg-warning text-dark">CPU模式（建议使用GPU）</span>`;
+            statusEl.innerHTML = `
+                <div class="alert alert-success py-2 mb-0">
+                    <small>✅ PyTorch ${data.torch_version} ${deviceInfo}</small>
+                </div>`;
+        } else {
+            statusEl.innerHTML = `
+                <div class="alert alert-danger py-2 mb-0">
+                    <small>❌ PyTorch未安装。请运行: <code>pip install torch</code></small>
+                </div>`;
+        }
+    } catch (e) {
+        statusEl.innerHTML = `
+            <div class="alert alert-warning py-2 mb-0">
+                <small>⚠️ 无法检测PyTorch状态</small>
+            </div>`;
+    }
+}
+
+async function handleRLCrossSectionalMining() {
+    try {
+        const symbols = getSelectedValues('symbolsSelect');
+        const timeframes = getSelectedValues('timeframesSelect');
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+
+        if (symbols.length < 3) {
+            showAlert('error', `截面挖掘至少需要3个交易对，当前选择了${symbols.length}个`);
+            return;
+        }
+
+        if (timeframes.length === 0) {
+            showAlert('error', '请选择至少一个时间框架');
+            return;
+        }
+
+        const dModel = parseInt(document.getElementById('rlDModel')?.value) || 64;
+        const nhead = parseInt(document.getElementById('rlNhead')?.value) || 4;
+        if (dModel % nhead !== 0) {
+            showAlert('error', `d_model(${dModel})必须能被nhead(${nhead})整除，请调整参数`);
+            return;
+        }
+
+        const exchange = document.getElementById('exchangeSelect')?.value || 'binance';
+        const data_source = exchange === 'binance' ? 'binance' : 'yahoo';
+
+        if (timeframes.length > 1) {
+            showAlert('warning', `截面RL当前仅使用第一个时间框架：${timeframes[0]}`);
+        }
+
+        const rlConfig = {
+            symbols: symbols,
+            timeframe: timeframes[0],
+            start_date: startDate || undefined,
+            end_date: endDate || undefined,
+            data_source: data_source,
+            device: document.getElementById('rlDevice')?.value || 'auto',
+            batch_size: parseInt(document.getElementById('rlBatchSize')?.value) || 512,
+            train_steps: parseInt(document.getElementById('rlTrainSteps')?.value) || 500,
+            max_formula_len: parseInt(document.getElementById('rlMaxFormulaLen')?.value) || 16,
+            lr: parseFloat(document.getElementById('rlLr')?.value) || 0.001,
+            d_model: parseInt(document.getElementById('rlDModel')?.value) || 64,
+            nhead: parseInt(document.getElementById('rlNhead')?.value) || 4,
+            num_layers: parseInt(document.getElementById('rlNumLayers')?.value) || 2,
+            num_loops: parseInt(document.getElementById('rlNumLoops')?.value) || 3,
+            entropy_coef: parseFloat(document.getElementById('rlEntropyCoef')?.value) || 0.01,
+            use_lord: document.getElementById('rlUseLord')?.checked ?? true,
+            trade_size: parseFloat(document.getElementById('rlTradeSize')?.value) || 10000,
+            base_fee: parseFloat(document.getElementById('rlBaseFee')?.value) || 0.001,
+            max_factors: parseInt(document.getElementById('rlMaxFactors')?.value) || 15,
+            max_correlation: parseFloat(document.getElementById('rlMaxCorrelation')?.value) || 0.7,
+        };
+
+        console.log('RL截面挖掘配置:', rlConfig);
+
+        updateStartButton(true);
+        showWaitingState();
+
+        const response = await fetch('/api/mining/cross_sectional_rl/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(rlConfig)
+        });
+
+        const result = await response.json();
+        console.log('RL截面挖掘启动结果:', result);
+
+        if (result.success) {
+            miningSession = result.session_id;
+            showAlert('info', `RL截面挖掘已启动！${symbols.length}个币种，BS=${rlConfig.batch_size}，${rlConfig.train_steps}步训练`);
+            showMiningProgress();
+            startProgressMonitoring(result.session_id);
+        } else {
+            showAlert('error', result.error || 'RL截面挖掘启动失败');
+            updateStartButton(false);
+        }
+
+    } catch (error) {
+        console.error('RL截面挖掘失败:', error);
+        showAlert('error', `RL截面挖掘失败: ${error.message}`);
+        updateStartButton(false);
+    }
+}
+
+async function handleCrossSectionalMining() {
+    try {
+        const symbols = getSelectedValues('symbolsSelect');
+        const timeframes = getSelectedValues('timeframesSelect');
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+
+        if (symbols.length < 3) {
+            showAlert('error', `截面挖掘至少需要3个交易对，当前选择了${symbols.length}个`);
+            return;
+        }
+
+        if (timeframes.length === 0) {
+            showAlert('error', '请选择至少一个时间框架');
+            return;
+        }
+
+        const exchange = document.getElementById('exchangeSelect')?.value || 'binance';
+        const data_source = exchange === 'binance' ? 'binance' : 'yahoo';
+
+        if (timeframes.length > 1) {
+            showAlert('warning', `截面GP当前仅使用第一个时间框架：${timeframes[0]}`);
+        }
+
+        const gpConfig = {
+            symbols: symbols,
+            timeframe: timeframes[0],
+            start_date: startDate || undefined,
+            end_date: endDate || undefined,
+            data_source: data_source,
+            population_size: parseInt(document.getElementById('csPopulationSize')?.value) || 200,
+            max_generations: parseInt(document.getElementById('csMaxGenerations')?.value) || 30,
+            max_depth: parseInt(document.getElementById('csMaxDepth')?.value) || 5,
+            crossover_rate: parseFloat(document.getElementById('csCrossoverRate')?.value) || 0.7,
+            mutation_rate: parseFloat(document.getElementById('csMutationRate')?.value) || 0.2,
+            min_ic: parseFloat(document.getElementById('csMinIC')?.value) || 0.02,
+            min_ir: parseFloat(document.getElementById('csMinIR')?.value) || 0.1,
+            max_factors: parseInt(document.getElementById('csMaxFactors')?.value) || 15,
+            max_correlation: parseFloat(document.getElementById('csMaxCorrelation')?.value) || 0.7,
+        };
+
+        console.log('截面挖掘配置:', gpConfig);
+
+        updateStartButton(true);
+        showWaitingState();
+
+        const response = await fetch('/api/mining/cross_sectional/start', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(gpConfig)
+        });
+
+        const result = await response.json();
+        console.log('截面挖掘启动结果:', result);
+
+        if (result.success) {
+            miningSession = result.session_id;
+            showAlert('info', `截面挖掘已启动！${symbols.length}个币种，种群${gpConfig.population_size}，${gpConfig.max_generations}代进化`);
+            showMiningProgress();
+            startProgressMonitoring(result.session_id);
+        } else {
+            showAlert('error', result.error || '截面挖掘启动失败');
+            updateStartButton(false);
+        }
+
+    } catch (error) {
+        console.error('截面挖掘失败:', error);
+        showAlert('error', `截面挖掘失败: ${error.message}`);
+        updateStartButton(false);
+    }
+}
+
+function showCrossSectionalResults(data) {
+    const miningResults = document.getElementById('miningResults');
+    if (!miningResults) return;
+
+    const results = data.results || data;
+    const factors = results.factors || {};
+    const factorList = Object.entries(factors);
+
+    const totalFactorsEl = document.getElementById('totalFactors');
+    const selectedFactorsEl = document.getElementById('selectedFactors');
+    const avgICEl = document.getElementById('avgIC');
+    const avgReturnEl = document.getElementById('avgReturn');
+
+    if (totalFactorsEl) totalFactorsEl.textContent = factorList.length;
+    if (selectedFactorsEl) selectedFactorsEl.textContent = factorList.length;
+
+    if (factorList.length > 0) {
+        const avgIC = factorList.reduce((s, [, f]) => s + Math.abs(f.ic_mean || 0), 0) / factorList.length;
+        const avgRet = factorList.reduce((s, [, f]) => s + (f.long_short_return || 0), 0) / factorList.length;
+        if (avgICEl) avgICEl.textContent = avgIC.toFixed(4);
+        if (avgReturnEl) avgReturnEl.textContent = `${(avgRet * 100).toFixed(2)}%`;
+    }
+
+    const tableContainer = miningResults.querySelector('.table-responsive');
+    if (!tableContainer) return;
+
+    tableContainer.innerHTML = '';
+
+    if (factorList.length === 0) {
+        tableContainer.innerHTML = '<div class="alert alert-warning">未发现有效截面因子</div>';
+        return;
+    }
+
+    const table = document.createElement('table');
+    table.className = 'table table-sm table-striped table-hover align-middle';
+    table.innerHTML = `
+        <thead>
+            <tr>
+                <th>因子ID</th>
+                <th>表达式</th>
+                <th>方向</th>
+                <th>IC均值</th>
+                <th>ICIR</th>
+                <th>Fitness</th>
+                <th>Rank IC</th>
+                <th>Rank ICIR</th>
+                <th>多空收益</th>
+                <th>币种数</th>
+                <th>期数</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    `;
+
+    const tbody = table.querySelector('tbody');
+    const sorted = factorList.sort(([, a], [, b]) => {
+        const fa = Math.abs(a.fitness ?? a.icir ?? 0);
+        const fb = Math.abs(b.fitness ?? b.icir ?? 0);
+        return fb - fa;
+    });
+
+    sorted.forEach(([fid, f]) => {
+        const row = document.createElement('tr');
+        const icClass = (f.ic_mean || 0) > 0 ? 'text-success' : (f.ic_mean || 0) < 0 ? 'text-danger' : '';
+        const isNegative = (f.direction === 'negative') || ((f.ic_mean || 0) < 0);
+        const directionLabel = isNegative ? '反向' : '正向';
+        const directionBadge = isNegative ? 'bg-warning text-dark' : 'bg-success';
+        const expr = (f.expression || '').length > 80 ? (f.expression || '').substring(0, 77) + '...' : (f.expression || '');
+        row.innerHTML = `
+            <td><code>${fid}</code></td>
+            <td title="${escapeHtml(f.expression || '')}"><small>${escapeHtml(expr)}</small></td>
+            <td><span class="badge ${directionBadge}">${directionLabel}</span></td>
+            <td class="${icClass}"><strong>${(f.ic_mean || 0).toFixed(4)}</strong></td>
+            <td>${(f.icir || 0).toFixed(4)}</td>
+            <td>${(f.fitness || 0).toFixed(4)}</td>
+            <td>${(f.rank_ic_mean || 0).toFixed(4)}</td>
+            <td>${(f.rank_icir || 0).toFixed(4)}</td>
+            <td>${((f.long_short_return || 0) * 100).toFixed(2)}%</td>
+            <td>${f.n_symbols || 0}</td>
+            <td>${f.n_periods || 0}</td>
+        `;
+        tbody.appendChild(row);
+    });
+
+    tableContainer.appendChild(table);
+
+    const genStats = results.generation_stats || [];
+    if (genStats.length > 0) {
+        const chartDiv = document.createElement('div');
+        chartDiv.className = 'mt-4';
+        chartDiv.innerHTML = `
+            <h5>进化曲线</h5>
+            <canvas id="evolutionChart" height="200"></canvas>
+        `;
+        tableContainer.parentElement.appendChild(chartDiv);
+
+        setTimeout(() => renderEvolutionChart(genStats), 100);
+    }
+}
+
+function renderEvolutionChart(genStats) {
+    const canvas = document.getElementById('evolutionChart');
+    if (!canvas) return;
+
+    if (canvas._chartInstance) canvas._chartInstance.destroy();
+
+    const ctx = canvas.getContext('2d');
+    canvas._chartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: genStats.map(g => `Gen ${g.generation}`),
+            datasets: [
+                {
+                    label: '最佳IC',
+                    data: genStats.map(g => g.best_ic || 0),
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                },
+                {
+                    label: '最佳ICIR',
+                    data: genStats.map(g => g.best_icir || 0),
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                    fill: true,
+                    tension: 0.3,
+                },
+                {
+                    label: '平均适应度',
+                    data: genStats.map(g => g.avg_fitness || 0),
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                    fill: false,
+                    tension: 0.3,
+                    borderDash: [5, 5],
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: { position: 'top' },
+                title: { display: true, text: 'GP进化过程' }
+            },
+            scales: {
+                y: { title: { display: true, text: '指标值' } },
+                x: { title: { display: true, text: '进化代数' } }
+            }
+        }
+    });
 }

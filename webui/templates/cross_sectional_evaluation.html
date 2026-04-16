@@ -168,10 +168,18 @@
                     
                     <div class="mb-3">
                         <label class="form-label">数据时间范围</label>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label small">开始日期</label>
+                                <input type="date" class="form-control form-control-sm" id="startDate">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">结束日期</label>
+                                <input type="date" class="form-control form-control-sm" id="endDate">
+                            </div>
+                        </div>
                         <div class="text-muted small mb-2" id="rangeInfo">—</div>
                         <div id="rangeSlider"></div>
-                        <input type="hidden" id="startDate">
-                        <input type="hidden" id="endDate">
                     </div>
                     
                     <div class="mb-3">
@@ -232,6 +240,9 @@
                     </button>
                     <button type="button" class="btn btn-warning w-100 mt-2" id="continueBtn" style="display:none;" onclick="continueEvaluation()">
                         <i class="fas fa-redo me-2"></i>继续评估 (<span id="remainingCount">0</span> 个因子)
+                    </button>
+                    <button type="button" class="btn btn-danger w-100 mt-2" id="cancelBtn" style="display:none;" onclick="cancelEvaluation()">
+                        <i class="fas fa-stop me-2"></i>取消评估
                     </button>
                 </form>
 
@@ -581,6 +592,7 @@ $(document).ready(function() {
     loadFactors();
     loadStablecoins();
     loadLocalSymbols();
+    bindRangeDateInputs();
     
     $('#factorSearch').on('input', filterFactors);
     $('#symbolSearch').on('input', filterSymbols);
@@ -1115,11 +1127,24 @@ function updateSelectedCount() {
     $('#selectedSymbolCount').text(count);
 }
 
+function formatDateInputValue(date) {
+    return date.toISOString().split('T')[0];
+}
+
+function parseDateInputValue(value) {
+    if (!value) return null;
+    const parts = String(value).split('-').map(Number);
+    if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+    return new Date(parts[0], parts[1] - 1, parts[2]);
+}
+
 function updateRangeSlider(startDate, endDate) {
     const slider = document.getElementById('rangeSlider');
     if (slider.noUiSlider) {
         slider.noUiSlider.destroy();
     }
+    slider.dataset.minTs = String(startDate.getTime());
+    slider.dataset.maxTs = String(endDate.getTime());
     noUiSlider.create(slider, {
         start: [startDate, endDate],
         connect: true,
@@ -1129,10 +1154,11 @@ function updateRangeSlider(startDate, endDate) {
         },
         format: {
             to: function(value) {
-                return new Date(value).toISOString().split('T')[0];
+                return formatDateInputValue(new Date(value));
             },
             from: function(value) {
-                return new Date(value).getTime();
+                const parsed = parseDateInputValue(value);
+                return parsed ? parsed.getTime() : new Date(value).getTime();
             }
         }
     });
@@ -1148,6 +1174,8 @@ function initRangeSlider() {
     const today = new Date();
     const oneYearAgo = new Date(today);
     oneYearAgo.setFullYear(today.getFullYear() - 1);
+    slider.dataset.minTs = String(new Date('2020-01-01').getTime());
+    slider.dataset.maxTs = String(today.getTime());
     
     noUiSlider.create(slider, {
         start: [oneYearAgo, today],
@@ -1158,10 +1186,11 @@ function initRangeSlider() {
         },
         format: {
             to: function(value) {
-                return new Date(value).toISOString().split('T')[0];
+                return formatDateInputValue(new Date(value));
             },
             from: function(value) {
-                return new Date(value).getTime();
+                const parsed = parseDateInputValue(value);
+                return parsed ? parsed.getTime() : new Date(value).getTime();
             }
         }
     });
@@ -1171,6 +1200,47 @@ function initRangeSlider() {
         $('#endDate').val(values[1]);
         $('#rangeInfo').text(`${values[0]} 至 ${values[1]}`);
     });
+}
+
+function bindRangeDateInputs() {
+    const slider = document.getElementById('rangeSlider');
+    const $start = $('#startDate');
+    const $end = $('#endDate');
+
+    const syncFromInputs = function(changedField) {
+        if (!slider || !slider.noUiSlider) return;
+
+        const minTs = Number(slider.dataset.minTs || 0);
+        const maxTs = Number(slider.dataset.maxTs || 0);
+        if (!minTs || !maxTs || minTs >= maxTs) return;
+
+        let startDate = parseDateInputValue($start.val());
+        let endDate = parseDateInputValue($end.val());
+        if (!startDate || !endDate) return;
+
+        let startTs = startDate.getTime();
+        let endTs = endDate.getTime();
+
+        startTs = Math.max(minTs, Math.min(startTs, maxTs));
+        endTs = Math.max(minTs, Math.min(endTs, maxTs));
+
+        if (startTs > endTs) {
+            if (changedField === 'start') {
+                endTs = startTs;
+                $end.val(formatDateInputValue(new Date(endTs)));
+            } else {
+                startTs = endTs;
+                $start.val(formatDateInputValue(new Date(startTs)));
+            }
+        }
+
+        $start.val(formatDateInputValue(new Date(startTs)));
+        $end.val(formatDateInputValue(new Date(endTs)));
+        slider.noUiSlider.set([$start.val(), $end.val()]);
+    };
+
+    $start.on('change', function() { syncFromInputs('start'); });
+    $end.on('change', function() { syncFromInputs('end'); });
 }
 
 function startCrossSectionalEvaluation(isContinue = false) {
@@ -1205,6 +1275,7 @@ function startCrossSectionalEvaluation(isContinue = false) {
     // ── 初始化 UI ──
     $('#startBtn').prop('disabled', true);
     $('#continueBtn').hide();
+    $('#cancelBtn').show();
     $('#progressBox').show();
     $('#resultsPlaceholder').hide();
     $('#resultsContainer').show();
@@ -1271,6 +1342,7 @@ function startCrossSectionalEvaluation(isContinue = false) {
     if (remainingFactorIds.length === 0) {
         clearInterval(elapsedTimer);
         $('#startBtn').prop('disabled', false);
+        $('#cancelBtn').hide();
         $('#currentTask').html('<span class="text-success">所有因子已评估完成！</span>');
         return;
     }
@@ -1288,6 +1360,7 @@ function startCrossSectionalEvaluation(isContinue = false) {
         if (remainingForRetry.length === 0) {
             clearInterval(elapsedTimer);
             $('#startBtn').prop('disabled', false);
+            $('#cancelBtn').hide();
             $('#continueBtn').hide();
             $('#currentTask').html('<span class="text-success">所有因子已评估完成！</span>');
             return;
@@ -1330,6 +1403,7 @@ function startCrossSectionalEvaluation(isContinue = false) {
                         clearInterval(inactivityChecker);
                         clearInterval(elapsedTimer);
                         $('#startBtn').prop('disabled', false);
+                        $('#cancelBtn').hide();
                         if (evaluationResults.length === 0) {
                             $('#currentTask').text('评估完成，无有效结果');
                         }
@@ -1379,6 +1453,7 @@ function startCrossSectionalEvaluation(isContinue = false) {
             clearInterval(elapsedTimer);
             console.error('SSE 请求失败:', err);
             $('#startBtn').prop('disabled', false);
+            $('#cancelBtn').hide();
             
             let errorMsg = err.message;
             if (err.name === 'AbortError') {

@@ -33,7 +33,7 @@ def create_app():
     app.register_blueprint(factors.bp, url_prefix='/api/factors')  # 仅保留API路由
     app.register_blueprint(api.bp, url_prefix='/api')
     app.register_blueprint(data_api.bp, url_prefix='/api/data')
-    app.register_blueprint(mining_api.bp, url_prefix='/api/mining')
+    app.register_blueprint(mining_api.bp)
     app.register_blueprint(training_api.bp, url_prefix='/api/training')
     
     # 全局变量

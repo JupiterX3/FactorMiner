@@ -669,13 +669,19 @@ async function loadFactorEvaluation() {
                 </div>
             </div>
             
-            <!-- 由滑条控制的日期范围，移除手动输入框，仅保留隐藏字段用于提交 -->
-            <input type="hidden" id="evaluationStartDate">
-            <input type="hidden" id="evaluationEndDate">
-
             <!-- 时间范围滑条（noUiSlider 双端范围） -->
             <div class="mb-3" id="dateRangeSliderContainer" style="display: none;">
                 <label class="form-label">数据时间范围</label>
+                <div class="row g-2 mb-2">
+                    <div class="col-6">
+                        <label class="form-label small">开始日期</label>
+                        <input type="date" class="form-control form-control-sm" id="evaluationStartDate">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small">结束日期</label>
+                        <input type="date" class="form-control form-control-sm" id="evaluationEndDate">
+                    </div>
+                </div>
                 <div class="text-muted small mb-2" id="dateRangeInfo">—</div>
                 <div id="dateRangeSlider"></div>
                 <div class="d-flex justify-content-between small text-muted mt-2">
@@ -1316,6 +1322,8 @@ function setupDateSlider(startStr, endStr) {
     const endDate = new Date(endStr);
     if (isNaN(startDate) || isNaN(endDate) || startDate >= endDate) { hideDateSlider(); return; }
     const totalMs = endDate - startDate;
+    container.dataset.minTs = String(startDate.getTime());
+    container.dataset.maxTs = String(endDate.getTime());
     info.textContent = `可用区间：${startStr} ~ ${endStr}`;
     container.style.display = 'block';
 
@@ -1347,6 +1355,52 @@ function setupDateSlider(startStr, endStr) {
     slider.noUiSlider.on('update', updateFromSlider);
     updateFromSlider([0, 100]);
 }
+
+function bindEvaluationDateInputs() {
+    const startInput = document.getElementById('evaluationStartDate');
+    const endInput = document.getElementById('evaluationEndDate');
+    const container = document.getElementById('dateRangeSliderContainer');
+    const slider = document.getElementById('dateRangeSlider');
+    const info = document.getElementById('dateRangeInfo');
+    const sLabel = document.getElementById('dateSliderStartLabel');
+    const eLabel = document.getElementById('dateSliderEndLabel');
+
+    const syncFromInputs = (changedField) => {
+        if (!slider || !slider.noUiSlider) return;
+        const minTs = Number(container.dataset.minTs || 0);
+        const maxTs = Number(container.dataset.maxTs || 0);
+        const totalMs = maxTs - minTs;
+        if (!minTs || !maxTs || totalMs <= 0) return;
+
+        let startTs = new Date(startInput.value).getTime();
+        let endTs = new Date(endInput.value).getTime();
+        if (Number.isNaN(startTs) || Number.isNaN(endTs)) return;
+
+        startTs = Math.max(minTs, Math.min(startTs, maxTs));
+        endTs = Math.max(minTs, Math.min(endTs, maxTs));
+        if (startTs > endTs) {
+            if (changedField === 'start') {
+                endTs = startTs;
+                endInput.value = new Date(endTs).toISOString().slice(0, 10);
+            } else {
+                startTs = endTs;
+                startInput.value = new Date(startTs).toISOString().slice(0, 10);
+            }
+        }
+
+        const startPct = ((startTs - minTs) / totalMs) * 100;
+        const endPct = ((endTs - minTs) / totalMs) * 100;
+        slider.noUiSlider.set([startPct, endPct]);
+        info.textContent = `${startInput.value} ~ ${endInput.value}`;
+        sLabel.textContent = startInput.value;
+        eLabel.textContent = endInput.value;
+    };
+
+    startInput.addEventListener('change', () => syncFromInputs('start'));
+    endInput.addEventListener('change', () => syncFromInputs('end'));
+}
+
+bindEvaluationDateInputs();
 
 // 工具函数
 function getTypeBadgeColor(type) {

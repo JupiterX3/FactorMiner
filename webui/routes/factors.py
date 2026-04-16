@@ -1143,6 +1143,13 @@ def cross_sectional_evaluate():
     )
 
 
+@bp.route('/cancel_evaluation', methods=['POST'])
+def cancel_evaluation():
+    """取消正在进行的截面评估"""
+    _cs_cancel_event.set()
+    return jsonify({'success': True, 'message': '取消信号已发送'})
+
+
 def _sse_event(event_type: str, data: dict) -> str:
     """构造 SSE 事件字符串"""
     payload = json.dumps(_sanitize_for_json({'type': event_type, **data}), ensure_ascii=False)

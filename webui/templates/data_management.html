@@ -39,6 +39,15 @@
                     
                     <div class="mb-2">
                         <label for="symbol" class="form-label small mb-1">交易对</label>
+                        <div class="input-group input-group-sm mb-1">
+                            <input type="text" class="form-control form-control-sm" id="symbolListInputDownload"
+                                   placeholder="导入交易对: BTC_USDT,ETH_USDT 或 [BTC_USDT,ETH_USDT]（自动选第一个匹配）" />
+                            <button class="btn btn-outline-primary" type="button" onclick="importDownloadSymbolList()"
+                                    title="导入并匹配交易对">
+                                <i class="fas fa-upload"></i> 导入
+                            </button>
+                        </div>
+                        <div class="form-text small mt-1" id="downloadSymbolImportResult"></div>
                         <select class="form-select form-select-sm" id="symbol" name="symbol">
                             <option value="">请先选择交易类型</option>
                         </select>
@@ -102,6 +111,17 @@
                     <form id="batchDownloadForm">
                         <div class="mb-3">
                             <label for="batchSymbols" class="form-label small mb-1">选择交易对 (多选)</label>
+                            <div class="mb-2">
+                                <div class="input-group input-group-sm">
+                                    <input type="text" class="form-control form-control-sm" id="batchSymbolListInput"
+                                           placeholder="批量导入: [BTC_USDT,ETH_USDT,...] 或 BTC_USDT,ETH_USDT,..." />
+                                    <button class="btn btn-outline-primary" type="button" onclick="importBatchSymbolList()"
+                                            title="导入并匹配交易对">
+                                        <i class="fas fa-upload"></i> 导入
+                                    </button>
+                                </div>
+                                <div class="form-text small mt-1" id="batchImportResult"></div>
+                            </div>
                             <select class="form-select" id="batchSymbols" name="batchSymbols" multiple size="8" style="min-height: 200px;">
                                 <option value="">请先选择交易类型</option>
                             </select>
@@ -950,6 +970,198 @@ function updateDownloadHistory(downloads) {
 }
 
 // 批量下载辅助函数
+function normalizeSymbolForMatch(rawSymbol) {
+    const raw = String(rawSymbol || '').trim().toUpperCase();
+    if (!raw) return '';
+    // 统一去掉分隔符，便于 BTCUSDT / BTC_USDT / BTC-USDT / BTC/USDT 互相匹配
+    return raw.replace(/[\s_\-\/]/g, '');
+}
+
+function buildSymbolAliasMap(symbolList) {
+    const aliasMap = new Map();
+    (symbolList || []).forEach(original => {
+        const orig = String(original || '').trim();
+        if (!orig) return;
+        const upper = orig.toUpperCase();
+        const normalized = normalizeSymbolForMatch(upper);
+        if (!aliasMap.has(upper)) aliasMap.set(upper, orig);
+        if (normalized && !aliasMap.has(normalized)) aliasMap.set(normalized, orig);
+    });
+    return aliasMap;
+}
+
+function parseSymbolListInput(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return [];
+
+    let tokens = [];
+    if (raw.startsWith('[') && raw.endsWith(']')) {
+        const inner = raw.slice(1, -1).trim();
+        if (!inner) return [];
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                tokens = parsed.map(x => String(x).trim());
+            }
+        } catch (e) {
+            // 兼容不带引号的 [BTCUSDT,ETHUSDT] 形式
+            tokens = inner.split(/[,\s\n]+/).map(t =>
+                String(t).trim().replace(/^['"]|['"]$/g, '')
+            );
+        }
+    } else {
+        tokens = raw.split(/[,\s\n]+/).map(t => String(t).trim());
+    }
+
+    return tokens.filter(Boolean).map(s => s.toUpperCase());
+}
+
+function importBatchSymbolList() {
+    const inputEl = document.getElementById('batchSymbolListInput');
+    const resultEl = document.getElementById('batchImportResult');
+    const selectEl = document.getElementById('batchSymbols');
+
+    if (!resultEl) return;
+    const input = inputEl ? inputEl.value.trim() : '';
+
+    if (!input) {
+        resultEl.innerHTML = '<span class="text-warning">请输入交易对列表</span>';
+        return;
+    }
+
+    if (!selectEl) {
+        resultEl.innerHTML = '<span class="text-danger">未找到交易对选择框</span>';
+        return;
+    }
+
+    // 只使用当前已加载到下拉框里的交易对进行匹配
+    const loadedSymbols = Array.from(selectEl.options)
+        .map(o => o.value)
+        .filter(v => v);
+
+    if (loadedSymbols.length === 0) {
+        resultEl.innerHTML = '<span class="text-danger">请先加载交易对数据</span>';
+        return;
+    }
+
+    const parsedTokens = parseSymbolListInput(input);
+    if (parsedTokens.length === 0) {
+        resultEl.innerHTML = '<span class="text-warning">未识别到有效的交易对</span>';
+        return;
+    }
+
+    const aliasMap = buildSymbolAliasMap(loadedSymbols);
+
+    const matchedSet = new Set();
+    const matchedSymbols = [];
+    const unmatchedSymbols = [];
+
+    parsedTokens.forEach(token => {
+        const upper = String(token || '').trim().toUpperCase();
+        if (!upper) return;
+        const normalizedInput = normalizeSymbolForMatch(upper);
+        const matched = aliasMap.get(upper) || aliasMap.get(normalizedInput);
+        if (matched) {
+            if (!matchedSet.has(matched)) {
+                matchedSet.add(matched);
+                matchedSymbols.push(matched);
+            }
+        } else {
+            unmatchedSymbols.push(upper);
+        }
+    });
+
+    // 先清空再设置
+    Array.from(selectEl.options).forEach(o => {
+        o.selected = matchedSet.has(o.value);
+    });
+
+    updateBatchSelectionStats();
+
+    let resultHtml = '';
+    if (matchedSymbols.length > 0) {
+        resultHtml += `<span class="text-success">成功匹配 ${matchedSymbols.length} 个交易对</span>`;
+    }
+    if (unmatchedSymbols.length > 0) {
+        const showCount = Math.min(5, unmatchedSymbols.length);
+        const more = unmatchedSymbols.length > showCount ? ` 等${unmatchedSymbols.length}个` : '';
+        resultHtml += `<br><span class="text-warning">未匹配: ${unmatchedSymbols.slice(0, showCount).join(', ')}${more}</span>`;
+    }
+
+    resultEl.innerHTML = resultHtml || '<span class="text-warning">未匹配到任何交易对</span>';
+}
+
+function importDownloadSymbolList() {
+    const inputEl = document.getElementById('symbolListInputDownload');
+    const resultEl = document.getElementById('downloadSymbolImportResult');
+    const selectEl = document.getElementById('symbol');
+
+    if (!resultEl) return;
+
+    const input = inputEl ? inputEl.value.trim() : '';
+    if (!input) {
+        resultEl.innerHTML = '<span class="text-warning">请输入交易对列表</span>';
+        return;
+    }
+
+    if (!selectEl) {
+        resultEl.innerHTML = '<span class="text-danger">未找到交易对选择框</span>';
+        return;
+    }
+
+    const loadedSymbols = Array.from(selectEl.options)
+        .map(o => o.value)
+        .filter(v => v);
+
+    if (loadedSymbols.length === 0) {
+        resultEl.innerHTML = '<span class="text-danger">请先加载交易对数据</span>';
+        return;
+    }
+
+    const parsedTokens = parseSymbolListInput(input);
+    if (parsedTokens.length === 0) {
+        resultEl.innerHTML = '<span class="text-warning">未识别到有效的交易对</span>';
+        return;
+    }
+
+    const aliasMap = buildSymbolAliasMap(loadedSymbols);
+    const matchedSet = new Set();
+    const matchedSymbols = [];
+    const unmatchedSymbols = [];
+
+    parsedTokens.forEach(token => {
+        const upper = String(token || '').trim().toUpperCase();
+        if (!upper) return;
+        const normalizedInput = normalizeSymbolForMatch(upper);
+        const matched = aliasMap.get(upper) || aliasMap.get(normalizedInput);
+        if (matched && !matchedSet.has(matched)) {
+            matchedSet.add(matched);
+            matchedSymbols.push(matched);
+        } else if (!matched) {
+            unmatchedSymbols.push(upper);
+        }
+    });
+
+    // 统一清空再按匹配结果设置，避免旧选择造成误下载
+    selectEl.value = '';
+    if (matchedSymbols.length > 0) {
+        selectEl.value = matchedSymbols[0];
+    }
+    if (typeof clearDataCoverage === 'function') clearDataCoverage();
+
+    let resultHtml = '';
+    if (matchedSymbols.length > 0) {
+        resultHtml += `<span class="text-success">已匹配 ${matchedSymbols.length} 个交易对，已选中: ${matchedSymbols[0]}</span>`;
+    }
+    if (unmatchedSymbols.length > 0) {
+        const showCount = Math.min(5, unmatchedSymbols.length);
+        const more = unmatchedSymbols.length > showCount ? ` 等${unmatchedSymbols.length}个` : '';
+        resultHtml += `<br><span class="text-warning">未匹配: ${unmatchedSymbols.slice(0, showCount).join(', ')}${more}</span>`;
+    }
+
+    resultEl.innerHTML = resultHtml || '<span class="text-warning">未匹配到任何交易对</span>';
+}
+
 function selectAllSymbols() {
     const select = document.getElementById('batchSymbols');
     for (let option of select.options) {
@@ -965,6 +1177,7 @@ function clearAllSymbols() {
     for (let option of select.options) {
         option.selected = false;
     }
+    updateBatchSelectionStats();
 }
 
 function selectAllTimeframes() {

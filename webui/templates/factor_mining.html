@@ -24,18 +24,32 @@
                 </div>
                 <div class="card-body">
                     <form id="miningForm">
+                        <!-- 挖掘模式选择 -->
+                        <div class="mb-4">
+                            <label class="form-label fw-bold">🔬 挖掘模式</label>
+                            <div class="btn-group w-100" role="group">
+                                <input type="radio" class="btn-check" name="miningMode" id="modeStandard" value="standard" checked onclick="switchMiningMode('standard')">
+                                <label class="btn btn-outline-primary" for="modeStandard">📋 标准挖掘</label>
+                                <input type="radio" class="btn-check" name="miningMode" id="modeCrossSectional" value="cross_sectional" onclick="switchMiningMode('cross_sectional')">
+                                <label class="btn btn-outline-success" for="modeCrossSectional">🧬 截面GP</label>
+                                <input type="radio" class="btn-check" name="miningMode" id="modeRL" value="cross_sectional_rl" onclick="switchMiningMode('cross_sectional_rl')">
+                                <label class="btn btn-outline-warning" for="modeRL">🤖 截面RL</label>
+                            </div>
+                            <div class="form-text">标准挖掘：算法→因子→评估；截面GP：遗传编程搜索；截面RL：强化学习搜索（需GPU）</div>
+                        </div>
+
                         <div class="row">
                             <div class="col-md-6">
                                 <div class="mb-3">
                                     <label for="exchangeSelect" class="form-label">交易所</label>
-                                    <select class="form-select" id="exchangeSelect" required>
+                                    <select class="form-select" id="exchangeSelect">
                                         <option value="">请选择...</option>
                                     </select>
                                 </div>
                                 
                                 <div class="mb-3">
                                     <label for="tradeTypeSelect" class="form-label">交易类型</label>
-                                    <select class="form-select" id="tradeTypeSelect" required>
+                                    <select class="form-select" id="tradeTypeSelect">
                                         <option value="">请选择...</option>
                                     </select>
                                 </div>
@@ -49,15 +63,35 @@
                                 
                                 <div class="mb-3">
                                     <label for="symbolsSelect" class="form-label">交易对</label>
-                                    <select class="form-select" id="symbolsSelect" multiple required>
+                                    <input type="text" class="form-control form-control-sm mb-2" id="symbolSearchInput" placeholder="搜索交易对...">
+                                    <div class="input-group input-group-sm mb-2">
+                                        <input type="text" class="form-control" id="symbolListInput" placeholder="批量导入: [BTCUSDT,ETHUSDT] 或 BTCUSDT,ETHUSDT">
+                                        <button class="btn btn-outline-primary" type="button" onclick="importSymbolList()">
+                                            <i class="fas fa-upload"></i> 导入
+                                        </button>
+                                    </div>
+                                    <div class="form-text small mb-2" id="importResult"></div>
+                                    <select class="form-select" id="symbolsSelect" multiple>
                                         <option value="">请选择...</option>
                                     </select>
+                                    <div class="d-flex justify-content-between align-items-center mt-1">
+                                        <div class="form-text small">已选 <span id="selectedSymbolCount">0</span> 个交易对</div>
+                                        <div class="btn-group btn-group-sm">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllSymbols()">全选</button>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllSymbolsExcludeStablecoins()">全选(排除稳定币)</button>
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearSymbolSelection()">清空</button>
+                                        </div>
+                                    </div>
+                                    <div class="form-check mt-2">
+                                        <input class="form-check-input" type="checkbox" id="excludeStablecoinsFilter">
+                                        <label class="form-check-label small" for="excludeStablecoinsFilter">列表中隐藏稳定币交易对</label>
+                                    </div>
                                     <div class="form-text">可多选，建议选择2-5个交易对</div>
                                 </div>
                                 
                                 <div class="mb-3">
                                     <label for="timeframesSelect" class="form-label">时间框架</label>
-                                    <select class="form-select" id="timeframesSelect" multiple required>
+                                    <select class="form-select" id="timeframesSelect" multiple>
                                         <option value="">请选择...</option>
                                     </select>
                                     <div class="form-text">可多选，建议选择1-3个时间框架</div>
@@ -66,7 +100,7 @@
                             
                             <div class="col-md-6">
                                 <!-- 算法选择器 -->
-                                <div class="mb-3">
+                                <div class="mb-3" id="standardMiningConfig">
                                     <label class="form-label">选择因子挖掘算法</label>
                                     <div id="algorithm_selector" class="border rounded p-3" style="max-height: 300px; overflow-y: auto;">
                                         <div class="text-center text-muted">
@@ -75,9 +109,170 @@
                                     </div>
                                     <div class="form-text">选择要使用的因子挖掘算法，可多选</div>
                                 </div>
+
+                                <!-- 截面挖掘算法信息 -->
+                                <div class="mb-3" id="csAlgoInfo" style="display: none;">
+                                    <label class="form-label">🧬 GP遗传编程截面挖掘</label>
+                                    <div class="border rounded p-3 bg-light">
+                                        <p class="mb-2"><strong>原理：</strong>借鉴AlphaGPT的算子组合范式，使用遗传编程在多币种截面空间中自动搜索最优因子表达式</p>
+                                        <p class="mb-2"><strong>流程：</strong>基础特征→算子组合→截面IC评估→选择/交叉/变异→迭代进化</p>
+                                        <p class="mb-2"><strong>算子集：</strong>算术(add/sub/mul/div) + 时序(delay/ts_mean/ts_std/ts_rank/...) + 截面(cs_rank/cs_zscore/cs_mad_norm) + 条件(gate)</p>
+                                        <p class="mb-0"><strong>要求：</strong>至少选择3个交易对，数据量越大效果越好</p>
+                                    </div>
+                                </div>
+
+                                <!-- 截面挖掘GP参数配置 -->
+                                <div id="crossSectionalConfig" style="display: none;">
+                                    <div class="border rounded p-3 mb-3">
+                                        <h6 class="text-primary mb-3">🧬 GP进化参数</h6>
+                                        <div class="row g-2">
+                                            <div class="col-6">
+                                                <label for="csPopulationSize" class="form-label small">种群大小</label>
+                                                <input type="number" class="form-control form-control-sm" id="csPopulationSize" value="200" min="50" max="1000" step="50">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="csMaxGenerations" class="form-label small">最大进化代数</label>
+                                                <input type="number" class="form-control form-control-sm" id="csMaxGenerations" value="30" min="5" max="200" step="5">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="csMaxDepth" class="form-label small">表达式最大深度</label>
+                                                <input type="number" class="form-control form-control-sm" id="csMaxDepth" value="5" min="2" max="8">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="csMaxFactors" class="form-label small">最大因子数</label>
+                                                <input type="number" class="form-control form-control-sm" id="csMaxFactors" value="15" min="3" max="50">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="csCrossoverRate" class="form-label small">交叉率</label>
+                                                <input type="number" class="form-control form-control-sm" id="csCrossoverRate" value="0.7" min="0.1" max="1.0" step="0.05">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="csMutationRate" class="form-label small">变异率</label>
+                                                <input type="number" class="form-control form-control-sm" id="csMutationRate" value="0.2" min="0.05" max="0.5" step="0.05">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="border rounded p-3 mb-3">
+                                        <h6 class="text-success mb-3">📊 筛选阈值</h6>
+                                        <div class="row g-2">
+                                            <div class="col-6">
+                                                <label for="csMinIC" class="form-label small">最小IC</label>
+                                                <input type="number" class="form-control form-control-sm" id="csMinIC" value="0.02" min="0" max="0.5" step="0.001">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="csMinIR" class="form-label small">最小ICIR</label>
+                                                <input type="number" class="form-control form-control-sm" id="csMinIR" value="0.1" min="0" max="2.0" step="0.01">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="csMaxCorrelation" class="form-label small">最大相关性</label>
+                                                <input type="number" class="form-control form-control-sm" id="csMaxCorrelation" value="0.7" min="0.3" max="1.0" step="0.01">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- RL截面挖掘配置 -->
+                                <div id="rlConfig" style="display: none;">
+                                    <div class="mb-3">
+                                        <label class="form-label">🤖 RL强化学习截面挖掘</label>
+                                        <div class="border rounded p-3 bg-light">
+                                            <p class="mb-2"><strong>原理：</strong>借鉴AlphaGPT，使用LoopedTransformer自回归生成因子公式，REINFORCE策略梯度优化</p>
+                                            <p class="mb-2"><strong>优势：</strong>相比GP能发现更复杂的因子表达式，训练过程有梯度信号引导</p>
+                                            <p class="mb-0"><strong>要求：</strong>需要PyTorch + GPU（CPU可用但极慢），至少3个交易对</p>
+                                        </div>
+                                    </div>
+                                    <div id="rlTorchStatus" class="mb-3"></div>
+                                    <div class="border rounded p-3 mb-3">
+                                        <h6 class="text-warning mb-3">🤖 Transformer & 训练参数</h6>
+                                        <div class="row g-2">
+                                            <div class="col-6">
+                                                <label for="rlBatchSize" class="form-label small">Batch Size</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlBatchSize" value="512" min="16" max="8192" step="64">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlTrainSteps" class="form-label small">训练步数</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlTrainSteps" value="500" min="50" max="5000" step="50">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlMaxFormulaLen" class="form-label small">最大公式长度</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlMaxFormulaLen" value="16" min="4" max="32">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlLr" class="form-label small">学习率</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlLr" value="0.001" min="0.0001" max="0.01" step="0.0001">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlDModel" class="form-label small">d_model</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlDModel" value="64" min="32" max="256" step="32">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlNhead" class="form-label small">注意力头数(nhead)</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlNhead" value="4" min="1" max="8">
+                                                <div class="form-text" style="font-size:0.7em;">d_model必须能被nhead整除</div>
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlNumLayers" class="form-label small">Transformer层数</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlNumLayers" value="2" min="1" max="6">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlDevice" class="form-label small">计算设备</label>
+                                                <select class="form-select form-select-sm" id="rlDevice">
+                                                    <option value="auto" selected>自动选择</option>
+                                                    <option value="cuda">GPU (CUDA)</option>
+                                                    <option value="cpu">CPU</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlNumLoops" class="form-label small">Loop循环次数</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlNumLoops" value="3" min="1" max="8">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlEntropyCoef" class="form-label small">熵系数</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlEntropyCoef" value="0.01" min="0.001" max="0.1" step="0.001">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="border rounded p-3 mb-3">
+                                        <h6 class="text-info mb-3">⚙️ 回测 & 筛选参数</h6>
+                                        <div class="row g-2">
+                                            <div class="col-6">
+                                                <label for="rlTradeSize" class="form-label small">交易金额(USD)</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlTradeSize" value="10000" min="100" step="1000">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlBaseFee" class="form-label small">手续费率</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlBaseFee" value="0.001" min="0.0001" max="0.01" step="0.0001">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlMaxFactors" class="form-label small">最大因子数</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlMaxFactors" value="15" min="3" max="50">
+                                            </div>
+                                            <div class="col-6">
+                                                <label for="rlMaxCorrelation" class="form-label small">最大相关性</label>
+                                                <input type="number" class="form-control form-control-sm" id="rlMaxCorrelation" value="0.7" min="0.3" max="1.0" step="0.05">
+                                            </div>
+                                            <div class="col-12">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="rlUseLord" checked>
+                                                    <label class="form-check-label small" for="rlUseLord">启用LoRD正则化（推荐）</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                                 
                                 <div class="mb-3">
                                     <label for="dataRange" class="form-label">数据时间范围</label>
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label for="startDateDisplay" class="form-label small">开始日期</label>
+                                            <input type="date" class="form-control form-control-sm" id="startDateDisplay">
+                                        </div>
+                                        <div class="col-6">
+                                            <label for="endDateDisplay" class="form-label small">结束日期</label>
+                                            <input type="date" class="form-control form-control-sm" id="endDateDisplay">
+                                        </div>
+                                    </div>
                                     <div id="rangeSlider"></div>
                                     <div class="mt-2">
                                         <small class="text-muted">
@@ -86,33 +281,34 @@
                                     </div>
                                     <input type="hidden" id="startDate" name="startDate">
                                     <input type="hidden" id="endDate" name="endDate">
-                                    <div class="form-text">选择数据时间范围，建议至少3个月数据</div>
+                                    <div class="form-text">选择数据时间范围（标准挖掘/截面GP/截面RL都会使用），建议至少3个月数据</div>
                                 </div>
                                 
+                                <div id="standardParams">
                                 <div class="mb-3">
                                     <label for="maxFactors" class="form-label">最大因子数量</label>
                                     <input type="number" class="form-control" id="maxFactors" name="maxFactors" value="15" min="5" max="50">
                                     <div class="form-text">挖掘完成后选择的最优因子数量</div>
                                 </div>
-                                
+
                                 <div class="mb-3">
                                     <label for="minIC" class="form-label">最小IC值</label>
-                                    <input type="number" class="form-control" id="minIC" name="minIC" value="0.02" min="0" max="1" step="0.01">
+                                    <input type="number" class="form-control" id="minIC" name="minIC" value="0.02" min="0" max="1" step="0.001">
                                     <div class="form-text">因子选择的最小信息系数阈值</div>
                                 </div>
-                                
+
                                 <div class="mb-3">
                                     <label for="minIR" class="form-label">最小IR值</label>
                                     <input type="number" class="form-control" id="minIR" name="minIR" value="0.1" min="0" max="1" step="0.01">
                                     <div class="form-text">因子选择的最小信息比率阈值</div>
                                 </div>
-                                
+
                                 <div class="mb-3">
                                     <label for="minSampleSize" class="form-label">最小样本数</label>
                                     <input type="number" class="form-control" id="minSampleSize" name="minSampleSize" value="30" min="10" max="1000">
                                     <div class="form-text">因子评估的最小样本数量</div>
                                 </div>
-                                
+
                                 <div class="mb-3">
                                     <label for="optimizationMethod" class="form-label">优化方法</label>
                                     <select class="form-select" id="optimizationMethod" name="optimizationMethod">
@@ -121,6 +317,7 @@
                                         <option value="correlation">相关性过滤</option>
                                     </select>
                                     <div class="form-text">选择因子组合的优化算法</div>
+                                </div>
                                 </div>
                                 
                                 <!-- 状态显示区域 -->
@@ -314,7 +511,7 @@
     </div>
     
     <!-- 等待开始状态 -->
-    <div id="waitingState" class="text-center text-muted mt-5">
+    <div id="waitingHint" class="text-center text-muted mt-5">
         <i class="fas fa-rocket fa-3x mb-3"></i>
         <p>配置挖掘参数后点击"开始因子挖掘"按钮</p>
     </div>

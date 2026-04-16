@@ -71,10 +71,18 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">数据时间范围</label>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6">
+                                <label class="form-label small">开始日期</label>
+                                <input type="date" class="form-control form-control-sm" id="startDate">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small">结束日期</label>
+                                <input type="date" class="form-control form-control-sm" id="endDate">
+                            </div>
+                        </div>
                         <div class="text-muted small mb-2" id="rangeInfo">—</div>
                         <div id="rangeSlider"></div>
-                        <input type="hidden" id="startDate">
-                        <input type="hidden" id="endDate">
                     </div>
                     <button type="submit" class="btn btn-success w-100">
                         <i class="fas fa-play me-2"></i>开始批量评估
@@ -161,6 +169,7 @@ let resultsSortAsc = true;
 let localDataRows = [];
 
 document.addEventListener('DOMContentLoaded', async () => {
+    bindRangeDateInputs();
     await loadFactors();
     await refreshLocalMeta();
 });
@@ -494,6 +503,8 @@ function setupRangeSlider(startDate, endDate) {
     const info = document.getElementById('rangeInfo');
     if (container.noUiSlider) container.noUiSlider.destroy();
     const totalMs = endDate - startDate;
+    container.dataset.minTs = String(startDate.getTime());
+    container.dataset.maxTs = String(endDate.getTime());
     noUiSlider.create(container, { start: [0, 100], connect: true, step: 1, range: { min: 0, max: 100 } });
     const update = (values) => {
         const sv = parseInt(values[0], 10), ev = parseInt(values[1], 10);
@@ -505,6 +516,49 @@ function setupRangeSlider(startDate, endDate) {
     };
     container.noUiSlider.on('update', update);
     update([0,100]);
+}
+
+function bindRangeDateInputs() {
+    const startInput = document.getElementById('startDate');
+    const endInput = document.getElementById('endDate');
+    const slider = document.getElementById('rangeSlider');
+    const info = document.getElementById('rangeInfo');
+
+    const syncFromInputs = () => {
+        if (!slider || !slider.noUiSlider) return;
+        const minTs = Number(slider.dataset.minTs || 0);
+        const maxTs = Number(slider.dataset.maxTs || 0);
+        const totalMs = maxTs - minTs;
+        if (!minTs || !maxTs || totalMs <= 0) return;
+
+        const startVal = startInput.value;
+        const endVal = endInput.value;
+        if (!startVal || !endVal) return;
+
+        let startTs = new Date(startVal).getTime();
+        let endTs = new Date(endVal).getTime();
+        if (Number.isNaN(startTs) || Number.isNaN(endTs)) return;
+
+        startTs = Math.max(minTs, Math.min(startTs, maxTs));
+        endTs = Math.max(minTs, Math.min(endTs, maxTs));
+        if (startTs > endTs) {
+            if (document.activeElement === startInput) {
+                endTs = startTs;
+                endInput.value = new Date(endTs).toISOString().slice(0, 10);
+            } else {
+                startTs = endTs;
+                startInput.value = new Date(startTs).toISOString().slice(0, 10);
+            }
+        }
+
+        const startPct = ((startTs - minTs) / totalMs) * 100;
+        const endPct = ((endTs - minTs) / totalMs) * 100;
+        slider.noUiSlider.set([startPct, endPct]);
+        info.textContent = `${startInput.value} ~ ${endInput.value}`;
+    };
+
+    startInput.addEventListener('change', syncFromInputs);
+    endInput.addEventListener('change', syncFromInputs);
 }
 
 document.getElementById('evaluationForm').addEventListener('submit', async (e) => {

@@ -1,4 +1,4 @@
-﻿"""
+"""
 统一因子构建器 V4.0
 纯调度器，所有算法从 user_algo 目录动态加载
 
@@ -24,9 +24,18 @@ from typing import Dict, List, Optional, Callable
 from pathlib import Path
 import importlib.util
 import warnings
+import sys
 
 from .factor_storage import TransparentFactorStorage
 from .factor_engine import FactorEngine
+
+
+def _safe_print(msg):
+    try:
+        print(msg)
+    except UnicodeEncodeError:
+        safe_msg = msg.encode(sys.stdout.encoding or 'utf-8', errors='replace').decode(sys.stdout.encoding or 'utf-8', errors='replace')
+        print(safe_msg)
 
 warnings.filterwarnings('ignore')
 
@@ -67,8 +76,8 @@ class FactorBuilder:
         self._algorithm_cache = {}
         self._user_algo_dir = Path(__file__).parent.parent.parent / "user_algo"
         
-        print("🚀 因子构建器 V4.0 已初始化")
-        print(f"📁 用户算法目录: {self._user_algo_dir}")
+        _safe_print("🚀 因子构建器 V4.0 已初始化")
+        _safe_print(f"📁 用户算法目录: {self._user_algo_dir}")
     
     def build_all_factors(self, data: pd.DataFrame, selected_algorithms: List[str], 
                          save_to_storage: bool = True, **kwargs) -> Dict:
@@ -84,30 +93,30 @@ class FactorBuilder:
         Returns:
             Dict: 包含成功状态、因子数据、统计信息等
         """
-        print(f"🚀 开始构建因子，算法: {', '.join(selected_algorithms)}")
+        _safe_print(f"🚀 开始构建因子，算法: {', '.join(selected_algorithms)}")
         
         all_factors = {}
         built_factors = {}
         
         for algo_id in selected_algorithms:
             try:
-                print(f"📊 执行算法: {algo_id}")
+                _safe_print(f"📊 执行算法: {algo_id}")
                 factors = self._execute_algorithm(algo_id, data, **kwargs)
                 
                 if isinstance(factors, dict):
                     all_factors.update(factors)
                     built_factors[algo_id] = factors
-                    print(f"✅ 算法 {algo_id} 执行成功，生成 {len(factors)} 个因子")
+                    _safe_print(f"✅ 算法 {algo_id} 执行成功，生成 {len(factors)} 个因子")
                 else:
-                    print(f"⚠️ 算法 {algo_id} 返回格式错误")
+                    _safe_print(f"⚠️ 算法 {algo_id} 返回格式错误")
                     
             except Exception as e:
-                print(f"❌ 算法 {algo_id} 执行失败: {e}")
+                _safe_print(f"❌ 算法 {algo_id} 执行失败: {e}")
                 continue
         
         # 转换为DataFrame
         factors_df = pd.DataFrame(all_factors, index=data.index)
-        print(f"🎉 因子构建完成，总共 {len(factors_df.columns)} 个因子")
+        _safe_print(f"🎉 因子构建完成，总共 {len(factors_df.columns)} 个因子")
         
         # 保存到存储系统
         if save_to_storage and built_factors:
@@ -153,7 +162,7 @@ class FactorBuilder:
             # 查找算法文件
             algo_file = self._user_algo_dir / f"{algo_id}.py"
             if not algo_file.exists():
-                print(f"❌ 算法文件不存在: {algo_file}")
+                _safe_print(f"❌ 算法文件不存在: {algo_file}")
                 return None
             
             # 动态导入
@@ -163,11 +172,11 @@ class FactorBuilder:
             
             # 缓存模块
             self._algorithm_cache[algo_id] = module
-            print(f"✅ 算法模块已加载: {algo_id}")
+            _safe_print(f"✅ 算法模块已加载: {algo_id}")
             return module
             
         except Exception as e:
-            print(f"❌ 加载算法模块失败 {algo_id}: {e}")
+            _safe_print(f"❌ 加载算法模块失败 {algo_id}: {e}")
             return None
     
     def scan_all_algorithms(self) -> List[Dict]:
@@ -175,7 +184,7 @@ class FactorBuilder:
         algorithms = []
         
         if not self._user_algo_dir.exists():
-            print(f"❌ 用户算法目录不存在: {self._user_algo_dir}")
+            _safe_print(f"❌ 用户算法目录不存在: {self._user_algo_dir}")
             return algorithms
         
         # 扫描所有Python文件
@@ -209,10 +218,10 @@ class FactorBuilder:
                     })
                     
             except Exception as e:
-                print(f"❌ 扫描算法失败 {algo_id}: {e}")
+                _safe_print(f"❌ 扫描算法失败 {algo_id}: {e}")
                 continue
         
-        print(f"📋 扫描完成，找到 {len(algorithms)} 个算法")
+        _safe_print(f"📋 扫描完成，找到 {len(algorithms)} 个算法")
         return algorithms
     
     def get_algorithm_info(self, algo_id: str) -> Optional[Dict]:
@@ -225,17 +234,17 @@ class FactorBuilder:
     
     def _save_factors_to_storage(self, built_factors: Dict, data: pd.DataFrame, **kwargs):
         """将构建的因子保存到存储系统（简化版：只保存定义和模型）"""
-        print("💾 开始保存因子到存储系统...")
+        _safe_print("💾 开始保存因子到存储系统...")
         
         for algo_id, factors in built_factors.items():
             try:
                 # 获取算法信息
                 algo_info = self.get_algorithm_info(algo_id)
                 if not algo_info:
-                    print(f"❌ 无法获取算法 {algo_id} 的信息")
+                    _safe_print(f"❌ 无法获取算法 {algo_id} 的信息")
                     continue
                 
-                print(f"📖 处理算法: {algo_id}")
+                _safe_print(f"📖 处理算法: {algo_id}")
                 
                 # 为每个因子保存定义
                 for factor_name, factor_series in factors.items():
@@ -255,19 +264,19 @@ class FactorBuilder:
                         )
                         
                         if success:
-                            print(f"✅ 因子定义 {factor_id} 保存成功")
+                            _safe_print(f"✅ 因子定义 {factor_id} 保存成功")
                         else:
-                            print(f"❌ 因子定义 {factor_id} 保存失败")
+                            _safe_print(f"❌ 因子定义 {factor_id} 保存失败")
                         
                     except Exception as e:
-                        print(f"❌ 保存因子 {factor_name} 时出错: {e}")
+                        _safe_print(f"❌ 保存因子 {factor_name} 时出错: {e}")
                         continue
                     
             except Exception as e:
-                print(f"❌ 处理算法 {algo_id} 时出错: {e}")
+                _safe_print(f"❌ 处理算法 {algo_id} 时出错: {e}")
                 continue
         
-        print("💾 因子定义保存完成")
+        _safe_print("💾 因子定义保存完成")
     
     def list_algorithms(self) -> List[Dict]:
         """列出所有算法"""
@@ -308,5 +317,5 @@ class FactorBuilder:
             else:
                 raise ValueError("因子函数必须返回pandas.Series")
         except Exception as e:
-            print(f"构建自定义因子 {factor_name} 失败: {e}")
+            _safe_print(f"构建自定义因子 {factor_name} 失败: {e}")
             return pd.Series(dtype=float)
