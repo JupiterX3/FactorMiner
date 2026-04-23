@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha028",
+  "name": "WQ101-Alpha028",
+  "description": "WorldQuant Alpha#028。原始公式：scale(correlation(adv20, low, 5) + (high+low)/2 - close)。 语义折衷：去掉 scale（截面层归一化），adv20 = ts_mean(volume,20)。",
+  "category": "wq101",
+  "subcategory": "alpha028",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha028.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return ts_corr(adv(volume, 20), low, 5) + (high + low) / 2 - close\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "7e9f37bf",
+    "created_at": "2026-04-23T11:18:59.638100",
+    "is_window": true,
+    "min_warmup_bars": 20,
+    "source_family": "wq101"
+  }
+}

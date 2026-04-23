@@ -1,0 +1,20 @@
+{
+  "factor_id": "vortex_oscillator",
+  "name": "漩涡指标",
+  "description": "Vortex Indicator - 趋势方向与强度 (vi+ - vi-)",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/vortex_oscillator.py",
+    "entry_point": "calculate",
+    "imports": []
+  },
+  "parameters": {
+    "period": 14,
+    "mode": "osc"
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {}
+}

@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha005",
+  "name": "WQ101-Alpha005",
+  "description": "WorldQuant Alpha#005。原始公式：rank(open - sum(vwap,10)/10) * (-1 * abs(rank(close - vwap)))。 语义折衷：去掉全部 rank（丢失截面语义，保留时序方向）。",
+  "category": "wq101",
+  "subcategory": "alpha005",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha005.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return (open_ - ts_mean(vwap, 10)) * (-1 * (close - vwap).abs())\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "463293a7",
+    "created_at": "2026-04-23T11:18:59.626051",
+    "is_window": true,
+    "min_warmup_bars": 10,
+    "source_family": "wq101"
+  }
+}

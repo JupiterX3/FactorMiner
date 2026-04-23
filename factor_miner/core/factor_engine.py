@@ -15,6 +15,50 @@ logger = logging.getLogger(__name__)
 
 _module_cache: Dict[str, Any] = {}
 _module_cache_lock = threading.Lock()
+_sys_path_dirs: set = set()
+_sys_path_lock = threading.Lock()
+
+
+def _ensure_sys_path(dir_path: str) -> None:
+    """线程安全地向 sys.path 添加目录（去重）"""
+    import sys
+    with _sys_path_lock:
+        if dir_path not in _sys_path_dirs:
+            if dir_path not in sys.path:
+                sys.path.insert(0, dir_path)
+            _sys_path_dirs.add(dir_path)
+
+
+def _load_module_cached(cache_key: str, func_path, module_name: str):
+    """
+    线程安全的模块加载，带文件修改时间缓存失效。
+    
+    Returns:
+        (module, error_msg) - module 为加载的模块，error_msg 为错误信息
+    """
+    import importlib.util
+    import os
+
+    mtime = os.path.getmtime(func_path) if os.path.exists(func_path) else None
+
+    with _module_cache_lock:
+        entry = _module_cache.get(cache_key)
+        if entry is not None:
+            cached_mtime, module = entry
+            if mtime is not None and cached_mtime == mtime:
+                return module, None
+
+    spec = importlib.util.spec_from_file_location(module_name, func_path)
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as e:
+        return None, str(e)
+
+    with _module_cache_lock:
+        _module_cache[cache_key] = (mtime, module)
+
+    return module, None
 
 
 class FactorEngine:
@@ -33,41 +77,40 @@ class FactorEngine:
     def compute_single_factor(self, factor_id: str, data: pd.DataFrame, **kwargs) -> Optional[pd.Series]:
         """
         计算单个因子
-        
-        支持两种因子类型：
+
+        v4 支持三种因子类型：
         1. function - 函数类型因子，使用 function_file 和 entry_point
-        2. ml_model - 机器学习模型因子，使用 algorithm_name
-        
+        2. formula  - 纯公式类型因子
+        3. ml_model - 算法代理类型因子：由 user_algo/<algorithm_name>.py 的
+                      `calculate_single_factor(data, factor_name, ...)` 执行。
+                      典型用途是 GP 截面挖掘因子（gp_cross_sectional 等）。
+                      真正依赖 pkl 模型推理的 ML 预训练因子已在 v4 中移除。
+
         Args:
             factor_id: 因子ID
-            data: OHLCV数据
+            data: OHLCV 及可选的 extra 列（由 DataLoader.load_with_extras 注入）
             **kwargs: 覆盖默认参数
-            
-        Returns:
-            因子计算结果
         """
         try:
             logger.debug(f"开始计算因子: {factor_id}")
-            
-            # 从因子定义中获取计算信息
+
             factor_def = self.storage.load_factor_definition(factor_id)
             if not factor_def:
                 logger.error(f"找不到因子定义: {factor_id}")
                 return None
-            
+
             computation_type = factor_def.computation_type
-            comp_data = factor_def.computation_data or {}
-            
+
             if computation_type == "function":
                 return self._compute_function_factor(factor_def, data, kwargs)
-            elif computation_type == "ml_model":
-                return self._compute_ml_model_factor(factor_def, data, kwargs)
             elif computation_type == "formula":
                 return self._compute_formula_factor(factor_def, data, kwargs)
+            elif computation_type == "ml_model":
+                return self._compute_algorithm_proxy_factor(factor_def, data, kwargs)
             else:
                 logger.error(f"不支持的计算类型: {computation_type}")
                 return None
-                
+
         except Exception as e:
             logger.error(f"计算因子失败 {factor_id}: {e}")
             import traceback
@@ -76,9 +119,6 @@ class FactorEngine:
     
     def _compute_function_factor(self, factor_def, data: pd.DataFrame, kwargs: dict) -> Optional[pd.Series]:
         """计算函数类型因子"""
-        import importlib.util
-        import sys
-        
         comp_data = factor_def.computation_data or {}
         
         function_file = comp_data.get('function_file')
@@ -86,42 +126,38 @@ class FactorEngine:
             logger.error(f"因子定义中缺少 function_file: {factor_def.factor_id}")
             return None
         
-        possible_paths = [
-            self.storage.storage_dir / function_file,
-            self.storage.storage_dir / "technicals" / function_file,
-            self.storage.storage_dir / "minactors" / function_file,
-        ]
-        
+        # function_file 通常是相对 storage_dir 的路径（如 basic_kline/functions/xxx.py）；
+        # 兼容老数据（只有裸文件名 xxx.py 的情况）：扫描所有一级目录的 functions/
+        possible_paths = [self.storage.storage_dir / function_file]
+        # 老版 V3 路径兼容
+        for legacy in ("technicals", "minactors"):
+            possible_paths.append(self.storage.storage_dir / legacy / function_file)
+        fname = Path(function_file).name
+        for group in self.storage.list_source_groups():
+            possible_paths.append(
+                self.storage.storage_dir / group / "functions" / fname
+            )
+
         func_path = None
         for path in possible_paths:
             if path.exists():
                 func_path = path
                 break
-        
+
         if not func_path:
             logger.error(f"函数文件不存在，尝试的路径: {[str(p) for p in possible_paths]}")
             return None
         
-        cache_key = str(func_path)
+        factorlib_path = str(self.storage.storage_dir.parent)
+        _ensure_sys_path(factorlib_path)
+        # 允许因子文件 `from _alpha_ops import ...`（qlib158/qlib360/wq101 共享算子）
+        _ensure_sys_path(str(func_path.parent))
         
-        with _module_cache_lock:
-            if cache_key in _module_cache:
-                module = _module_cache[cache_key]
-            else:
-                factorlib_path = self.storage.storage_dir.parent
-                if str(factorlib_path) not in sys.path:
-                    sys.path.insert(0, str(factorlib_path))
-                
-                try:
-                    spec = importlib.util.spec_from_file_location(
-                        f"factor_{factor_def.factor_id}", func_path
-                    )
-                    module = importlib.util.module_from_spec(spec)
-                    spec.loader.exec_module(module)
-                    _module_cache[cache_key] = module
-                except Exception as e:
-                    logger.error(f"加载函数模块失败: {e}")
-                    return None
+        cache_key = str(func_path)
+        module, err = _load_module_cached(cache_key, func_path, f"factor_{factor_def.factor_id}")
+        if err:
+            logger.error(f"加载函数模块失败: {err}")
+            return None
         
         entry_point = comp_data.get('entry_point', 'calculate')
         if not hasattr(module, entry_point):
@@ -203,20 +239,28 @@ class FactorEngine:
     
     def _compute_formula_as_function(self, factor_def, data: pd.DataFrame, kwargs: dict) -> Optional[pd.Series]:
         """将公式类型因子作为函数类型处理"""
-        import importlib.util
-        import sys
-        
         factor_id = factor_def.factor_id
         
         base_name = factor_id.split('_')[0]
         name_without_suffix = '_'.join(factor_id.split('_')[:-1]) if '_' in factor_id else factor_id
         
-        possible_paths = [
+        possible_paths = []
+        for group in self.storage.list_source_groups():
+            possible_paths.append(
+                self.storage.storage_dir / group / "functions" / f"{factor_id}.py"
+            )
+            possible_paths.append(
+                self.storage.storage_dir / group / "functions" / f"{name_without_suffix}.py"
+            )
+            possible_paths.append(
+                self.storage.storage_dir / group / "functions" / f"{base_name}.py"
+            )
+        possible_paths.extend([
             self.storage.storage_dir / "technicals" / "functions" / f"{factor_id}.py",
             self.storage.storage_dir / "minactors" / "functions" / f"{factor_id}.py",
             self.storage.storage_dir / "technicals" / "functions" / f"{name_without_suffix}.py",
             self.storage.storage_dir / "technicals" / "functions" / f"{base_name}.py",
-        ]
+        ])
         
         func_path = None
         for path in possible_paths:
@@ -233,16 +277,13 @@ class FactorEngine:
             logger.warning(f"找不到函数文件且公式为空/注释，跳过因子: {factor_id}")
             return None
         
-        factorlib_path = self.storage.storage_dir.parent
-        if str(factorlib_path) not in sys.path:
-            sys.path.insert(0, str(factorlib_path))
+        factorlib_path = str(self.storage.storage_dir.parent)
+        _ensure_sys_path(factorlib_path)
         
-        try:
-            spec = importlib.util.spec_from_file_location(f"factor_{factor_id}", func_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-        except Exception as e:
-            logger.error(f"加载函数模块失败: {e}")
+        cache_key = str(func_path)
+        module, err = _load_module_cached(cache_key, func_path, f"factor_{factor_id}")
+        if err:
+            logger.error(f"加载函数模块失败: {err}")
             return None
         
         if not hasattr(module, 'calculate'):
@@ -295,48 +336,58 @@ class FactorEngine:
             logger.error(f"公式执行失败: {e}")
             return None
     
-    def _compute_ml_model_factor(self, factor_def, data: pd.DataFrame, kwargs: dict) -> Optional[pd.Series]:
-        """计算机器学习模型类型因子"""
+    def _compute_algorithm_proxy_factor(self, factor_def, data: pd.DataFrame, kwargs: dict) -> Optional[pd.Series]:
+        """
+        算法代理因子计算（computation_type=ml_model）。
+
+        通过 `algorithm_name` 指向 `user_algo/<algorithm_name>.py`，调用其
+        `calculate_single_factor(data, factor_name, factor_id=..., computation_data=..., **kwargs)`
+        完成计算。主要用于 GP 挖掘因子一类"批量生成共享算子"的场景。
+        """
         comp_data = factor_def.computation_data or {}
-        
-        # 尝试使用 algorithm_name 方式
         algorithm_name = comp_data.get('algorithm_name')
-        if algorithm_name:
-            algorithm_module = self._load_algorithm_module(algorithm_name)
-            if algorithm_module:
-                factor_name = factor_def.name
-                if hasattr(algorithm_module, 'calculate_single_factor'):
-                    return algorithm_module.calculate_single_factor(data, factor_name)
-        
-        # 尝试使用 storage 的 compute_factor 方法
-        try:
-            return self.storage.compute_factor(factor_def.factor_id, data, **kwargs)
-        except Exception as e:
-            logger.error(f"ML模型因子计算失败: {e}")
+        if not algorithm_name:
+            logger.error(
+                f"因子 {factor_def.factor_id} 是 ml_model(算法代理) 但缺少 algorithm_name"
+            )
             return None
+
+        algorithm_module = self._load_algorithm_module(algorithm_name)
+        if algorithm_module is None:
+            return None
+
+        if not hasattr(algorithm_module, 'calculate_single_factor'):
+            logger.error(
+                f"算法模块 {algorithm_name} 缺少 calculate_single_factor 函数"
+            )
+            return None
+
+        return algorithm_module.calculate_single_factor(
+            data,
+            factor_def.name,
+            factor_id=factor_def.factor_id,
+            computation_data=comp_data,
+            **kwargs,
+        )
     
     def _load_algorithm_module(self, algorithm_name: str):
-        """动态加载算法模块"""
+        """动态加载算法模块（带缓存和并发安全）"""
         try:
-            import sys
-            import importlib.util
             from pathlib import Path
             
-            # 添加user_algo目录到路径
             algo_dir = Path(__file__).parent.parent.parent / "user_algo"
-            if str(algo_dir) not in sys.path:
-                sys.path.insert(0, str(algo_dir))
+            _ensure_sys_path(str(algo_dir))
             
-            # 查找算法文件
             algo_file = algo_dir / f"{algorithm_name}.py"
             if not algo_file.exists():
                 logger.error(f"算法文件不存在: {algo_file}")
                 return None
             
-            # 动态导入
-            spec = importlib.util.spec_from_file_location(algorithm_name, algo_file)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
+            cache_key = str(algo_file)
+            module, err = _load_module_cached(cache_key, algo_file, algorithm_name)
+            if err:
+                logger.error(f"加载算法模块失败 {algorithm_name}: {err}")
+                return None
             
             return module
             

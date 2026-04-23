@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha034",
+  "name": "WQ101-Alpha034",
+  "description": "WorldQuant Alpha#034。原始公式：(1 - rank(stddev(returns,2)/stddev(returns,5))) + (1 - rank(delta(close,1)))。 语义折衷：去掉两个 rank；改为直接求和（仍保留单调方向）。",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/wq101_alpha034.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return (1.0 - ts_std(ret, 2) / (ts_std(ret, 5) + EPS)) + (1.0 - delta(close, 1))\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "ca5d1386",
+    "created_at": "2026-04-23T11:18:59.638817",
+    "is_window": true,
+    "min_warmup_bars": 6,
+    "source_family": "wq101"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "factor_id": "taker_buy_imbalance_zscore",
+  "name": "主动买入失衡 z-score",
+  "description": "(taker_buy_base / volume - 0.5) 相对自身 window 的 z-score，捕捉显著偏多 / 偏空盘面。",
+  "category": "derivatives",
+  "subcategory": "taker_volume",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/taker_buy_imbalance_zscore.py",
+    "function_code": "def calculate(data, window=48, **kwargs):\n    if 'taker_buy_base' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    vol = data['volume'].replace(0, np.nan)\n    imbalance = data['taker_buy_base'] / vol - 0.5\n    mu = imbalance.rolling(window).mean()\n    sd = imbalance.rolling(window).std()\n    return (imbalance - mu) / sd",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 48
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.220944",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

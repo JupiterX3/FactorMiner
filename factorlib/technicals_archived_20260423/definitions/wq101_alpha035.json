@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha035",
+  "name": "WQ101-Alpha035",
+  "description": "WorldQuant Alpha#035。原始公式：ts_rank(volume,32) * (1-ts_rank((close+high-low),16)) * (1-ts_rank(returns,32))。 语义折衷：原式已是 ts_rank，直接实现。",
+  "category": "wq101",
+  "subcategory": "alpha035",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha035.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return ts_rank(volume, 32) * (1.0 - ts_rank(close + high - low, 16)) * (1.0 - ts_rank(ret, 32))\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "e4a7fc32",
+    "created_at": "2026-04-23T11:18:59.639466",
+    "is_window": true,
+    "min_warmup_bars": 32,
+    "source_family": "wq101"
+  }
+}

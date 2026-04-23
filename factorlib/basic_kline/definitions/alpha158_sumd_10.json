@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_sumd_10",
+  "name": "qlib158-SUMD_10",
+  "description": "qlib Alpha158 — 2*sump - 1  (window=10)",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_sumd_10.py",
+    "function_code": "def calculate(data, **kwargs):\n    return 2.0 * (ts_sum(delta(data['close'], 1).clip(lower=0), 10) / (ts_sum(delta(data['close'], 1).abs(), 10) + EPS)) - 1.0\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "f55021e6",
+    "created_at": "2026-04-23T11:17:23.464295",
+    "is_window": true,
+    "min_warmup_bars": 10,
+    "source_family": "qlib158"
+  }
+}

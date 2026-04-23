@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha050",
+  "name": "WQ101-Alpha050",
+  "description": "WorldQuant Alpha#050。原始公式：-1 * ts_max(rank(correlation(rank(volume), rank(vwap), 5)), 5)。 语义折衷：去掉全部 rank。",
+  "category": "wq101",
+  "subcategory": "alpha050",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha050.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return -1 * ts_max(ts_corr(volume, vwap, 5), 5)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "26b04f80",
+    "created_at": "2026-04-23T11:18:59.644302",
+    "is_window": true,
+    "min_warmup_bars": 10,
+    "source_family": "wq101"
+  }
+}

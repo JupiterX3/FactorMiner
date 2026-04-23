@@ -1,0 +1,29 @@
+{
+  "factor_id": "funding_rate_ma",
+  "name": "资金费率滚动均值",
+  "description": "funding_rate 在 window 小时上的滚动均值，反映中期 carry 水平。",
+  "category": "funding",
+  "subcategory": "funding_carry",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "funding/functions/funding_rate_ma.py",
+    "function_code": "def calculate(data, window=72, **kwargs):\n    if 'funding_rate' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    return data['funding_rate'].rolling(window).mean()",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 72
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.225048",
+    "source_family": "funding",
+    "requires_extras": [
+      "funding"
+    ]
+  }
+}

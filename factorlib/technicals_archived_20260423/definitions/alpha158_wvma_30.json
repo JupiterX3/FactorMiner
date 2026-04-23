@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_wvma_30",
+  "name": "qlib158-WVMA_30",
+  "description": "qlib Alpha158 — ts_std(|close/ref(close,1)-1|*volume, w) / ts_mean(|close/ref(close,1)-1|*volume, w)  (window=30)",
+  "category": "qlib158",
+  "subcategory": "rolling",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha158_wvma_30.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ts_std((data['close'] / (ref(data['close'], 1) + EPS) - 1.0).abs() * data['volume'], 30) / (ts_mean((data['close'] / (ref(data['close'], 1) + EPS) - 1.0).abs() * data['volume'], 30) + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "69aa527b",
+    "created_at": "2026-04-23T11:17:23.461630",
+    "is_window": true,
+    "min_warmup_bars": 30,
+    "source_family": "qlib158"
+  }
+}

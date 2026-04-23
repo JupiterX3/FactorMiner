@@ -21,6 +21,7 @@ import copy
 import random
 import time
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -378,15 +379,18 @@ class GPMiner:
         self.tournament_size = self.config.get('tournament_size', 5)
         self.min_ic_threshold = self.config.get('min_ic', 0.02)
         self.min_ir_threshold = self.config.get('min_ir', 0.1)
+        self.min_coverage_threshold = float(self.config.get('min_coverage', 0.2))
         self.max_factor_count = self.config.get('max_factors', 15)
         self.max_correlation = self.config.get('max_correlation', 0.7)
         self.stagnation_limit = self.config.get('stagnation_limit', 5)
+        self.eval_workers = max(1, int(self.config.get('eval_workers', 1)))
         self.feature_names = [f['name'] for f in FEATURES_CONFIG]
         self.population: List[ExpressionTree] = []
         self.best_individuals: List[ExpressionTree] = []
         self.generation_stats: List[Dict] = []
         self._progress_callback = None
         self._stop_requested = False
+        self._eval_cache: Dict[str, Dict] = {}
 
     def set_progress_callback(self, callback: Callable):
         self._progress_callback = callback
@@ -456,19 +460,33 @@ class GPMiner:
         self.population = [self._create_random_individual() for _ in range(self.population_size)]
 
     def _evaluate_node(self, node: ExpressionNode,
-                       features: Dict[str, pd.Series]) -> pd.Series:
+                       features: Dict[str, pd.Series],
+                       node_cache: Dict[int, pd.Series] = None) -> pd.Series:
+        if node_cache is None:
+            node_cache = {}
+        node_id = id(node)
+        cached = node_cache.get(node_id)
+        if cached is not None:
+            return cached
+
         if node.node_type == NodeType.FEATURE:
-            return features.get(node.value, pd.Series(0, dtype=float))
+            result = features.get(node.value, pd.Series(0, dtype=float))
+            node_cache[node_id] = result
+            return result
         elif node.node_type == NodeType.CONSTANT:
             idx = next(iter(features.values())).index
-            return pd.Series(float(node.value), index=idx, dtype=float)
+            result = pd.Series(float(node.value), index=idx, dtype=float)
+            node_cache[node_id] = result
+            return result
         elif node.node_type == NodeType.OPERATOR:
             op = OPS_REGISTRY.get(node.op_name)
             if not op:
                 idx = next(iter(features.values())).index
-                return pd.Series(0, dtype=float, index=idx)
+                result = pd.Series(0, dtype=float, index=idx)
+                node_cache[node_id] = result
+                return result
 
-            child_values = [self._evaluate_node(c, features) for c in node.children]
+            child_values = [self._evaluate_node(c, features, node_cache) for c in node.children]
 
             while len(child_values) < op.arity:
                 idx = next(iter(features.values())).index
@@ -490,17 +508,23 @@ class GPMiner:
                     result = pd.Series(float(result), index=idx, dtype=float)
 
                 result = result.replace([np.inf, -np.inf], np.nan).fillna(0)
+                node_cache[node_id] = result
                 return result
             except Exception:
                 idx = next(iter(features.values())).index
-                return pd.Series(0, dtype=float, index=idx)
+                result = pd.Series(0, dtype=float, index=idx)
+                node_cache[node_id] = result
+                return result
 
         idx = next(iter(features.values())).index
-        return pd.Series(0, dtype=float, index=idx)
+        result = pd.Series(0, dtype=float, index=idx)
+        node_cache[node_id] = result
+        return result
 
     def _evaluate_individual_on_symbol(self, individual: ExpressionTree,
                                        features: Dict[str, pd.Series]) -> pd.Series:
-        return self._evaluate_node(individual.root, features)
+        node_cache: Dict[int, pd.Series] = {}
+        return self._evaluate_node(individual.root, features, node_cache)
 
     def _evaluate_cross_sectional(self, individual: ExpressionTree,
                                   all_features: Dict[str, Dict[str, pd.Series]],
@@ -519,50 +543,46 @@ class GPMiner:
                 'ic_mean': 0.0, 'ic_std': 1.0, 'icir': 0.0,
                 'rank_ic_mean': 0.0, 'rank_icir': 0.0,
                 'long_short_return': 0.0, 'n_symbols': len(factor_values),
-                'n_periods': 0, 'fitness': -999.0
+                'n_periods': 0, 'total_periods': 0, 'coverage_rate': 0.0, 'fitness': -999.0
             }
 
-        all_rows = []
-        for symbol, fv in factor_values.items():
-            ret = all_returns.get(symbol)
-            if ret is None:
-                continue
-            common_idx = fv.index.intersection(ret.index)
-            if len(common_idx) == 0:
-                continue
-            for idx in common_idx:
-                all_rows.append({
-                    'date': idx,
-                    'symbol': symbol,
-                    'factor_value': float(fv.loc[idx]),
-                    'returns': float(ret.loc[idx])
-                })
-
-        if len(all_rows) < 50:
+        valid_symbols = sorted(set(factor_values.keys()) & set(all_returns.keys()))
+        if len(valid_symbols) < 3:
             return {
                 'ic_mean': 0.0, 'ic_std': 1.0, 'icir': 0.0,
                 'rank_ic_mean': 0.0, 'rank_icir': 0.0,
                 'long_short_return': 0.0, 'n_symbols': len(factor_values),
-                'n_periods': 0, 'fitness': -999.0
+                'n_periods': 0, 'total_periods': 0, 'coverage_rate': 0.0, 'fitness': -999.0
             }
 
-        df = pd.DataFrame(all_rows)
-        df['date'] = pd.to_datetime(df['date'])
+        factor_df = pd.concat([factor_values[s] for s in valid_symbols], axis=1, keys=valid_symbols)
+        ret_df = pd.concat([all_returns[s] for s in valid_symbols], axis=1, keys=valid_symbols)
+
+        # 将截面计算对齐到同一时间网格，避免逐行构造DataFrame再groupby的高开销
+        aligned_idx = factor_df.index.intersection(ret_df.index)
+        if len(aligned_idx) < 50:
+            return {
+                'ic_mean': 0.0, 'ic_std': 1.0, 'icir': 0.0,
+                'rank_ic_mean': 0.0, 'rank_icir': 0.0,
+                'long_short_return': 0.0, 'n_symbols': len(factor_values),
+                'n_periods': 0, 'total_periods': 0, 'coverage_rate': 0.0, 'fitness': -999.0
+            }
+
+        factor_mat = factor_df.loc[aligned_idx].to_numpy(dtype=float)
+        ret_mat = ret_df.loc[aligned_idx].to_numpy(dtype=float)
 
         ic_list = []
         rank_ic_list = []
         ls_returns = []
 
-        for date, group in df.groupby('date'):
-            if len(group) < 3:
+        for t in range(factor_mat.shape[0]):
+            fv_row = factor_mat[t]
+            rv_row = ret_mat[t]
+            valid_mask = np.isfinite(fv_row) & np.isfinite(rv_row)
+            if valid_mask.sum() < 3:
                 continue
-            valid = group.dropna(subset=['factor_value', 'returns'])
-            valid = valid[np.isfinite(valid['factor_value']) & np.isfinite(valid['returns'])]
-            if len(valid) < 3:
-                continue
-
-            fv = valid['factor_value'].values
-            rv = valid['returns'].values
+            fv = fv_row[valid_mask]
+            rv = rv_row[valid_mask]
 
             fv_std = np.std(fv)
             rv_std = np.std(rv)
@@ -571,21 +591,20 @@ class GPMiner:
 
             try:
                 ic = np.corrcoef(fv, rv)[0, 1]
-                from scipy import stats as sp_stats
-                rank_ic, _ = sp_stats.spearmanr(fv, rv)
+                fv_rank = np.argsort(np.argsort(fv)).astype(float) + 1.0
+                rv_rank = np.argsort(np.argsort(rv)).astype(float) + 1.0
+                rank_ic = np.corrcoef(fv_rank, rv_rank)[0, 1]
 
                 if np.isfinite(ic):
                     ic_list.append(ic)
                 if np.isfinite(rank_ic):
                     rank_ic_list.append(rank_ic)
 
-                ranked = pd.Series(fv).rank(pct=True)
-                n = len(ranked)
+                ranked = fv_rank / max(len(fv_rank), 1)
                 long_mask = ranked > 0.8
                 short_mask = ranked < 0.2
                 if long_mask.sum() > 0 and short_mask.sum() > 0:
-                    ls_ret = valid.loc[long_mask.values, 'returns'].mean() - \
-                        valid.loc[short_mask.values, 'returns'].mean()
+                    ls_ret = rv[long_mask].mean() - rv[short_mask].mean()
                     ls_returns.append(ls_ret)
             except Exception:
                 continue
@@ -595,7 +614,7 @@ class GPMiner:
                 'ic_mean': 0.0, 'ic_std': 1.0, 'icir': 0.0,
                 'rank_ic_mean': 0.0, 'rank_icir': 0.0,
                 'long_short_return': 0.0, 'n_symbols': len(factor_values),
-                'n_periods': 0, 'fitness': -999.0
+                'n_periods': 0, 'total_periods': len(aligned_idx), 'coverage_rate': 0.0, 'fitness': -999.0
             }
 
         ic_mean = np.mean(ic_list)
@@ -620,6 +639,8 @@ class GPMiner:
             'long_short_return': float(ls_return),
             'n_symbols': len(factor_values),
             'n_periods': len(ic_list),
+            'total_periods': len(aligned_idx),
+            'coverage_rate': float(len(ic_list) / max(len(aligned_idx), 1)),
             'fitness': float(fitness)
         }
 
@@ -697,42 +718,66 @@ class GPMiner:
         if not candidates:
             return []
 
+        factor_series_cache: Dict[str, Dict[str, pd.Series]] = {}
+
+        def _get_factor_values(individual: ExpressionTree) -> Dict[str, pd.Series]:
+            expr_key = individual.to_string()
+            cached_values = factor_series_cache.get(expr_key)
+            if cached_values is not None:
+                return cached_values
+
+            factor_values = {}
+            for symbol, features in all_features.items():
+                try:
+                    fv = self._evaluate_individual_on_symbol(individual, features)
+                    factor_values[symbol] = fv
+                except Exception:
+                    continue
+            factor_series_cache[expr_key] = factor_values
+            return factor_values
+
         selected = [candidates[0]]
         candidate_factors = {}
-        first_fv = {}
-        for symbol, features in all_features.items():
-            try:
-                fv = self._evaluate_individual_on_symbol(candidates[0], features)
-                first_fv[symbol] = fv
-            except Exception:
-                continue
+        first_fv = _get_factor_values(candidates[0])
         candidate_factors[candidates[0].to_string()] = first_fv
 
         for cand in candidates[1:]:
             if len(selected) >= max_count:
                 break
 
-            cand_fv = {}
-            for symbol, features in all_features.items():
-                try:
-                    fv = self._evaluate_individual_on_symbol(cand, features)
-                    cand_fv[symbol] = fv
-                except Exception:
-                    continue
+            cand_fv = _get_factor_values(cand)
 
             is_diverse = True
             for existing_fv in candidate_factors.values():
-                corr_vals = []
+                corr_sum = 0.0
+                corr_count = 0
                 for symbol in set(cand_fv.keys()) & set(existing_fv.keys()):
                     c1 = cand_fv.get(symbol)
                     c2 = existing_fv.get(symbol)
                     if c1 is not None and c2 is not None and len(c1) > 10:
                         common_idx = c1.index.intersection(c2.index)
                         if len(common_idx) > 10:
-                            corr = c1.loc[common_idx].corr(c2.loc[common_idx])
+                            v1 = c1.loc[common_idx].to_numpy(dtype=float)
+                            v2 = c2.loc[common_idx].to_numpy(dtype=float)
+                            valid = np.isfinite(v1) & np.isfinite(v2)
+                            if valid.sum() < 3:
+                                continue
+                            x = v1[valid]
+                            y = v2[valid]
+                            x = x - x.mean()
+                            y = y - y.mean()
+                            x_std = x.std()
+                            y_std = y.std()
+                            if x_std < 1e-12 or y_std < 1e-12:
+                                continue
+                            corr = float((x * y).mean() / (x_std * y_std + 1e-12))
                             if np.isfinite(corr):
-                                corr_vals.append(abs(corr))
-                if corr_vals and np.mean(corr_vals) > self.max_correlation:
+                                corr_sum += abs(corr)
+                                corr_count += 1
+                                if (corr_sum / corr_count) > self.max_correlation:
+                                    is_diverse = False
+                                    break
+                if not is_diverse:
                     is_diverse = False
                     break
 
@@ -755,6 +800,7 @@ class GPMiner:
             Dict: 挖掘结果
         """
         self._stop_requested = False
+        self._eval_cache = {}
         self.set_progress_callback(progress_callback)
 
         self._report_progress(0, "正在计算基础特征...")
@@ -783,25 +829,75 @@ class GPMiner:
 
         best_fitness_ever = -999.0
         stagnation_count = 0
+        stopped_early = False
+        completed_generations = 0
 
         for gen in range(self.max_generations):
             if self._stop_requested:
                 stop_pct = int((gen + 1) / self.max_generations * 85)
                 self._report_progress(stop_pct, "用户请求停止挖掘")
+                stopped_early = True
+                completed_generations = gen
                 break
 
             gen_start = time.time()
 
+            expr_to_inds: Dict[str, List[ExpressionTree]] = {}
+            expr_to_repr: Dict[str, ExpressionTree] = {}
             for ind in self.population:
-                eval_result = self._evaluate_cross_sectional(ind, all_features, all_returns)
-                ind.fitness = eval_result['fitness']
-                ind.ic_mean = eval_result['ic_mean']
-                ind.ic_std = eval_result['ic_std']
-                ind.icir = eval_result['icir']
-                ind.rank_ic_mean = eval_result['rank_ic_mean']
-                ind.rank_icir = eval_result['rank_icir']
-                ind.long_short_return = eval_result['long_short_return']
-                ind.eval_detail = eval_result
+                expr_key = ind.to_string()
+                expr_to_inds.setdefault(expr_key, []).append(ind)
+                if expr_key not in expr_to_repr:
+                    expr_to_repr[expr_key] = ind
+
+            missing_exprs = [expr for expr in expr_to_inds.keys() if expr not in self._eval_cache]
+            if missing_exprs:
+                if self.eval_workers > 1 and len(missing_exprs) > 1:
+                    with ThreadPoolExecutor(max_workers=min(self.eval_workers, len(missing_exprs))) as executor:
+                        future_map = {
+                            executor.submit(
+                                self._evaluate_cross_sectional,
+                                expr_to_repr[expr],
+                                all_features,
+                                all_returns
+                            ): expr for expr in missing_exprs
+                        }
+                        for future in as_completed(future_map):
+                            expr_key = future_map[future]
+                            try:
+                                self._eval_cache[expr_key] = future.result()
+                            except Exception:
+                                self._eval_cache[expr_key] = {
+                                    'ic_mean': 0.0, 'ic_std': 1.0, 'icir': 0.0,
+                                    'rank_ic_mean': 0.0, 'rank_icir': 0.0,
+                                    'long_short_return': 0.0, 'n_symbols': 0,
+                                    'n_periods': 0, 'total_periods': 0, 'coverage_rate': 0.0, 'fitness': -999.0
+                                }
+                else:
+                    for expr_key in missing_exprs:
+                        self._eval_cache[expr_key] = self._evaluate_cross_sectional(
+                            expr_to_repr[expr_key], all_features, all_returns
+                        )
+
+            for expr_key, inds in expr_to_inds.items():
+                eval_result = self._eval_cache.get(expr_key)
+                if eval_result is None:
+                    eval_result = {
+                        'ic_mean': 0.0, 'ic_std': 1.0, 'icir': 0.0,
+                        'rank_ic_mean': 0.0, 'rank_icir': 0.0,
+                        'long_short_return': 0.0, 'n_symbols': 0,
+                        'n_periods': 0, 'total_periods': 0, 'coverage_rate': 0.0, 'fitness': -999.0
+                    }
+                    self._eval_cache[expr_key] = eval_result
+                for ind in inds:
+                    ind.fitness = eval_result['fitness']
+                    ind.ic_mean = eval_result['ic_mean']
+                    ind.ic_std = eval_result['ic_std']
+                    ind.icir = eval_result['icir']
+                    ind.rank_ic_mean = eval_result['rank_ic_mean']
+                    ind.rank_icir = eval_result['rank_icir']
+                    ind.long_short_return = eval_result['long_short_return']
+                    ind.eval_detail = eval_result
 
             self.population.sort(key=lambda x: x.fitness if x.fitness is not None else -999, reverse=True)
 
@@ -871,6 +967,7 @@ class GPMiner:
             if ind.fitness is not None
             and abs(ind.ic_mean) >= self.min_ic_threshold
             and abs(ind.icir) >= self.min_ir_threshold
+            and (ind.eval_detail or {}).get('coverage_rate', 0.0) >= self.min_coverage_threshold
         ]
         valid_individuals.sort(key=lambda x: x.fitness if x.fitness is not None else -999, reverse=True)
 
@@ -902,6 +999,8 @@ class GPMiner:
                 'long_short_return': ind.long_short_return,
                 'n_symbols': ind.eval_detail.get('n_symbols', 0) if ind.eval_detail else 0,
                 'n_periods': ind.eval_detail.get('n_periods', 0) if ind.eval_detail else 0,
+                'total_periods': ind.eval_detail.get('total_periods', 0) if ind.eval_detail else 0,
+                'coverage_rate': ind.eval_detail.get('coverage_rate', 0.0) if ind.eval_detail else 0.0,
                 'fitness': ind.fitness,
                 'direction': 'negative' if (ind.ic_mean is not None and ind.ic_mean < 0) else 'positive',
                 'factor_data': factor_data,
@@ -917,6 +1016,8 @@ class GPMiner:
             'generation_stats': self.generation_stats,
             'total_evaluated': len(self.population) * self.max_generations,
             'n_symbols': len(all_features),
+            'stopped': stopped_early,
+            'actual_generations': completed_generations if stopped_early else self.max_generations,
             'config': {
                 'population_size': self.population_size,
                 'max_generations': self.max_generations,

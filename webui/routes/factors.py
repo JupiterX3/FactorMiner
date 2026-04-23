@@ -11,6 +11,7 @@ from flask import Blueprint, request, jsonify
 import math
 import threading
 import time
+import uuid
 from factor_miner.core.factor_evaluator import FactorEvaluator, CrossSectionalEvaluator
 from factor_miner.core.factor_engine import get_global_engine
 from factor_miner.core.evaluation_io import (
@@ -18,8 +19,93 @@ from factor_miner.core.evaluation_io import (
     load_evaluations as core_load_evaluations,
 )
 
-_cs_cancel_event = threading.Event()
+# 每个评估/组合/相关性请求使用独立的 threading.Event，
+# 通过 request_id 精确取消，避免多用户互相影响。
+# 若 request 未提供 request_id，回退到 _LEGACY_CANCEL_ID 的全局事件（向后兼容）。
+_LEGACY_CANCEL_ID = '__legacy_global__'
+_cs_cancel_events: dict = {}
+_cs_cancel_lock = threading.Lock()
+_cs_active_executors: dict = {}
+_cs_executor_lock = threading.Lock()
+
+
+def _get_cancel_event(request_id: str) -> threading.Event:
+    """获取（或创建）指定 request_id 对应的取消事件。"""
+    rid = str(request_id) if request_id else _LEGACY_CANCEL_ID
+    with _cs_cancel_lock:
+        ev = _cs_cancel_events.get(rid)
+        if ev is None:
+            ev = threading.Event()
+            _cs_cancel_events[rid] = ev
+        return ev
+
+
+def _discard_cancel_event(request_id: str) -> None:
+    """请求完成后清理 Event，避免内存累积。"""
+    rid = str(request_id) if request_id else _LEGACY_CANCEL_ID
+    with _cs_cancel_lock:
+        _cs_cancel_events.pop(rid, None)
+
+
+def _set_cancel(request_id: str) -> int:
+    """设置指定 request_id（或全部）为取消，返回被触发的 event 数量。"""
+    if request_id:
+        ev = _get_cancel_event(request_id)
+        ev.set()
+        return 1
+    with _cs_cancel_lock:
+        for ev in _cs_cancel_events.values():
+            ev.set()
+        return len(_cs_cancel_events)
+
+
+def _register_active_executor(request_id: str, executor) -> None:
+    rid = str(request_id) if request_id else _LEGACY_CANCEL_ID
+    with _cs_executor_lock:
+        _cs_active_executors[rid] = executor
+
+
+def _pop_active_executor(request_id: str):
+    rid = str(request_id) if request_id else _LEGACY_CANCEL_ID
+    with _cs_executor_lock:
+        return _cs_active_executors.pop(rid, None)
+
+
+def _pop_all_active_executors() -> list:
+    with _cs_executor_lock:
+        items = list(_cs_active_executors.items())
+        _cs_active_executors.clear()
+        return items
+
+
+def _force_stop_executor(executor) -> None:
+    if executor is None:
+        return
+    try:
+        executor.shutdown(wait=False, cancel_futures=True)
+    except Exception:
+        try:
+            executor.shutdown(wait=False)
+        except Exception:
+            pass
+    try:
+        procs = getattr(executor, '_processes', None) or {}
+        for p in procs.values():
+            try:
+                if p is not None and p.is_alive():
+                    p.terminate()
+            except Exception:
+                continue
+        for p in procs.values():
+            try:
+                if p is not None:
+                    p.join(timeout=1)
+            except Exception:
+                continue
+    except Exception:
+        pass
 # from factor_miner.core.factor_storage import get_global_storage
+
 
 bp = Blueprint('factors', __name__)
 
@@ -47,18 +133,22 @@ ALPHA101_FORMULAS = {
 # 页面路由 - 已迁移到main.py
 
 # API路由
+
+
 @bp.route('/list')
 def list_factors():
-    """获取因子列表（V4：从新的文件夹结构读取）
-    
-    因子分类说明：
-    - basic_kline: 基础K线因子，仅需OHLCV数据
-    - extra_data: 额外数据因子，需要资金费率、持仓量等
-    - ml_pretrained: ML预训练因子，需要ML模型或预训练数据
-    - event_factor: 事件因子（不建议用于截面评估）
-        * 识别规则：category='pattern' 或因子名包含cross/gap/breakout等关键词
-        * 特征：仅0/1取值，unique值=2
-        * 截面评估缺陷：取值区分度低、数据稀疏、分组效果差
+    """获取因子列表（v4：按一级分类目录动态扫描）
+
+    一级分类（category / data_requirement）对应物理目录：
+    - basic_kline  : 仅需 OHLCV
+    - derivatives  : 需要 OI / LSR / taker_buy / basis 等衍生品微观结构
+    - funding      : 需要资金费率历史
+
+    二级分类（subcategory，写进 JSON）：
+    - technical / mined / event / open_interest / long_short_ratio /
+      taker_volume / basis / funding_carry / funding_arbitrage 等
+
+    事件因子（event）仅 0/1 取值，不建议用于截面评估；前端会据此打标。
     """
     try:
         now_ts = time.time()
@@ -66,36 +156,32 @@ def list_factors():
             if _factor_list_cache["payload"] is not None and now_ts < _factor_list_cache["expires_at"]:
                 return jsonify(_factor_list_cache["payload"])
 
-        # 检查两个文件夹：technicals 和 minactors
-        technicals_dir = FACTOR_LIBRARY_DIR / "technicals" / "definitions"
-        minactors_dir = FACTOR_LIBRARY_DIR / "minactors" / "definitions"
-        
+        # v4：动态扫描 factorlib 下所有一级分类目录
         factors = []
-        
-        # 读取 technicals 文件夹
-        if technicals_dir.exists():
-            for file in technicals_dir.glob("*.json"):
-                try:
-                    with open(file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    data['source'] = 'technicals'  # 标记来源
-                    factors.append(data)
-                except Exception as e:
-                    print(f"❌ 读取因子文件失败 {file}: {e}")
+        known_groups = []
+        if FACTOR_LIBRARY_DIR.exists():
+            for child in FACTOR_LIBRARY_DIR.iterdir():
+                if not child.is_dir():
                     continue
-        
-        # 读取 minactors 文件夹
-        if minactors_dir.exists():
-            for file in minactors_dir.glob("*.json"):
-                try:
-                    with open(file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    data['source'] = 'minactors'  # 标记来源
-                    factors.append(data)
-                except Exception as e:
-                    print(f"❌ 读取因子文件失败 {file}: {e}")
+                # 跳过归档 / 备份目录
+                if child.name.startswith(('.', '_')) or (
+                    '_archived_' in child.name or '_deprecated' in child.name or '_backup' in child.name
+                ):
                     continue
-        
+                def_dir = child / "definitions"
+                if not def_dir.is_dir():
+                    continue
+                known_groups.append(child.name)
+                for file in def_dir.glob("*.json"):
+                    try:
+                        with open(file, 'r', encoding='utf-8') as f:
+                            data = json.load(f)
+                        data['source'] = child.name
+                        factors.append(data)
+                    except Exception as e:
+                        print(f"❌ 读取因子文件失败 {file}: {e}")
+                        continue
+
         # 处理因子数据
         processed_factors = []
         for data in factors:
@@ -106,7 +192,7 @@ def list_factors():
                     formula_preview = comp.get('formula') or None
                 elif data.get('computation_type') == 'function':
                     formula_preview = comp.get('function_code') or None
-                
+
                 # 聚合评估均值（核心IO）
                 evaluated = False
                 eval_count = 0
@@ -118,7 +204,8 @@ def list_factors():
                     eval_count = len(evaluations)
                     if eval_count > 0:
                         evaluated = True
-                        keys = ['ic_pearson', 'ic_spearman', 'icir', 'win_rate', 'sharpe_ratio', 'long_short_return']
+                        keys = ['ic_pearson', 'ic_spearman', 'icir',
+                                'win_rate', 'sharpe_ratio', 'long_short_return']
                         sums = {k: 0.0 for k in keys}
                         counts = {k: 0 for k in keys}
                         for ev in evaluations:
@@ -128,49 +215,60 @@ def list_factors():
                                 if isinstance(v, (int, float)):
                                     sums[k] += float(v)
                                     counts[k] += 1
-                            last_evaluated_at = (ev or {}).get('evaluated_at') or last_evaluated_at
+                            last_evaluated_at = (ev or {}).get(
+                                'evaluated_at') or last_evaluated_at
                         for k in keys:
-                            avg_metrics[k] = (sums[k] / counts[k]) if counts[k] > 0 else None
+                            avg_metrics[k] = (
+                                sums[k] / counts[k]) if counts[k] > 0 else None
                 except Exception:
                     pass
-                
+
                 # 数值安全处理，避免NaN进入JSON
                 def _safe_num(x):
                     return float(x) if isinstance(x, (int, float)) and math.isfinite(x) else None
                 avg_metrics_clean = {}
                 for k, v in (avg_metrics or {}).items():
                     avg_metrics_clean[k] = _safe_num(v)
-                
+
                 category = data.get('category', '')
+                subcategory = (data.get('subcategory') or '').lower()
                 factor_id = data.get('factor_id', '').lower()
                 factor_name = data.get('name', '').lower()
-                
-                is_event_factor = False
-                if category == 'pattern':
+
+                # 事件因子识别（首选 subcategory，否则 fallback 到关键字）
+                is_event_factor = subcategory == 'event'
+                if not is_event_factor and category == 'pattern':
                     is_event_factor = True
-                else:
-                    event_keywords = ['cross', 'gap', 'breakout', 'breakdown', 'signal', 'event', 'direction']
+                if not is_event_factor:
+                    event_keywords = ['cross', 'gap', 'breakout',
+                                      'breakdown', 'signal', 'event', 'direction']
                     for keyword in event_keywords:
                         if keyword in factor_id or keyword in factor_name:
                             is_event_factor = True
                             break
-                
-                data_requirement = 'basic_kline'
+
+                # v4：data_requirement 直接取一级分类目录名
+                # 一级分类就是数据来源（basic_kline / derivatives / funding / ...）
+                data_requirement = category if category in known_groups else 'basic_kline'
+                # 事件因子单独打标（前端用于排除截面评估）
                 if is_event_factor:
                     data_requirement = 'event_factor'
-                elif category == 'ml':
-                    data_requirement = 'ml_pretrained'
-                elif category == 'crypto':
-                    data_requirement = 'extra_data'
-                
+                # 挖掘因子统一归类（方便前端筛选挖掘库）
+                if subcategory == 'mined':
+                    data_requirement = 'mined_factor'
+
                 processed_factors.append({
                     'id': data.get('factor_id'),
                     'name': data.get('name'),
                     'description': data.get('description'),
                     'type': data.get('category'),
+                    'subcategory': data.get('subcategory', ''),
                     'source': data.get('source'),
                     'data_requirement': data_requirement,
                     'created_at': data.get('metadata', {}).get('created_at'),
+                    'is_window': data.get('metadata', {}).get('is_window'),
+                    'min_warmup_bars': data.get('metadata', {}).get('min_warmup_bars'),
+                    'source_family': data.get('metadata', {}).get('source_family'),
                     'computation_type': data.get('computation_type'),
                     'formula': formula_preview,
                     'evaluated': evaluated,
@@ -184,11 +282,13 @@ def list_factors():
             except Exception as e:
                 print(f"❌ 处理因子数据失败 {data.get('factor_id', 'unknown')}: {e}")
                 continue
-        
-        response_payload = {'success': True, 'factors': processed_factors, 'total': len(processed_factors)}
+
+        response_payload = {
+            'success': True, 'factors': processed_factors, 'total': len(processed_factors)}
         with _factor_list_cache_lock:
             _factor_list_cache["payload"] = response_payload
-            _factor_list_cache["expires_at"] = time.time() + _FACTOR_LIST_CACHE_TTL_SEC
+            _factor_list_cache["expires_at"] = time.time() + \
+                _FACTOR_LIST_CACHE_TTL_SEC
         return jsonify(response_payload)
     except Exception as e:
         return jsonify({'success': False, 'message': f'获取因子列表失败: {str(e)}'})
@@ -221,6 +321,7 @@ def _evaluate_factor_process_worker(
     compute_fsc,
     compute_ic_decay_curve,
     ic_decay_max_lag,
+    n_ic_segments,
 ):
     """多进程 worker：单因子截面评估。"""
     t0 = time.time()
@@ -251,10 +352,18 @@ def _evaluate_factor_process_worker(
             compute_fsc=compute_fsc,
             compute_ic_decay_curve=compute_ic_decay_curve,
             ic_decay_max_lag=ic_decay_max_lag,
+            n_ic_segments=n_ic_segments,
         )
-        result = cs_evaluator.evaluate_cross_sectional(data_dict, factor_id, engine, timeframe=base_timeframe)
+        result = cs_evaluator.evaluate_cross_sectional(
+            data_dict, factor_id, engine, timeframe=base_timeframe)
         elapsed = time.time() - t0
         if result.get('success'):
+            ic_payload = result.get('ic') or {}
+            # rank_ic_series 数据量较大（每个因子数千条），评估流里不再回传给前端，
+            # 如需 IC 时序相关性，由独立端点按需重算。
+            if isinstance(ic_payload, dict) and 'rank_ic_series' in ic_payload:
+                ic_payload = {k: v for k, v in ic_payload.items()
+                              if k != 'rank_ic_series'}
             return {
                 'factor_id': factor_id,
                 'success': True,
@@ -263,7 +372,7 @@ def _evaluate_factor_process_worker(
                 'n_periods_total': result.get('n_periods_total'),
                 'n_periods_ic': result.get('n_periods_ic'),
                 'n_periods_returns': result.get('n_periods_returns'),
-                'ic': result.get('ic'),
+                'ic': ic_payload,
                 'returns': result.get('returns'),
                 'coverage': result.get('coverage'),
                 'summary': result.get('summary'),
@@ -284,16 +393,18 @@ def _evaluate_factor_process_worker(
             'elapsed': round(elapsed, 2)
         }
 
+
 def get_traditional_factor_formula(_):
     """V3不再从旧CSV推导传统指标公式，保留占位。"""
     return None
+
 
 @bp.route('/evaluate', methods=['POST'])
 def evaluate_factor():
     """评估因子"""
     try:
         data = request.get_json()
-        
+
         factor_id = data.get('factor_id')
         symbol = data.get('symbol')
         timeframe = data.get('timeframe')
@@ -301,40 +412,41 @@ def evaluate_factor():
         end_date = data.get('end_date')
         exchange = data.get('exchange', 'binance')
         trade_type = data.get('trade_type', 'futures')
-        
+
         if not all([factor_id, symbol, timeframe, start_date, end_date]):
             return jsonify({
                 'success': False,
                 'message': '缺少必要参数'
             })
-        
+
         # 使用V3引擎直接计算
         engine = get_global_engine()
         # 加载本地数据
-        market_data = load_local_market_data(symbol, timeframe, start_date, end_date, exchange, trade_type)
-        
+        market_data = load_local_market_data(
+            symbol, timeframe, start_date, end_date, exchange, trade_type)
+
         if market_data is None or market_data.empty:
             return jsonify({
                 'success': False,
                 'message': '无法加载市场数据'
             })
-        
+
         # 计算因子值（V3）
         factor_values = engine.compute_single_factor(factor_id, market_data)
-        
+
         if factor_values is None:
             return jsonify({
                 'success': False,
                 'message': '因子计算失败'
             })
-        
+
         # 评估因子
         evaluator = FactorEvaluator()
-        
+
         # 简化对齐策略：强制以 market_data.index 为准
         market_data = market_data.sort_index()
         market_data['returns'] = market_data['close'].pct_change()
-        
+
         # 确保因子为Series
         if hasattr(factor_values, 'columns'):
             try:
@@ -356,14 +468,14 @@ def evaluate_factor():
                 'success': False,
                 'message': f'数据不足：样本数 {len(factor_values)} < 30，请扩大时间范围或选择更低频时间框架'
             })
-        
+
         # 评估因子
         evaluation_results = evaluator.evaluate_single_factor(
             factor=factor_values,
             returns=returns,
             factor_name=factor_id
         )
-        
+
         # 保存评估结果
         save_evaluation_results(factor_id, evaluation_results, {
             'symbol': symbol,
@@ -371,18 +483,19 @@ def evaluate_factor():
             'start_date': start_date,
             'end_date': end_date
         })
-        
+
         return jsonify({
             'success': True,
             'message': '因子评估完成',
             'results': evaluation_results
         })
-        
+
     except Exception as e:
         return jsonify({
             'success': False,
             'message': f'因子评估失败: {str(e)}'
         })
+
 
 @bp.route('/detail/<factor_id>')
 def get_factor_detail(factor_id):
@@ -394,48 +507,139 @@ def get_factor_detail(factor_id):
                 'success': False,
                 'message': '无效的因子ID'
             })
-        
+
         # 获取因子详细信息
         factor_detail = get_factor_detail_info(factor_info)
-        
+
         return jsonify({
             'success': True,
             'factor': factor_detail
         })
-        
+
     except Exception as e:
         return jsonify({
             'success': False,
             'message': f'获取因子详情失败: {str(e)}'
         })
 
+
 @bp.route('/export/<factor_id>')
 def export_factor(factor_id):
-    """导出因子"""
+    """导出因子（v4：按一级分类目录动态查找定义文件）。"""
     try:
-        # V4导出：从新的文件夹结构导出
-        export_dir = FACTOR_LIBRARY_DIR / "minactors"  # 导出到minactors目录
+        export_dir = FACTOR_LIBRARY_DIR / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 先在minactors中查找
-        definition_file = FACTOR_LIBRARY_DIR / "minactors" / "definitions" / f"{factor_id}.json"
-        if not definition_file.exists():
-            # 再在technicals中查找
-            definition_file = FACTOR_LIBRARY_DIR / "technicals" / "definitions" / f"{factor_id}.json"
-            if not definition_file.exists():
-                return jsonify({'success': False, 'message': '因子定义不存在'})
-        
+
+        definition_file = _find_factor_definition_file(factor_id)
+        if definition_file is None:
+            return jsonify({'success': False, 'message': '因子定义不存在'})
+
         export_path = export_dir / f"{factor_id}_definition.json"
         with open(definition_file, 'r', encoding='utf-8') as src, open(export_path, 'w', encoding='utf-8') as dst:
             dst.write(src.read())
-        
+
         return jsonify({'success': True, 'message': '因子导出成功', 'export_path': str(export_path)})
-        
+
     except Exception as e:
         return jsonify({
             'success': False,
             'message': f'因子导出失败: {str(e)}'
         })
+
+
+def _find_factor_definition_file(factor_id: str):
+    """
+    v4 辅助：在所有一级分类目录下查找因子定义文件。
+
+    优先一级分类白名单（DEFAULT_SOURCE_GROUPS），再兜底扫描其它合法目录；
+    归档/备份目录会被忽略。
+    """
+    excluded = ('_archived_', '_deprecated', '_backup')
+    # 先按已知顺序找，速度更快
+    preferred = ['basic_kline', 'derivatives', 'funding']
+    for group in preferred:
+        f = FACTOR_LIBRARY_DIR / group / "definitions" / f"{factor_id}.json"
+        if f.exists():
+            return f
+    if not FACTOR_LIBRARY_DIR.exists():
+        return None
+    for child in FACTOR_LIBRARY_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        name = child.name
+        if name in preferred or name.startswith(('.', '_')):
+            continue
+        if any(tok in name for tok in excluded):
+            continue
+        f = child / "definitions" / f"{factor_id}.json"
+        if f.exists():
+            return f
+    return None
+
+
+def _find_factor_function_file(factor_id: str):
+    """v4 辅助：在所有一级分类目录下查找因子函数源码。"""
+    excluded = ('_archived_', '_deprecated', '_backup')
+    preferred = ['basic_kline', 'derivatives', 'funding']
+    for group in preferred:
+        f = FACTOR_LIBRARY_DIR / group / "functions" / f"{factor_id}.py"
+        if f.exists():
+            return f
+    if not FACTOR_LIBRARY_DIR.exists():
+        return None
+    for child in FACTOR_LIBRARY_DIR.iterdir():
+        if not child.is_dir():
+            continue
+        name = child.name
+        if name in preferred or name.startswith(('.', '_')):
+            continue
+        if any(tok in name for tok in excluded):
+            continue
+        f = child / "functions" / f"{factor_id}.py"
+        if f.exists():
+            return f
+    return None
+
+
+@bp.route('/batch_delete', methods=['POST'])
+def batch_delete_factors():
+    """批量删除因子（从因子库中移除定义文件）"""
+    try:
+        payload = request.get_json() or {}
+        factor_ids = payload.get('factor_ids') or []
+        if not factor_ids:
+            return jsonify({'success': False, 'message': '未选择要删除的因子'})
+
+        from factor_miner.core.factor_storage import get_global_storage
+        storage = get_global_storage()
+
+        deleted = []
+        failed = []
+        for fid in factor_ids:
+            try:
+                ok = storage.delete_factor(fid)
+                if ok:
+                    deleted.append(fid)
+                else:
+                    failed.append(fid)
+            except Exception as e:
+                failed.append(fid)
+
+        with _factor_list_cache_lock:
+            _factor_list_cache["payload"] = None
+
+        return jsonify({
+            'success': True,
+            'deleted': deleted,
+            'failed': failed,
+            'deleted_count': len(deleted),
+            'failed_count': len(failed),
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'message': f'批量删除失败: {str(e)}'}), 500
+
 
 @bp.route('/evaluations/<factor_id>')
 def get_evaluations(factor_id: str):
@@ -445,6 +649,7 @@ def get_evaluations(factor_id: str):
         return jsonify({'success': True, 'factor_id': payload.get('factor_id', factor_id), 'evaluations': payload.get('evaluations', [])})
     except Exception as e:
         return jsonify({'success': False, 'message': f'获取评估历史失败: {str(e)}'})
+
 
 @bp.route('/batch_evaluate', methods=['POST'])
 def batch_evaluate():
@@ -456,7 +661,7 @@ def batch_evaluate():
     from flask import Response, stream_with_context
 
     logger = logging.getLogger(__name__)
-    
+
     payload = request.get_json() or {}
     factor_ids = payload.get('factor_ids') or []
     symbols = payload.get('symbols') or []
@@ -465,15 +670,20 @@ def batch_evaluate():
     end_date = payload.get('end_date')
     exchange = payload.get('exchange', 'binance')
     trade_type = payload.get('trade_type', 'futures')
+    request_id = str(payload.get('request_id')
+                     or '').strip() or _LEGACY_CANCEL_ID
 
     if not factor_ids or not symbols or not timeframes or not start_date or not end_date:
         return jsonify({'success': False, 'message': '缺少必要参数（factor_ids/symbols/timeframes/start_date/end_date）'})
 
     total_tasks = len(factor_ids) * len(symbols) * len(timeframes)
-    logger.info(f"批量评估请求: {len(factor_ids)} 因子 × {len(symbols)} 币种 × {len(timeframes)} 时间框架 = {total_tasks} 任务")
+    logger.info(
+        f"批量评估请求: {len(factor_ids)} 因子 × {len(symbols)} 币种 × {len(timeframes)} 时间框架 = {total_tasks} 任务 (request_id={request_id})")
+
+    cancel_event = _get_cancel_event(request_id)
+    cancel_event.clear()
 
     def generate():
-        _cs_cancel_event.clear()
         try:
             engine = get_global_engine()
             evaluator = FactorEvaluator()
@@ -489,19 +699,21 @@ def batch_evaluate():
             })
 
             def evaluate_single_task(factor_id, symbol, timeframe):
-                if _cs_cancel_event.is_set():
+                if cancel_event.is_set():
                     return {
                         'factor_id': factor_id, 'symbol': symbol, 'timeframe': timeframe,
                         'success': False, 'message': '评估已取消'
                     }
                 try:
-                    market_data = load_local_market_data(symbol, timeframe, start_date, end_date, exchange, trade_type)
+                    market_data = load_local_market_data(
+                        symbol, timeframe, start_date, end_date, exchange, trade_type)
                     if market_data is None or market_data.empty:
                         return {
                             'factor_id': factor_id, 'symbol': symbol, 'timeframe': timeframe,
                             'success': False, 'message': '无法加载市场数据'
                         }
-                    factor_values = engine.compute_single_factor(factor_id, market_data)
+                    factor_values = engine.compute_single_factor(
+                        factor_id, market_data)
                     if factor_values is None:
                         return {
                             'factor_id': factor_id, 'symbol': symbol, 'timeframe': timeframe,
@@ -524,7 +736,8 @@ def batch_evaluate():
                             'factor_id': factor_id, 'symbol': symbol, 'timeframe': timeframe,
                             'success': False, 'message': f'数据不足：样本数 {len(factor_values)} < 30'
                         }
-                    eval_res = evaluator.evaluate_single_factor(factor=factor_values, returns=returns, factor_name=factor_id)
+                    eval_res = evaluator.evaluate_single_factor(
+                        factor=factor_values, returns=returns, factor_name=factor_id)
                     return {
                         'factor_id': factor_id, 'symbol': symbol, 'timeframe': timeframe,
                         'success': True, 'results': eval_res
@@ -542,16 +755,17 @@ def batch_evaluate():
                 for factor_id in factor_ids:
                     for symbol in symbols:
                         for timeframe in timeframes:
-                            future = executor.submit(evaluate_single_task, factor_id, symbol, timeframe)
+                            future = executor.submit(
+                                evaluate_single_task, factor_id, symbol, timeframe)
                             futures[future] = (factor_id, symbol, timeframe)
 
                 for future in as_completed(futures):
-                    if _cs_cancel_event.is_set():
+                    if cancel_event.is_set():
                         break
                     result = future.result()
                     all_results.append(result)
                     completed_count += 1
-                    
+
                     result_clean = _sanitize_for_json(result)
                     yield _sse_event('task_result', {
                         'result': result_clean,
@@ -560,13 +774,13 @@ def batch_evaluate():
                         'message': f'已完成 {completed_count}/{total_tasks}'
                     })
             except GeneratorExit:
-                _cs_cancel_event.set()
+                cancel_event.set()
                 for f in futures:
                     f.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise
             except KeyboardInterrupt:
-                _cs_cancel_event.set()
+                cancel_event.set()
                 for f in futures:
                     f.cancel()
                 executor.shutdown(wait=False, cancel_futures=True)
@@ -577,7 +791,8 @@ def batch_evaluate():
             elapsed = time.time() - t0
             success_count = sum(1 for r in all_results if r.get('success'))
             fail_count = total_tasks - success_count
-            logger.info(f"批量评估完成: 成功 {success_count}/{total_tasks}, 失败 {fail_count}, 耗时 {elapsed:.1f}s")
+            logger.info(
+                f"批量评估完成: 成功 {success_count}/{total_tasks}, 失败 {fail_count}, 耗时 {elapsed:.1f}s")
 
             yield _sse_event('done', {
                 'total': total_tasks,
@@ -589,6 +804,8 @@ def batch_evaluate():
             logger.error(f"批量评估异常: {e}", exc_info=True)
             yield _sse_event('error', {'message': f'批量评估失败: {str(e)}'})
             yield _sse_event('done', {'total': total_tasks, 'success_count': 0, 'fail_count': total_tasks})
+        finally:
+            _discard_cancel_event(request_id)
 
     return Response(
         stream_with_context(generate()),
@@ -614,15 +831,19 @@ def cross_sectional_evaluate():
     from flask import Response, stream_with_context
 
     logger = logging.getLogger(__name__)
-    
+
     payload = request.get_json() or {}
     factor_ids = payload.get('factor_ids') or []
     symbols = payload.get('symbols') or []
-    base_timeframe = payload.get('base_timeframe') or payload.get('timeframe', '1h')
+    base_timeframe = payload.get(
+        'base_timeframe') or payload.get('timeframe', '1h')
     factor_timeframe = payload.get('factor_timeframe') or base_timeframe
     factor_bar_mode = str(payload.get('factor_bar_mode', 'completed')).lower()
     start_date = payload.get('start_date')
     end_date = payload.get('end_date')
+    # 可选：OOS 起始日期。提供时，同一批因子会在 IS=[start, oos) 与 OOS=[oos, end] 两段
+    # 分别跑一次截面评估，SSE 返回同时包含 is / oos 两套指标；不填则走原逻辑（整段一次）。
+    oos_start_date = payload.get('oos_start_date')
     exchange = payload.get('exchange', 'binance')
     trade_type = payload.get('trade_type', 'futures')
     n_groups = payload.get('n_groups', 5)
@@ -646,13 +867,18 @@ def cross_sectional_evaluate():
     compute_fsc = payload.get('compute_fsc', False)
     compute_ic_decay_curve = payload.get('compute_ic_decay_curve', False)
     ic_decay_max_lag = payload.get('ic_decay_max_lag', 5)
-    parallel_backend = str(payload.get('parallel_backend', 'thread')).lower()
+    n_ic_segments = payload.get('n_ic_segments', 4)
+    parallel_backend = str(payload.get('parallel_backend', 'auto')).lower()
+    request_id = str(payload.get('request_id')
+                     or '').strip() or _LEGACY_CANCEL_ID
     try:
-        heartbeat_interval_sec = float(payload.get('heartbeat_interval_sec', 15))
+        heartbeat_interval_sec = float(
+            payload.get('heartbeat_interval_sec', 15))
     except (TypeError, ValueError):
         heartbeat_interval_sec = 15.0
 
-    logger.info(f"截面评估请求: {len(factor_ids)} 个因子, {len(symbols)} 个币种, {start_date} ~ {end_date}")
+    logger.info(
+        f"截面评估请求: {len(factor_ids)} 个因子, {len(symbols)} 个币种, {start_date} ~ {end_date} (request_id={request_id})")
 
     if not factor_ids or not symbols or len(symbols) < 2:
         return jsonify({
@@ -724,6 +950,11 @@ def cross_sectional_evaluate():
             'success': False,
             'message': '参数 max_lookback 不能小于 1'
         }), 400
+    if max_lookback > 5000:
+        return jsonify({
+            'success': False,
+            'message': '参数 max_lookback 不能大于 5000（过大会导致内存压力，建议 100-500）'
+        }), 400
 
     try:
         min_coverage = float(min_coverage)
@@ -765,19 +996,23 @@ def cross_sectional_evaluate():
         }), 400
 
     if isinstance(treat_zero_as_invalid, str):
-        treat_zero_as_invalid = treat_zero_as_invalid.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+        treat_zero_as_invalid = treat_zero_as_invalid.strip().lower() in ('1',
+                                                                          'true', 'yes', 'y', 'on')
     else:
         treat_zero_as_invalid = bool(treat_zero_as_invalid)
     if isinstance(enable_data_cleaning, str):
-        enable_data_cleaning = enable_data_cleaning.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+        enable_data_cleaning = enable_data_cleaning.strip(
+        ).lower() in ('1', 'true', 'yes', 'y', 'on')
     else:
         enable_data_cleaning = bool(enable_data_cleaning)
     if isinstance(remove_zero_volume, str):
-        remove_zero_volume = remove_zero_volume.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+        remove_zero_volume = remove_zero_volume.strip(
+        ).lower() in ('1', 'true', 'yes', 'y', 'on')
     else:
         remove_zero_volume = bool(remove_zero_volume)
     if isinstance(enable_outlier_treatment, str):
-        enable_outlier_treatment = enable_outlier_treatment.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+        enable_outlier_treatment = enable_outlier_treatment.strip().lower() in ('1',
+                                                                                'true', 'yes', 'y', 'on')
     else:
         enable_outlier_treatment = bool(enable_outlier_treatment)
     if isinstance(compute_fsc, str):
@@ -785,7 +1020,8 @@ def cross_sectional_evaluate():
     else:
         compute_fsc = bool(compute_fsc)
     if isinstance(compute_ic_decay_curve, str):
-        compute_ic_decay_curve = compute_ic_decay_curve.strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+        compute_ic_decay_curve = compute_ic_decay_curve.strip().lower() in ('1',
+                                                                            'true', 'yes', 'y', 'on')
     else:
         compute_ic_decay_curve = bool(compute_ic_decay_curve)
 
@@ -818,6 +1054,13 @@ def cross_sectional_evaluate():
     if ic_decay_max_lag < 1:
         return jsonify({'success': False, 'message': '参数 ic_decay_max_lag 不能小于 1'}), 400
 
+    try:
+        n_ic_segments = int(n_ic_segments)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'message': '参数 n_ic_segments 必须为整数'}), 400
+    if n_ic_segments < 2 or n_ic_segments > 12:
+        return jsonify({'success': False, 'message': '参数 n_ic_segments 必须在 [2, 12] 区间'}), 400
+
     base_timeframe = str(base_timeframe or '1h').lower()
     factor_timeframe = str(factor_timeframe or base_timeframe).lower()
     if factor_bar_mode not in ('completed', 'intrabar', 'intrabar_strict'):
@@ -826,8 +1069,35 @@ def cross_sectional_evaluate():
             'message': '参数 factor_bar_mode 仅支持 completed / intrabar / intrabar_strict'
         }), 400
 
+    # 解析 oos_start_date：要求严格落在 (start_date, end_date) 内
+    oos_start_dt = None
+    if oos_start_date:
+        try:
+            oos_start_dt = pd.Timestamp(oos_start_date)
+        except Exception:
+            return jsonify({
+                'success': False,
+                'message': '参数 oos_start_date 无法解析为时间戳'
+            }), 400
+        try:
+            _start_dt = pd.Timestamp(start_date)
+            _end_dt = pd.Timestamp(end_date)
+        except Exception:
+            return jsonify({
+                'success': False,
+                'message': 'start_date / end_date 格式无效'
+            }), 400
+        if not (_start_dt < oos_start_dt < _end_dt):
+            return jsonify({
+                'success': False,
+                'message': 'oos_start_date 必须严格位于 start_date 与 end_date 之间'
+            }), 400
+    oos_enabled = oos_start_dt is not None
+
+    cancel_event = _get_cancel_event(request_id)
+    cancel_event.clear()
+
     def generate():
-        _cs_cancel_event.clear()
         try:
             import os
             engine = get_global_engine()
@@ -856,6 +1126,7 @@ def cross_sectional_evaluate():
                 compute_fsc=compute_fsc,
                 compute_ic_decay_curve=compute_ic_decay_curve,
                 ic_decay_max_lag=ic_decay_max_lag,
+                n_ic_segments=n_ic_segments,
             )
             total = len(factor_ids)
             logger.info(f"开始截面评估，共 {total} 个因子")
@@ -870,9 +1141,9 @@ def cross_sectional_evaluate():
             data_dict = {}
             load_t0 = time.time()
             total_symbols = len(symbols)
-            
+
             def load_single_symbol(symbol):
-                if _cs_cancel_event.is_set():
+                if cancel_event.is_set():
                     return (symbol, None)
                 try:
                     md = load_local_market_data(
@@ -883,14 +1154,15 @@ def cross_sectional_evaluate():
                 except Exception as e:
                     logger.warning(f"加载 {symbol} 失败: {e}")
                 return (symbol, None)
-            
+
             load_workers = min(total_symbols, os.cpu_count() or 4, 8)
             loader = ThreadPoolExecutor(max_workers=load_workers)
             try:
-                load_futures = {loader.submit(load_single_symbol, s): s for s in symbols}
+                load_futures = {loader.submit(
+                    load_single_symbol, s): s for s in symbols}
                 loaded_count = 0
                 for future in as_completed(load_futures):
-                    if _cs_cancel_event.is_set():
+                    if cancel_event.is_set():
                         break
                     loaded_count += 1
                     symbol, md = future.result()
@@ -904,13 +1176,13 @@ def cross_sectional_evaluate():
                             'total': total
                         })
             except GeneratorExit:
-                _cs_cancel_event.set()
+                cancel_event.set()
                 for f in load_futures:
                     f.cancel()
                 loader.shutdown(wait=False, cancel_futures=True)
                 raise
             except KeyboardInterrupt:
-                _cs_cancel_event.set()
+                cancel_event.set()
                 for f in load_futures:
                     f.cancel()
                 loader.shutdown(wait=False, cancel_futures=True)
@@ -918,74 +1190,242 @@ def cross_sectional_evaluate():
             loader.shutdown(wait=True)
 
             load_elapsed = time.time() - load_t0
-            logger.info(f"市场数据加载完成: {len(data_dict)}/{len(symbols)} 个币种, 耗时 {load_elapsed:.1f}s")
+            logger.info(
+                f"市场数据加载完成: {len(data_dict)}/{len(symbols)} 个币种, 耗时 {load_elapsed:.1f}s")
 
             if len(data_dict) < 2:
                 logger.error(f"有效币种数量不足: {len(data_dict)} < 2")
                 yield _sse_event('error', {
                     'message': f'有效币种数量不足（{len(data_dict)} < 2）'
                 })
-                yield _sse_event('done', {'results': []})
+                yield _sse_event('done', {
+                    'total': total,
+                    'batch_total': total,
+                    'success_count': 0,
+                    'fail_count': 0,
+                    'eval_elapsed': 0,
+                    'total_elapsed': round(time.time() - load_t0, 2) if 'load_t0' in locals() else 0,
+                    'workers': 0,
+                    'parallel_backend': parallel_backend,  # effective_backend 尚未确定，用原始请求值
+                    'request_id': request_id,
+                    'oos_enabled': oos_enabled,
+                    'oos_start_date': str(oos_start_dt) if oos_start_dt is not None else None,
+                })
                 return
+
+            # OOS 模式：按 oos_start_dt 切成 IS / OOS 两份 data_dict
+            # 切片发生在传入评估器之前，因此 IS 段的 future_returns 不会偷看 OOS 数据
+            # （因为 pct_change+shift 需要未来价格，切掉之后对应的标签会变 NaN 被丢弃）。
+            data_dict_is = None
+            data_dict_oos = None
+            if oos_enabled:
+                data_dict_is = {}
+                data_dict_oos = {}
+                for _sym, _df in data_dict.items():
+                    if _df is None or _df.empty:
+                        continue
+                    try:
+                        _idx = _df.index
+                        if not isinstance(_idx, pd.DatetimeIndex):
+                            _idx = pd.to_datetime(_idx, errors='coerce')
+                            _df = _df.copy()
+                            _df.index = _idx
+                        if isinstance(_df.index, pd.DatetimeIndex):
+                            _df = _df.loc[_df.index.notna()]
+                        _cut = oos_start_dt
+                        if isinstance(_df.index, pd.DatetimeIndex) and _df.index.tz is not None:
+                            if _cut.tz is None:
+                                _cut = _cut.tz_localize(_df.index.tz)
+                            else:
+                                _cut = _cut.tz_convert(_df.index.tz)
+                        elif _cut.tz is not None:
+                            _cut = _cut.tz_convert(None)
+
+                        _is_part = _df.loc[_df.index < _cut]
+                        _oos_part = _df.loc[_df.index >= _cut]
+                    except Exception:
+                        continue
+                    if _is_part is not None and not _is_part.empty:
+                        data_dict_is[_sym] = _is_part
+                    if _oos_part is not None and not _oos_part.empty:
+                        data_dict_oos[_sym] = _oos_part
+                if len(data_dict_is) < 2 or len(data_dict_oos) < 2:
+                    yield _sse_event('error', {
+                        'message': (f'OOS 切分后有效币种不足：IS={len(data_dict_is)}, '
+                                    f'OOS={len(data_dict_oos)}（均需 ≥2）')
+                    })
+                    yield _sse_event('done', {
+                        'total': total,
+                        'batch_total': total,
+                        'success_count': 0,
+                        'fail_count': 0,
+                        'eval_elapsed': 0,
+                        'total_elapsed': round(time.time() - load_t0, 2) if 'load_t0' in locals() else 0,
+                        'workers': 0,
+                        'parallel_backend': parallel_backend,  # effective_backend 尚未确定，用原始请求值
+                        'request_id': request_id,
+                        'oos_enabled': oos_enabled,
+                        'oos_start_date': str(oos_start_dt) if oos_start_dt is not None else None,
+                    })
+                    return
+                logger.info(
+                    f"OOS 切分完成: IS 段 {len(data_dict_is)} 币种, OOS 段 {len(data_dict_oos)} 币种, "
+                    f"切点 = {oos_start_dt}"
+                )
 
             yield _sse_event('progress', {
                 'phase': 'evaluating',
-                'message': f'数据加载完成 ({len(data_dict)} 个币种, {load_elapsed:.1f}s)，开始评估 {total} 个因子...',
+                'message': (
+                    f'数据加载完成 ({len(data_dict)} 个币种, {load_elapsed:.1f}s)，'
+                    + (f'OOS 切点 {oos_start_dt.strftime("%Y-%m-%d")}，每因子将分别跑 IS/OOS 两次。' if oos_enabled else '')
+                    + f'开始评估 {total} 个因子...'
+                ),
                 'completed': 0,
-                'total': total
+                'total': total,
+                'oos_enabled': oos_enabled,
             })
 
-            def evaluate_one_factor(factor_id):
-                """单个因子的截面评估（线程安全）"""
-                if _cs_cancel_event.is_set():
-                    return {
-                        'factor_id': factor_id,
-                        'success': False,
-                        'message': '评估已取消',
-                        'elapsed': 0
-                    }
+            def _run_single_slice(factor_id, slice_data_dict):
+                """在给定的 data_dict 切片上跑一次截面评估，返回统一结构。"""
                 t0 = time.time()
                 try:
                     result = cs_evaluator.evaluate_cross_sectional(
-                        data_dict, factor_id, engine, timeframe=base_timeframe
+                        slice_data_dict, factor_id, engine, timeframe=base_timeframe
                     )
                     elapsed = time.time() - t0
                     if result.get('success'):
-                        logger.debug(f"因子 {factor_id} 评估成功，耗时 {elapsed:.2f}s")
+                        ic_payload = result.get('ic') or {}
+                        # rank_ic_series 不在 SSE 回传，IC 时序相关性按需重算
+                        if isinstance(ic_payload, dict) and 'rank_ic_series' in ic_payload:
+                            ic_payload = {
+                                k: v for k, v in ic_payload.items() if k != 'rank_ic_series'}
                         return {
-                            'factor_id': factor_id,
                             'success': True,
                             'n_symbols': result.get('n_symbols'),
                             'n_periods': result.get('n_periods'),
                             'n_periods_total': result.get('n_periods_total'),
                             'n_periods_ic': result.get('n_periods_ic'),
                             'n_periods_returns': result.get('n_periods_returns'),
-                            'ic': result.get('ic'),
+                            'ic': ic_payload,
                             'returns': result.get('returns'),
                             'coverage': result.get('coverage'),
                             'summary': result.get('summary'),
-                            'elapsed': round(elapsed, 2)
+                            'elapsed': round(elapsed, 2),
                         }
-                    else:
-                        logger.warning(f"因子 {factor_id} 评估失败: {result.get('message')}")
-                        return {
-                            'factor_id': factor_id,
-                            'success': False,
-                            'message': result.get('message', '评估失败'),
-                            'elapsed': round(elapsed, 2)
-                        }
+                    return {
+                        'success': False,
+                        'message': result.get('message', '评估失败'),
+                        'elapsed': round(elapsed, 2),
+                    }
                 except Exception as ex:
                     elapsed = time.time() - t0
-                    logger.error(f"因子 {factor_id} 评估异常: {ex}", exc_info=True)
+                    return {
+                        'success': False,
+                        'message': str(ex),
+                        'elapsed': round(elapsed, 2),
+                    }
+
+            def evaluate_one_factor(factor_id):
+                """单个因子的截面评估（线程安全）。OOS 开启时跑 IS / OOS 两次。"""
+                if cancel_event.is_set():
                     return {
                         'factor_id': factor_id,
                         'success': False,
-                        'message': str(ex),
-                        'elapsed': round(elapsed, 2)
+                        'message': '评估已取消',
+                        'elapsed': 0
                     }
+                if not oos_enabled:
+                    r = _run_single_slice(factor_id, data_dict)
+                    if r.get('success'):
+                        logger.debug(
+                            f"因子 {factor_id} 评估成功，耗时 {r.get('elapsed')}s")
+                    else:
+                        logger.warning(
+                            f"因子 {factor_id} 评估失败: {r.get('message')}")
+                    r['factor_id'] = factor_id
+                    r['oos_enabled'] = False
+                    return r
+
+                # OOS 模式：依次跑 IS / OOS
+                is_res = _run_single_slice(factor_id, data_dict_is)
+                if cancel_event.is_set():
+                    return {
+                        'factor_id': factor_id,
+                        'success': False,
+                        'message': '评估已取消',
+                        'elapsed': round(is_res.get('elapsed') or 0, 2),
+                        'oos_enabled': True,
+                        'is': is_res,
+                    }
+                oos_res = _run_single_slice(factor_id, data_dict_oos)
+
+                combined = {
+                    'factor_id': factor_id,
+                    'oos_enabled': True,
+                    # 以 OOS 的成功状态作为因子是否通过的依据（OOS 是最终判据）
+                    'success': bool(oos_res.get('success')),
+                    'elapsed': round((is_res.get('elapsed') or 0) + (oos_res.get('elapsed') or 0), 2),
+                    'is': is_res,
+                    'oos': oos_res,
+                }
+                if oos_res.get('success'):
+                    # 同时把 OOS 的核心字段铺到顶层，便于现有前端逻辑兜底兼容
+                    for _key in ('n_symbols', 'n_periods', 'n_periods_total',
+                                 'n_periods_ic', 'n_periods_returns',
+                                 'ic', 'returns', 'coverage', 'summary'):
+                        combined[_key] = oos_res.get(_key)
+                else:
+                    combined['message'] = oos_res.get('message', 'OOS 段评估失败')
+
+                if combined['success']:
+                    logger.debug(
+                        f"因子 {factor_id} IS/OOS 评估成功，耗时 {combined['elapsed']}s "
+                        f"(IS={is_res.get('elapsed')}s, OOS={oos_res.get('elapsed')}s)"
+                    )
+                else:
+                    logger.warning(
+                        f"因子 {factor_id} OOS 段评估失败: {combined.get('message')} "
+                        f"(IS success={is_res.get('success')})"
+                    )
+                return combined
 
             cpu_count = os.cpu_count() or 4
-            if parallel_backend == 'process':
+
+            data_dict_size_mb = sum(df.memory_usage(deep=True).sum(
+            ) for df in data_dict.values()) / (1024 * 1024) if data_dict else 0
+            _PROCESS_DATA_SIZE_LIMIT_MB = 50
+            _PROCESS_MIN_FACTOR_COUNT = 8
+
+            effective_backend = parallel_backend
+            if parallel_backend == 'auto':
+                if os.name == 'nt':
+                    effective_backend = 'thread'
+                    logger.info("auto 模式: 检测到 Windows，强制使用 thread 后端（避免进程池在 Ctrl+C 时残留）")
+                elif (data_dict_size_mb < _PROCESS_DATA_SIZE_LIMIT_MB
+                        and len(factor_ids) >= _PROCESS_MIN_FACTOR_COUNT):
+                    effective_backend = 'process'
+                    logger.info(f"auto 模式: 数据量 {data_dict_size_mb:.1f}MB < {_PROCESS_DATA_SIZE_LIMIT_MB}MB, "
+                                f"因子数 {len(factor_ids)} >= {_PROCESS_MIN_FACTOR_COUNT}, 选择 process 后端")
+                else:
+                    effective_backend = 'thread'
+                    logger.info(
+                        f"auto 模式: 数据量 {data_dict_size_mb:.1f}MB, 因子数 {len(factor_ids)}, 选择 thread 后端")
+            elif parallel_backend == 'process' and data_dict_size_mb >= _PROCESS_DATA_SIZE_LIMIT_MB:
+                logger.warning(f"数据量 {data_dict_size_mb:.1f}MB >= {_PROCESS_DATA_SIZE_LIMIT_MB}MB, "
+                               f"进程模式序列化开销过大，自动降级为 thread 后端")
+                effective_backend = 'thread'
+            elif parallel_backend == 'process' and os.name == 'nt':
+                logger.warning("检测到 Windows，process 后端可能在 Ctrl+C 时残留，已自动降级为 thread 后端")
+                effective_backend = 'thread'
+
+            if oos_enabled and effective_backend == 'process':
+                # OOS 模式需要在两份独立的 data_dict 上跑两次评估；
+                # 当前 _evaluate_factor_process_worker 签名仅接受单份 data_dict，
+                # 为避免重复 IPC 序列化开销与复杂度，这里直接降级为 thread 后端。
+                logger.info("OOS 模式启用，自动从 process 降级为 thread 后端（简化数据共享）")
+                effective_backend = 'thread'
+
+            if effective_backend == 'process':
                 max_workers = min(len(factor_ids), max(cpu_count - 1, 1), 4)
                 executor_cls = ProcessPoolExecutor
             else:
@@ -994,11 +1434,13 @@ def cross_sectional_evaluate():
             completed_count = 0
             all_results = []
             eval_t0 = time.time()
-            logger.info(f"开始并行评估，后端={parallel_backend}, workers={max_workers}")
+            logger.info(
+                f"开始并行评估，后端={effective_backend}, workers={max_workers}, 数据量={data_dict_size_mb:.1f}MB")
 
             executor = executor_cls(max_workers=max_workers)
             pending = set()
             try:
+                _register_active_executor(request_id, executor)
                 if executor_cls is ProcessPoolExecutor:
                     future_to_factor = {
                         executor.submit(
@@ -1029,6 +1471,7 @@ def cross_sectional_evaluate():
                             compute_fsc,
                             compute_ic_decay_curve,
                             ic_decay_max_lag,
+                            n_ic_segments,
                         ): fid
                         for fid in factor_ids
                     }
@@ -1041,9 +1484,10 @@ def cross_sectional_evaluate():
                 heartbeat_ts = time.time()
 
                 while pending:
-                    done, pending = wait(pending, timeout=1.0, return_when=FIRST_COMPLETED)
+                    done, pending = wait(
+                        pending, timeout=1.0, return_when=FIRST_COMPLETED)
 
-                    if _cs_cancel_event.is_set():
+                    if cancel_event.is_set():
                         logger.info("检测到取消信号，停止评估循环...")
                         break
 
@@ -1051,8 +1495,10 @@ def cross_sectional_evaluate():
                         now = time.time()
                         if now - heartbeat_ts >= max(heartbeat_interval_sec, 1.0):
                             elapsed = now - eval_t0
-                            avg_sec = (elapsed / completed_count) if completed_count > 0 else 0
-                            eta_sec = (avg_sec * (total - completed_count)) if completed_count > 0 else None
+                            avg_sec = (
+                                elapsed / completed_count) if completed_count > 0 else 0
+                            eta_sec = (avg_sec * (total - completed_count)
+                                       ) if completed_count > 0 else None
                             eta_text = f"{int(eta_sec)}s" if eta_sec is not None else "估算中"
                             yield _sse_event('progress', {
                                 'phase': 'evaluating',
@@ -1085,21 +1531,21 @@ def cross_sectional_evaluate():
                             'completed': completed_count,
                             'total': total,
                             'message': f'已完成 {completed_count}/{total}: {factor_id}'
-                                + (f' ({result.get("elapsed", "?")}s)' if result.get('elapsed') else '')
+                            + (f' ({result.get("elapsed", "?")}s)' if result.get('elapsed') else '')
                         })
             except GeneratorExit:
                 logger.info("截面评估被中断（GeneratorExit），正在取消所有待处理任务...")
-                _cs_cancel_event.set()
+                cancel_event.set()
                 for f in pending:
                     f.cancel()
-                executor.shutdown(wait=False, cancel_futures=True)
+                _force_stop_executor(executor)
                 raise
             except KeyboardInterrupt:
                 logger.info("截面评估被中断（KeyboardInterrupt），正在取消所有待处理任务...")
-                _cs_cancel_event.set()
+                cancel_event.set()
                 for f in pending:
                     f.cancel()
-                executor.shutdown(wait=False, cancel_futures=True)
+                _force_stop_executor(executor)
                 raise
             else:
                 executor.shutdown(wait=True)
@@ -1109,16 +1555,21 @@ def cross_sectional_evaluate():
 
             success_count = sum(1 for r in all_results if r.get('success'))
             fail_count = sum(1 for r in all_results if not r.get('success'))
-            logger.info(f"截面评估完成: 成功 {success_count}/{total}, 失败 {fail_count}, 总耗时 {total_elapsed:.1f}s")
+            logger.info(
+                f"截面评估完成: 成功 {success_count}/{total}, 失败 {fail_count}, 总耗时 {total_elapsed:.1f}s")
 
             yield _sse_event('done', {
                 'total': total,
+                'batch_total': total,
                 'success_count': success_count,
                 'fail_count': fail_count,
                 'eval_elapsed': round(eval_elapsed, 2),
                 'total_elapsed': round(total_elapsed, 2),
                 'workers': max_workers,
-                'parallel_backend': parallel_backend
+                'parallel_backend': effective_backend,
+                'request_id': request_id,
+                'oos_enabled': oos_enabled,
+                'oos_start_date': str(oos_start_dt) if oos_start_dt is not None else None,
             })
         except Exception as e:
             logger.error(f"截面评估过程发生异常: {e}", exc_info=True)
@@ -1127,10 +1578,17 @@ def cross_sectional_evaluate():
             })
             yield _sse_event('done', {
                 'total': len(factor_ids),
+                'batch_total': len(factor_ids),
                 'success_count': len([r for r in all_results if r.get('success')]) if 'all_results' in locals() else 0,
                 'fail_count': len([r for r in all_results if not r.get('success')]) if 'all_results' in locals() else len(factor_ids),
-                'error': str(e)
+                'eval_elapsed': round(time.time() - eval_t0, 2) if 'eval_t0' in locals() else 0,
+                'total_elapsed': round(time.time() - load_t0, 2) if 'load_t0' in locals() else 0,
+                'error': str(e),
+                'request_id': request_id,
             })
+        finally:
+            _pop_active_executor(request_id)
+            _discard_cancel_event(request_id)
 
     return Response(
         stream_with_context(generate()),
@@ -1145,14 +1603,31 @@ def cross_sectional_evaluate():
 
 @bp.route('/cancel_evaluation', methods=['POST'])
 def cancel_evaluation():
-    """取消正在进行的截面评估"""
-    _cs_cancel_event.set()
-    return jsonify({'success': True, 'message': '取消信号已发送'})
+    """取消正在进行的截面评估 / 组合回测 / 相关性计算
+
+    - 若请求体中带 request_id，仅取消对应请求（推荐）
+    - 未带 request_id 时回退为"取消所有"，用于兼容旧前端
+    """
+    payload = request.get_json(silent=True) or {}
+    request_id = str(payload.get('request_id') or '').strip()
+    triggered = _set_cancel(request_id) if request_id else _set_cancel('')
+    if request_id:
+        _force_stop_executor(_pop_active_executor(request_id))
+    else:
+        for _, ex in _pop_all_active_executors():
+            _force_stop_executor(ex)
+    return jsonify({
+        'success': True,
+        'message': '取消信号已发送',
+        'request_id': request_id or None,
+        'triggered': triggered,
+    })
 
 
 def _sse_event(event_type: str, data: dict) -> str:
     """构造 SSE 事件字符串"""
-    payload = json.dumps(_sanitize_for_json({'type': event_type, **data}), ensure_ascii=False)
+    payload = json.dumps(_sanitize_for_json(
+        {'type': event_type, **data}), ensure_ascii=False)
     return f"event: message\ndata: {payload}\n\n"
 
 
@@ -1169,7 +1644,6 @@ def _sanitize_for_json(obj):
     return obj
 
 
-
 def parse_alpha101_filename(filename):
     """解析Alpha101文件名"""
     # 格式: alpha101_results_SYMBOL_TIMEFRAME.pkl
@@ -1180,24 +1654,26 @@ def parse_alpha101_filename(filename):
         return symbol, timeframe
     return 'Unknown', 'Unknown'
 
+
 def clean_factor_name(factor_name, factor_type=''):
     """清理因子名称，移除不合理的币种后缀"""
     # 需要移除的币种后缀列表
-    crypto_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'ADA', 'DOGE', 'LINK', 'LPT', 'MOVR', 'PEOPLE', 'SUI', 'FIL']
-    
+    crypto_symbols = ['BTC', 'ETH', 'BNB', 'SOL', 'ADA',
+                      'DOGE', 'LINK', 'LPT', 'MOVR', 'PEOPLE', 'SUI', 'FIL']
+
     # 移除因子名称末尾的币种后缀
     for symbol in crypto_symbols:
         # 移除 "_SYMBOL" 格式的后缀
         if factor_name.endswith(f'_{symbol}'):
             factor_name = factor_name[:-len(symbol)-1]
-        # 移除 "_SYMBOL_USDT" 格式的后缀  
+        # 移除 "_SYMBOL_USDT" 格式的后缀
         if factor_name.endswith(f'_{symbol}_USDT'):
             factor_name = factor_name[:-len(symbol)-6]
         # 移除 "_SYMBOL_timeframe" 格式的后缀
         for tf in ['1h', '4h', '1m', '5m', '15m', '1d']:
             if factor_name.endswith(f'_{symbol}_{tf}'):
                 factor_name = factor_name[:-len(symbol)-len(tf)-2]
-    
+
     return factor_name
 
 
@@ -1212,10 +1688,12 @@ def parse_factor_id(factor_id):
         }
     return None
 
+
 def calculate_factor_values(factor_info, market_data):
     """计算因子值"""
     # V3已不再使用该函数，保留占位
     return None
+
 
 def save_evaluation_results(factor_id, results, metadata):
     """转调核心层的评估结果保存"""
@@ -1223,6 +1701,7 @@ def save_evaluation_results(factor_id, results, metadata):
         core_save_evaluation_results(factor_id, results, metadata)
     except Exception as e:
         print(f"保存评估结果失败: {e}")
+
 
 def get_factor_detail_info(factor_info):
     """获取因子详细信息"""
@@ -1236,58 +1715,75 @@ def get_factor_detail_info(factor_info):
         'evaluation_history': []
     }
 
+
 def export_factor_data(factor_info):
-    """导出因子数据"""
-    export_dir = FACTOR_LIBRARY_DIR / "minactors"  # 导出到minactors目录
+    """导出因子数据（v4：统一导出到 factorlib/exports 子目录）。"""
+    export_dir = FACTOR_LIBRARY_DIR / "exports"
     export_dir.mkdir(parents=True, exist_ok=True)
-    
-    identifier = factor_info.get('identifier') or factor_info.get('id') or 'factor'
+
+    identifier = factor_info.get(
+        'identifier') or factor_info.get('id') or 'factor'
     export_file = export_dir / f"{identifier}_export.csv"
-    
+
     # 创建示例导出文件
     pd.DataFrame({
         'factor_name': [factor_info['identifier']],
         'type': [factor_info['type']],
         'exported_at': [datetime.now().isoformat()]
     }).to_csv(export_file, index=False)
-    
+
     return str(export_file)
+
 
 def load_local_market_data(symbol, timeframe, start_date, end_date, exchange='binance', trade_type='futures'):
     """从本地加载市场数据"""
     try:
         # 构建文件路径
-        data_dir = Path(__file__).parent.parent.parent / "data" / exchange / trade_type
-        
+        data_dir = Path(__file__).parent.parent.parent / \
+            "data" / exchange / trade_type
+
         # 解析交易对格式
-        # API返回的交易对格式是 BTC_USDT，但实际文件名需要 BTC_USDT_USDT
+        # API 返回的交易对格式是 BASE_QUOTE（如 BTC_USDT 或 ETH_BTC），
+        # 实际文件名为 {BASE}_{QUOTE}_{SETTLE}-{timeframe}-{trade_type}.feather
+        # 永续合约通常 settle == quote；现货也按此约定退化处理。
         if '_' in symbol:
-            parts = symbol.split('_')
-            if len(parts) >= 2:
-                # 如果输入是 BTC_USDT，我们需要构建 BTC_USDT_USDT
-                base_symbol = parts[0]  # BTC
-                filename = f"{base_symbol}_USDT_USDT-{timeframe}-{trade_type}.feather"
-            else:
-                base_symbol = symbol
-                filename = f"{base_symbol}_USDT_USDT-{timeframe}-{trade_type}.feather"
+            parts = [p for p in symbol.split('_') if p]
+            base_symbol = parts[0] if len(parts) >= 1 else symbol
+            quote_symbol = parts[1] if len(parts) >= 2 else 'USDT'
+            settle_symbol = parts[2] if len(parts) >= 3 else quote_symbol
         else:
             base_symbol = symbol
-            filename = f"{base_symbol}_USDT_USDT-{timeframe}-{trade_type}.feather"
-            
-        file_path = data_dir / filename
-        
-        if not file_path.exists():
-            print(f"数据文件不存在: {file_path}")
+            quote_symbol = 'USDT'
+            settle_symbol = 'USDT'
+
+        candidate_filenames = [
+            f"{base_symbol}_{quote_symbol}_{settle_symbol}-{timeframe}-{trade_type}.feather",
+        ]
+        # 兼容旧目录里 settle 与 quote 相同时被写成 BASE_QUOTE_QUOTE 的命名
+        if settle_symbol != quote_symbol:
+            candidate_filenames.append(
+                f"{base_symbol}_{quote_symbol}_{quote_symbol}-{timeframe}-{trade_type}.feather"
+            )
+
+        file_path = None
+        for fname in candidate_filenames:
+            cand = data_dir / fname
+            if cand.exists():
+                file_path = cand
+                break
+
+        if file_path is None:
+            print(f"数据文件不存在: {data_dir / candidate_filenames[0]}")
             return None
-        
+
         # 读取feather文件
         data = pd.read_feather(file_path)
-        
+
         required_columns = ['open', 'high', 'low', 'close', 'volume']
         if not all(col in data.columns for col in required_columns):
             print(f"数据文件缺少必要的列: {required_columns}")
             return None
-        
+
         # 统一的时间列解析（自动识别秒/毫秒/字符串）
         def parse_time_series(series):
             try:
@@ -1303,14 +1799,14 @@ def load_local_market_data(symbol, timeframe, start_date, end_date, exchange='bi
                 return pd.to_datetime(series, errors='coerce', utc=True)
             except Exception:
                 return pd.to_datetime(series, errors='coerce', utc=True)
-        
+
         # 如果有时间列，设置为索引
         time_col = None
         for cand in ['timestamp', 'datetime', 'time', 'date']:
             if cand in data.columns:
                 time_col = cand
                 break
-        
+
         if time_col is not None:
             data[time_col] = parse_time_series(data[time_col])
             data.set_index(time_col, inplace=True)
@@ -1318,15 +1814,15 @@ def load_local_market_data(symbol, timeframe, start_date, end_date, exchange='bi
             if not isinstance(data.index, pd.DatetimeIndex):
                 if len(data) > 1000:
                     return None
-        
+
         if start_date and end_date:
             try:
                 start_dt = pd.to_datetime(start_date, utc=True)
                 end_dt = pd.to_datetime(end_date, utc=True)
-                
+
                 if not isinstance(data.index, pd.DatetimeIndex):
                     data.index = pd.to_datetime(data.index, utc=True)
-                
+
                 try:
                     if data.index.tz is None:
                         data.index = data.index.tz_localize('UTC')
@@ -1334,38 +1830,39 @@ def load_local_market_data(symbol, timeframe, start_date, end_date, exchange='bi
                         data.index = data.index.tz_convert('UTC')
                 except Exception:
                     data.index = data.index.tz_localize(None)
-                
+
                 original_count = len(data)
                 data = data[(data.index >= start_dt) & (data.index <= end_dt)]
-                
+
                 if len(data) == 0:
                     return None
-                    
+
             except Exception:
                 return None
-        
+
         # 确保数据按时间排序
         data.sort_index(inplace=True)
-        
+
         if len(data) == 0:
             return None
-        
+
         required_columns = ['open', 'high', 'low', 'close', 'volume']
         if not all(col in data.columns for col in required_columns):
             return None
-        
+
         if not isinstance(data.index, pd.DatetimeIndex):
             return None
-        
+
         if (data.index.max() - data.index.min()).total_seconds() < 60:
             return None
-        
-        print(f"✅ {symbol} [{timeframe}]: {len(data)} 条 ({data.index.min().date()} ~ {data.index.max().date()})")
+
+        print(
+            f"✅ {symbol} [{timeframe}]: {len(data)} 条 ({data.index.min().date()} ~ {data.index.max().date()})")
         return data
-        
+
     except Exception as e:
         print(f"加载本地数据失败: {e}")
-        return None 
+        return None
 
 
 @bp.route('/ensemble_backtest', methods=['POST'])
@@ -1377,12 +1874,14 @@ def ensemble_backtest():
     - 自动处理反向因子（IC为负时取负）
     - 支持多种组合方法
     """
+    request_id = _LEGACY_CANCEL_ID
+    cancel_event = None
     try:
         import numpy as np
         from factor_miner.core.factor_optimizer import FactorOptimizer
-        
+
         payload = request.get_json() or {}
-        
+
         factor_ids = payload.get('factor_ids', [])
         factor_ic_dict = payload.get('factor_ic_dict', {})
         auto_reverse = payload.get('auto_reverse', True)
@@ -1405,6 +1904,23 @@ def ensemble_backtest():
         min_valid_count = payload.get('min_valid_count', 30)
         min_group_size = payload.get('min_group_size', 5)
         treat_zero_as_invalid = payload.get('treat_zero_as_invalid', True)
+        request_id = str(payload.get('request_id')
+                         or '').strip() or _LEGACY_CANCEL_ID
+
+        try:
+            max_lookback = int(max_lookback)
+        except (TypeError, ValueError):
+            max_lookback = 200
+        if max_lookback < 1:
+            max_lookback = 200
+        if max_lookback > 5000:
+            return jsonify({
+                'success': False,
+                'message': '参数 max_lookback 不能大于 5000（建议 100-500）'
+            }), 400
+
+        cancel_event = _get_cancel_event(request_id)
+        cancel_event.clear()
 
         try:
             n_groups = int(n_groups)
@@ -1457,7 +1973,7 @@ def ensemble_backtest():
                 'success': False,
                 'message': '参数 sample_step 不能小于 1'
             }), 400
-        
+
         if not factor_ids or not symbols:
             return jsonify({
                 'success': False,
@@ -1468,35 +1984,43 @@ def ensemble_backtest():
                 'success': False,
                 'message': '截面组合回测至少需要 2 个币种'
             }), 400
-        
+
         if not start_date or not end_date:
             return jsonify({
                 'success': False,
                 'message': '请选择时间范围'
             })
-        
+
         engine = get_global_engine()
         data_dict = {}
-        
-        for symbol in symbols:
-            try:
-                md = load_local_market_data(symbol, timeframe, start_date, end_date, exchange, trade_type)
-                if md is not None and not md.empty:
-                    data_dict[symbol] = md
-            except Exception as e:
-                print(f"加载 {symbol} 失败: {e}")
-        
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        load_workers = min(len(symbols), 8)
+        with ThreadPoolExecutor(max_workers=load_workers) as loader:
+            load_futures = {
+                loader.submit(load_local_market_data, s, timeframe, start_date, end_date, exchange, trade_type): s
+                for s in symbols
+            }
+            for future in as_completed(load_futures):
+                sym = load_futures[future]
+                try:
+                    md = future.result()
+                    if md is not None and not md.empty:
+                        data_dict[sym] = md
+                except Exception as e:
+                    print(f"加载 {sym} 失败: {e}")
+
         if len(data_dict) < 2:
             return jsonify({
                 'success': False,
                 'message': f'加载到有效市场数据的币种仅 {len(data_dict)} 个，截面组合回测至少需要 2 个'
             })
-        
+
         prep_evaluator = CrossSectionalEvaluator(
             n_groups=n_groups,
             normalize_method='rank',
             predict_step=predict_step,
-            sample_step=1,
+            sample_step=sample_step,
             base_timeframe=timeframe,
             factor_timeframe=factor_timeframe,
             factor_bar_mode=factor_bar_mode,
@@ -1509,8 +2033,11 @@ def ensemble_backtest():
 
         all_factors = {}
         for factor_id in factor_ids:
+            if cancel_event.is_set():
+                return jsonify({'success': False, 'message': '组合回测已取消', 'cancelled': True})
             try:
-                cs_df = prep_evaluator.prepare_cross_sectional_data(data_dict, factor_id, engine)
+                cs_df = prep_evaluator.prepare_cross_sectional_data(
+                    data_dict, factor_id, engine)
                 if cs_df is None or cs_df.empty:
                     continue
                 for symbol in cs_df['symbol'].unique():
@@ -1534,28 +2061,44 @@ def ensemble_backtest():
                 'message': '无法计算因子值'
             })
 
-        for symbol, factors_df in all_factors_dfs.items():
-            for fid in factors_df.columns:
-                if auto_reverse:
-                    ic_value = factor_ic_dict.get(fid, 0)
+        # 仅对线性等权 / IC 加权方法做"按 IC 符号反转"的预处理。
+        # ml_weight / max_icir_weight 让优化器自行学习正负权重，避免重复反转或方向冲突。
+        method_uses_reverse = ensemble_method in (
+            'equal_weight', 'ic_weight') and auto_reverse
+        if method_uses_reverse:
+            for symbol, factors_df in all_factors_dfs.items():
+                for fid in factors_df.columns:
+                    try:
+                        ic_value = float(factor_ic_dict.get(fid, 0) or 0)
+                    except (TypeError, ValueError):
+                        ic_value = 0.0
                     if ic_value < 0:
                         factors_df[fid] = -factors_df[fid]
-        
+
         ensemble_factors = {}
         reversed_factors = []
+        max_icir_weights_per_symbol = {}
+
+        # 保存原始 IC 字典，用于后续判断反转方向（ic_source='backtest' 模式下会更新 factor_ic_dict）
+        original_ic_dict = dict(factor_ic_dict)
 
         if ic_source == 'backtest' and ensemble_method == 'ic_weight':
             recalc_ic_dict = {}
             for fid in factor_ids:
+                if cancel_event.is_set():
+                    return jsonify({'success': False, 'message': '组合回测已取消', 'cancelled': True})
                 all_fv = []
                 all_rt = []
                 for sym, fdf in all_factors_dfs.items():
                     if fid in fdf.columns:
                         md = data_dict[sym].copy().sort_index()
-                        md['future_returns'] = md['close'].pct_change(periods=predict_step).shift(-predict_step)
+                        md['future_returns'] = md['close'].pct_change(
+                            periods=predict_step).shift(-predict_step)
                         common_idx = fdf[fid].index.intersection(md.index)
                         if len(common_idx) > 0:
-                            fv = fdf.loc[common_idx, fid].shift(1)
+                            # prepare_cross_sectional_data 已完成 trade_shift 对齐，
+                            # 这里直接复用同口径因子值，避免重算 IC 时额外滞后一期。
+                            fv = fdf.loc[common_idx, fid]
                             rt = md.loc[common_idx, 'future_returns']
                             mask = fv.notna() & rt.notna()
                             if mask.sum() > 10:
@@ -1563,7 +2106,8 @@ def ensemble_backtest():
                                 all_rt.extend(rt[mask].values.tolist())
                 if len(all_fv) >= 20:
                     try:
-                        ic_val = float(pd.Series(all_fv).corr(pd.Series(all_rt)))
+                        ic_val = float(
+                            pd.Series(all_fv).corr(pd.Series(all_rt)))
                         if np.isfinite(ic_val):
                             recalc_ic_dict[fid] = ic_val
                         else:
@@ -1581,14 +2125,14 @@ def ensemble_backtest():
                 ic_val = float(factor_ic_dict.get(fid, 0.0))
             except (TypeError, ValueError):
                 ic_val = 0.0
-            if auto_reverse:
-                weight_ic = abs(ic_val)
-            else:
-                weight_ic = ic_val
+            # 权重始终使用 |IC| 表示“强度”；方向是否反转仅由 auto_reverse 控制。
+            # 否则 auto_reverse=False 时负权重仍会隐式把负 IC 因子反向使用。
+            weight_ic = abs(ic_val)
             ic_weight_map[fid] = weight_ic
             abs_ic_sum += abs(weight_ic)
         if abs_ic_sum > 0:
-            ic_weight_map = {k: v / abs_ic_sum for k, v in ic_weight_map.items()}
+            ic_weight_map = {k: v / abs_ic_sum for k,
+                             v in ic_weight_map.items()}
         else:
             eq_w = 1.0 / max(len(factor_ids), 1)
             ic_weight_map = {fid: eq_w for fid in factor_ids}
@@ -1599,39 +2143,47 @@ def ensemble_backtest():
                 if ensemble_method == 'equal_weight':
                     ensemble_factor = factors_df.mean(axis=1)
                 elif ensemble_method == 'ic_weight':
-                    active_cols = [c for c in factors_df.columns if c in ic_weight_map]
+                    active_cols = [
+                        c for c in factors_df.columns if c in ic_weight_map]
                     if not active_cols:
                         ensemble_factor = factors_df.mean(axis=1)
                     else:
-                        weights = np.array([ic_weight_map[c] for c in active_cols], dtype=float)
+                        weights = np.array([ic_weight_map[c]
+                                           for c in active_cols], dtype=float)
                         weight_sum = float(weights.sum())
                         if weight_sum <= 0:
-                            ensemble_factor = factors_df[active_cols].mean(axis=1)
+                            ensemble_factor = factors_df[active_cols].mean(
+                                axis=1)
                         else:
                             weights = weights / weight_sum
-                            ensemble_factor = factors_df[active_cols].mul(weights, axis=1).sum(axis=1)
+                            ensemble_factor = factors_df[active_cols].mul(
+                                weights, axis=1).sum(axis=1)
                 elif ensemble_method == 'ml_weight':
                     md = market_data.copy().sort_index()
-                    ml_returns = md['close'].pct_change(periods=predict_step).shift(-predict_step)
+                    ml_returns = md['close'].pct_change(
+                        periods=predict_step).shift(-predict_step)
                     optimizer = FactorOptimizer()
                     optimizer.set_data(None, ml_returns)
-                    ensemble_factor = optimizer._create_ml_weighted_factor_walk_forward(factors_df)
+                    ensemble_factor = optimizer._create_ml_weighted_factor_walk_forward(
+                        factors_df)
                 elif ensemble_method in ('max_icir_weight', 'max_icir'):
                     md = market_data.copy().sort_index()
-                    icir_returns = md['close'].pct_change(periods=predict_step).shift(-predict_step)
+                    icir_returns = md['close'].pct_change(
+                        periods=predict_step).shift(-predict_step)
                     optimizer = FactorOptimizer()
                     optimizer.set_data(None, icir_returns)
-                    ensemble_factor = optimizer.create_ensemble_factor(
+                    ensemble_factor, sym_weights = optimizer._create_max_icir_weighted_factor(
                         factors_df,
-                        method='max_icir_weight'
+                        return_weights=True
                     )
+                    max_icir_weights_per_symbol[symbol] = sym_weights
                 else:
                     ensemble_factor = factors_df.mean(axis=1)
-                
+
                 ensemble_factors[symbol] = ensemble_factor
             except Exception as e:
                 print(f"创建组合因子 {symbol} 失败: {e}")
-        
+
         if not ensemble_factors:
             return jsonify({
                 'success': False,
@@ -1648,7 +2200,8 @@ def ensemble_backtest():
             try:
                 md = market_data.copy().sort_index()
                 md['future_returns'] = (
-                    md['close'].pct_change(periods=predict_step).shift(-predict_step)
+                    md['close'].pct_change(
+                        periods=predict_step).shift(-predict_step)
                 )
                 common_idx = ensemble_factor.index.intersection(md.index)
                 if len(common_idx) == 0:
@@ -1680,22 +2233,24 @@ def ensemble_backtest():
 
         cs_data = pd.concat(cs_rows, ignore_index=True)
         cs_data['date'] = pd.to_datetime(cs_data['date'])
-        if sample_step > 1 and not cs_data.empty:
-            sampled_dates = pd.DatetimeIndex(sorted(cs_data['date'].drop_duplicates())).to_series().iloc[::sample_step]
-            cs_data = cs_data[cs_data['date'].isin(sampled_dates.values)]
+        # 注意：sample_step 已在 prep_evaluator.prepare_cross_sectional_data 中按时间稀疏，
+        # 这里不再重复二次过滤，避免间隔翻倍。
 
         cs_evaluator = CrossSectionalEvaluator(
             n_groups=effective_n_groups,
             normalize_method='rank',
             predict_step=predict_step,
-            sample_step=sample_step,
+            # cs_data 已由 prepare_cross_sectional_data 按 sample_step 做过稀疏，
+            # 这里传入 sample_step=1 避免 calculate_cross_sectional_ic/returns 内部再次过滤
+            sample_step=1,
             min_coverage=min_coverage,
             min_valid_count=min_valid_count,
             min_group_size=min_group_size,
             treat_zero_as_invalid=treat_zero_as_invalid,
         )
         ic_results = cs_evaluator.calculate_cross_sectional_ic(cs_data)
-        returns_results = cs_evaluator.calculate_cross_sectional_returns(cs_data, timeframe=timeframe, transaction_cost=transaction_cost)
+        returns_results = cs_evaluator.calculate_cross_sectional_returns(
+            cs_data, timeframe=timeframe, transaction_cost=transaction_cost)
 
         performance_summary = {
             'CROSS_SECTIONAL_LS': {
@@ -1711,8 +2266,10 @@ def ensemble_backtest():
         }
 
         if auto_reverse:
-            reversed_factors = [fid for fid in factor_ids if float(factor_ic_dict.get(fid, 0) or 0) < 0]
-        
+            # 使用原始 IC 字典判断反转方向，避免 ic_source='backtest' 更新后导致列表为空
+            reversed_factors = [fid for fid in factor_ids if float(
+                original_ic_dict.get(fid, 0) or 0) < 0]
+
         def _clean_nan(obj):
             import math
             if isinstance(obj, dict):
@@ -1723,7 +2280,38 @@ def ensemble_backtest():
                 return None
             else:
                 return obj
-        
+
+        factor_weight_map = None
+        if ensemble_method == 'equal_weight':
+            eq_w = 1.0 / max(len(factor_ids), 1)
+            factor_weight_map = {fid: eq_w for fid in factor_ids}
+        elif ensemble_method == 'ic_weight':
+            factor_weight_map = ic_weight_map
+        elif ensemble_method in ('max_icir_weight', 'max_icir') and max_icir_weights_per_symbol:
+            # 多 symbol 时，max_icir_weight 是按 symbol 分别求解的。
+            # 这里对各 symbol 的权重做算术平均后再 L1 归一化，作为可导出的全局静态权重。
+            agg = {fid: 0.0 for fid in factor_ids}
+            counts = {fid: 0 for fid in factor_ids}
+            for _sym, w_map in max_icir_weights_per_symbol.items():
+                for fid, w in (w_map or {}).items():
+                    if fid in agg:
+                        try:
+                            agg[fid] += float(w)
+                            counts[fid] += 1
+                        except (TypeError, ValueError):
+                            continue
+            avg_weights = {
+                fid: (agg[fid] / counts[fid]) if counts[fid] > 0 else 0.0
+                for fid in factor_ids
+            }
+            l1 = sum(abs(v) for v in avg_weights.values())
+            if l1 > 0:
+                factor_weight_map = {
+                    fid: v / l1 for fid, v in avg_weights.items()}
+            else:
+                eq_w = 1.0 / max(len(factor_ids), 1)
+                factor_weight_map = {fid: eq_w for fid in factor_ids}
+
         return jsonify({
             'success': True,
             'ensemble_method': ensemble_method,
@@ -1734,12 +2322,14 @@ def ensemble_backtest():
             'cross_sectional_ic': _clean_nan(ic_results),
             'cross_sectional_performance': _clean_nan(returns_results),
             'factor_ids': factor_ids,
+            'factor_weight_map': _clean_nan(factor_weight_map),
             'reversed_factors': reversed_factors,
             'predict_step': predict_step,
             'sample_step': sample_step,
-            'n_groups_effective': effective_n_groups
+            'n_groups_effective': effective_n_groups,
+            'request_id': request_id,
         })
-        
+
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -1747,6 +2337,12 @@ def ensemble_backtest():
             'success': False,
             'message': f'组合回测失败: {str(e)}'
         })
+    finally:
+        try:
+            _discard_cancel_event(request_id)
+        except Exception:
+            pass
+
 
 @bp.route('/factor_correlation', methods=['POST'])
 def factor_correlation():
@@ -1756,6 +2352,7 @@ def factor_correlation():
     - 计算因子间的 Pearson 和 Spearman 相关系数
     - 返回相关性矩阵和高相关因子对
     """
+    request_id = _LEGACY_CANCEL_ID
     try:
         import numpy as np
 
@@ -1770,6 +2367,38 @@ def factor_correlation():
         exchange = payload.get('exchange', 'binance')
         trade_type = payload.get('trade_type', 'futures')
         corr_threshold = payload.get('corr_threshold', 0.7)
+        # 与截面评估保持一致的因子计算配置（解决因子值口径不同导致的相关性失真）
+        factor_timeframe = payload.get('factor_timeframe', timeframe)
+        factor_bar_mode = str(payload.get(
+            'factor_bar_mode', 'completed')).lower()
+        max_lookback = payload.get('max_lookback', 200)
+        predict_step = payload.get('predict_step', 1)
+        sample_step = payload.get('sample_step', 1)
+        min_coverage = payload.get('min_coverage', 0.3)
+        min_valid_count = payload.get('min_valid_count', 30)
+        min_group_size = payload.get('min_group_size', 5)
+        treat_zero_as_invalid = payload.get('treat_zero_as_invalid', True)
+        request_id = str(payload.get('request_id')
+                         or '').strip() or _LEGACY_CANCEL_ID
+
+        try:
+            corr_threshold = float(corr_threshold)
+        except (TypeError, ValueError):
+            corr_threshold = 0.7
+        if not (0 < corr_threshold <= 1):
+            corr_threshold = 0.7
+
+        try:
+            max_lookback = int(max_lookback)
+        except (TypeError, ValueError):
+            max_lookback = 200
+        if max_lookback < 1:
+            max_lookback = 200
+        if max_lookback > 5000:
+            return jsonify({
+                'success': False,
+                'message': '参数 max_lookback 不能大于 5000（建议 100-500）'
+            }), 400
 
         if not factor_ids or len(factor_ids) < 2:
             return jsonify({
@@ -1789,15 +2418,27 @@ def factor_correlation():
                 'message': '请选择时间范围'
             })
 
+        cancel_event = _get_cancel_event(request_id)
+        cancel_event.clear()
+
         engine = get_global_engine()
         data_dict = {}
-        for symbol in symbols:
-            try:
-                md = load_local_market_data(symbol, timeframe, start_date, end_date, exchange, trade_type)
-                if md is not None and not md.empty:
-                    data_dict[symbol] = md
-            except Exception:
-                continue
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        load_workers = min(len(symbols), 8)
+        with ThreadPoolExecutor(max_workers=load_workers) as loader:
+            load_futures = {
+                loader.submit(load_local_market_data, s, timeframe, start_date, end_date, exchange, trade_type): s
+                for s in symbols
+            }
+            for future in as_completed(load_futures):
+                sym = load_futures[future]
+                try:
+                    md = future.result()
+                    if md is not None and not md.empty:
+                        data_dict[sym] = md
+                except Exception:
+                    continue
 
         if len(data_dict) < 2:
             return jsonify({
@@ -1805,68 +2446,86 @@ def factor_correlation():
                 'message': '成功加载市场数据的币种不足2个'
             })
 
-        all_factor_data = {}
-        for symbol, market_data in data_dict.items():
-            symbol_factors = {}
-            for factor_id in factor_ids:
-                try:
-                    factor_values = engine.compute_single_factor(factor_id, market_data)
-                    if factor_values is not None:
-                        if auto_reverse:
-                            ic_value = factor_ic_dict.get(factor_id, 0)
-                            if ic_value < 0:
-                                factor_values = -factor_values
-                        symbol_factors[factor_id] = factor_values
-                except Exception:
-                    continue
-            if symbol_factors:
-                all_factor_data[symbol] = symbol_factors
+        # 使用与截面评估相同的预处理流水线（trade_shift / 数据清洗 / 异常值处理 / sample_step 等），
+        # 保证相关性矩阵反映的是"评估时实际使用的因子值"。
+        prep_evaluator = CrossSectionalEvaluator(
+            n_groups=5,
+            normalize_method='rank',
+            predict_step=predict_step,
+            sample_step=sample_step,
+            base_timeframe=timeframe,
+            factor_timeframe=factor_timeframe,
+            factor_bar_mode=factor_bar_mode,
+            max_lookback=max_lookback,
+            min_coverage=min_coverage,
+            min_valid_count=min_valid_count,
+            min_group_size=min_group_size,
+            treat_zero_as_invalid=treat_zero_as_invalid,
+        )
 
-        if len(all_factor_data) < 2:
-            return jsonify({
-                'success': False,
-                'message': '成功计算因子值的币种不足2个'
-            })
-
-        combined_rows = []
-        for symbol, factors in all_factor_data.items():
+        # rows: list of DataFrame[date, symbol, factor_id -> value]
+        long_rows = []
+        used_symbols = set()
+        for factor_id in factor_ids:
+            if cancel_event.is_set():
+                return jsonify({'success': False, 'message': '相关性计算已取消', 'cancelled': True})
             try:
-                max_len = max(len(v) for v in factors.values())
-                ref_key = max(factors.keys(), key=lambda k: len(factors[k]))
-                ref_index = factors[ref_key].index
-                row_data = {'symbol': symbol}
-                for fid, fv in factors.items():
-                    aligned = fv.reindex(ref_index)
-                    row_data[fid] = aligned
-                df = pd.DataFrame(row_data, index=ref_index)
-                combined_rows.append(df)
-            except Exception:
+                cs_df = prep_evaluator.prepare_cross_sectional_data(
+                    data_dict, factor_id, engine)
+            except Exception as ex:
+                print(f"[corr] 因子 {factor_id} 截面数据准备失败: {ex}")
                 continue
+            if cs_df is None or cs_df.empty:
+                continue
+            sub = cs_df[['date', 'symbol', 'factor_value']].copy()
+            if auto_reverse:
+                try:
+                    ic_value = float(factor_ic_dict.get(factor_id, 0) or 0)
+                except (TypeError, ValueError):
+                    ic_value = 0.0
+                if ic_value < 0:
+                    sub['factor_value'] = -sub['factor_value']
+            sub = sub.rename(columns={'factor_value': factor_id})
+            used_symbols.update(sub['symbol'].unique().tolist())
+            long_rows.append(sub)
 
-        if not combined_rows:
+        if len(long_rows) < 2:
             return jsonify({
                 'success': False,
-                'message': '无法构建因子数据'
+                'message': '成功计算因子值的因子不足 2 个，无法计算相关性'
             })
 
-        combined = pd.concat(combined_rows, axis=0)
-        factor_cols = [fid for fid in factor_ids if fid in combined.columns]
+        # 在 (date, symbol) 维度合并所有因子，构成宽表
+        merged = long_rows[0]
+        for nxt in long_rows[1:]:
+            merged = merged.merge(nxt, on=['date', 'symbol'], how='outer')
+
+        factor_cols = [fid for fid in factor_ids if fid in merged.columns]
         if len(factor_cols) < 2:
             return jsonify({
                 'success': False,
                 'message': '有效因子不足2个'
             })
 
-        factor_matrix = combined[factor_cols].dropna()
+        # 使用 pairwise 模式：不做全行 dropna，让 pandas 按因子对删除缺失值，
+        # 避免某个因子缺失值过多时大量丢失其他因子的有效行。
+        factor_matrix_full = merged[factor_cols]
 
-        if len(factor_matrix) < 10:
+        # 最小样本检查：至少需要已有 10 行痞不为 NaN 的数据
+        min_required = max(int(min_valid_count), 10)
+        non_null_counts = factor_matrix_full.count()
+        if non_null_counts.min() < min_required:
             return jsonify({
                 'success': False,
-                'message': f'有效数据点不足（{len(factor_matrix)} < 10）'
+                'message': f'有因子有效数据点不足（最少 {non_null_counts.min()} ＜ {min_required}），请检查因子或数据覆盖率'
             })
 
-        pearson_corr = factor_matrix.corr(method='pearson')
-        spearman_corr = factor_matrix.corr(method='spearman')
+        n_data_points = int(factor_matrix_full.dropna().shape[0])  # 仅用于展示
+
+        pearson_corr = factor_matrix_full.corr(
+            method='pearson', min_periods=min_required)
+        spearman_corr = factor_matrix_full.corr(
+            method='spearman', min_periods=min_required)
 
         pearson_matrix = []
         spearman_matrix = []
@@ -1876,25 +2535,32 @@ def factor_correlation():
             for j, fid_j in enumerate(factor_cols):
                 p_val = pearson_corr.iloc[i, j]
                 s_val = spearman_corr.iloc[i, j]
-                pearson_row.append(float(p_val) if np.isfinite(p_val) else None)
-                spearman_row.append(float(s_val) if np.isfinite(s_val) else None)
+                pearson_row.append(
+                    float(p_val) if np.isfinite(p_val) else None)
+                spearman_row.append(
+                    float(s_val) if np.isfinite(s_val) else None)
             pearson_matrix.append(pearson_row)
             spearman_matrix.append(spearman_row)
 
+        # 高相关识别：取 max(|pearson|, |spearman|)，更全面捕捉线性 + 单调相关
         high_corr_pairs = []
         for i in range(len(factor_cols)):
             for j in range(i + 1, len(factor_cols)):
                 p_val = pearson_matrix[i][j]
                 s_val = spearman_matrix[i][j]
-                if p_val is not None and abs(p_val) >= corr_threshold:
+                p_abs = abs(p_val) if p_val is not None else 0.0
+                s_abs = abs(s_val) if s_val is not None else 0.0
+                composite = max(p_abs, s_abs)
+                if composite >= corr_threshold:
                     high_corr_pairs.append({
                         'factor_1': factor_cols[i],
                         'factor_2': factor_cols[j],
                         'pearson': p_val,
                         'spearman': s_val,
+                        'max_abs': composite,
                     })
 
-        high_corr_pairs.sort(key=lambda x: abs(x['pearson']), reverse=True)
+        high_corr_pairs.sort(key=lambda x: x['max_abs'], reverse=True)
 
         def _clean_nan(obj):
             import math
@@ -1910,12 +2576,13 @@ def factor_correlation():
         return jsonify(_clean_nan({
             'success': True,
             'factor_ids': factor_cols,
-            'n_symbols': len(all_factor_data),
-            'n_data_points': len(factor_matrix),
+            'n_symbols': len(used_symbols),
+            'n_data_points': n_data_points,
             'pearson_matrix': pearson_matrix,
             'spearman_matrix': spearman_matrix,
             'high_corr_pairs': high_corr_pairs,
             'corr_threshold': corr_threshold,
+            'request_id': request_id,
         }))
 
     except Exception as e:
@@ -1925,6 +2592,1005 @@ def factor_correlation():
             'success': False,
             'message': f'相关性计算失败: {str(e)}'
         })
+    finally:
+        try:
+            _discard_cancel_event(request_id)
+        except Exception:
+            pass
+
+
+@bp.route('/factor_ic_correlation', methods=['POST'])
+def factor_ic_correlation():
+    """
+    计算因子间 Rank IC 时序相关性（方案 B+）
+
+    不同于 /factor_correlation 以"因子值"为维度的截面相关性，这里以"每个时间点
+    的 Rank IC"为维度，衡量两个因子在"对未来收益率的截面预测"这件事上是否
+    同步波动。Rank IC 相关高 => 两个因子贡献的 alpha 源几乎同质。
+    """
+    request_id = _LEGACY_CANCEL_ID
+    try:
+        import numpy as np
+
+        payload = request.get_json() or {}
+        factor_ids = payload.get('factor_ids', [])
+        symbols = payload.get('symbols', [])
+        timeframe = payload.get('timeframe', '1h')
+        start_date = payload.get('start_date')
+        end_date = payload.get('end_date')
+        exchange = payload.get('exchange', 'binance')
+        trade_type = payload.get('trade_type', 'futures')
+        corr_threshold = payload.get('corr_threshold', 0.7)
+        factor_timeframe = payload.get('factor_timeframe', timeframe)
+        factor_bar_mode = str(payload.get(
+            'factor_bar_mode', 'completed')).lower()
+        max_lookback = payload.get('max_lookback', 200)
+        predict_step = payload.get('predict_step', 1)
+        sample_step = payload.get('sample_step', 1)
+        min_coverage = payload.get('min_coverage', 0.3)
+        min_valid_count = payload.get('min_valid_count', 30)
+        min_group_size = payload.get('min_group_size', 5)
+        treat_zero_as_invalid = payload.get('treat_zero_as_invalid', True)
+        n_ic_segments = payload.get('n_ic_segments', 4)
+        request_id = str(payload.get('request_id')
+                         or '').strip() or _LEGACY_CANCEL_ID
+
+        try:
+            corr_threshold = float(corr_threshold)
+        except (TypeError, ValueError):
+            corr_threshold = 0.7
+        if not (0 < corr_threshold <= 1):
+            corr_threshold = 0.7
+
+        try:
+            max_lookback = int(max_lookback)
+        except (TypeError, ValueError):
+            max_lookback = 200
+        if max_lookback < 1:
+            max_lookback = 200
+        if max_lookback > 5000:
+            return jsonify({
+                'success': False,
+                'message': '参数 max_lookback 不能大于 5000（建议 100-500）'
+            }), 400
+
+        try:
+            n_ic_segments = int(n_ic_segments)
+        except (TypeError, ValueError):
+            n_ic_segments = 4
+
+        if not factor_ids or len(factor_ids) < 2:
+            return jsonify({
+                'success': False,
+                'message': '至少需要选择 2 个因子才能计算 IC 时序相关性'
+            }), 400
+
+        if not symbols or len(symbols) < 2:
+            return jsonify({
+                'success': False,
+                'message': '至少需要 2 个币种来计算截面 IC'
+            }), 400
+
+        if not start_date or not end_date:
+            return jsonify({
+                'success': False,
+                'message': '请选择时间范围'
+            })
+
+        cancel_event = _get_cancel_event(request_id)
+        cancel_event.clear()
+
+        engine = get_global_engine()
+        data_dict = {}
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        load_workers = min(len(symbols), 8)
+        with ThreadPoolExecutor(max_workers=load_workers) as loader:
+            load_futures = {
+                loader.submit(load_local_market_data, s, timeframe, start_date, end_date, exchange, trade_type): s
+                for s in symbols
+            }
+            for future in as_completed(load_futures):
+                sym = load_futures[future]
+                try:
+                    md = future.result()
+                    if md is not None and not md.empty:
+                        data_dict[sym] = md
+                except Exception:
+                    continue
+
+        if len(data_dict) < 2:
+            return jsonify({
+                'success': False,
+                'message': '成功加载市场数据的币种不足 2 个'
+            })
+
+        prep_evaluator = CrossSectionalEvaluator(
+            n_groups=5,
+            normalize_method='rank',
+            predict_step=predict_step,
+            sample_step=sample_step,
+            base_timeframe=timeframe,
+            factor_timeframe=factor_timeframe,
+            factor_bar_mode=factor_bar_mode,
+            max_lookback=max_lookback,
+            min_coverage=min_coverage,
+            min_valid_count=min_valid_count,
+            min_group_size=min_group_size,
+            treat_zero_as_invalid=treat_zero_as_invalid,
+            n_ic_segments=n_ic_segments,
+        )
+
+        # 收集每个因子的 Rank IC 时序 -> Series(index=date, values=rank_ic)
+        rank_ic_series_map = {}
+        usable_factor_ids = []
+        failed_factor_ids = []
+        for factor_id in factor_ids:
+            if cancel_event.is_set():
+                return jsonify({
+                    'success': False,
+                    'message': 'IC 时序相关性计算已取消',
+                    'cancelled': True,
+                })
+            try:
+                cs_df = prep_evaluator.prepare_cross_sectional_data(
+                    data_dict, factor_id, engine)
+                if cs_df is None or cs_df.empty:
+                    failed_factor_ids.append(factor_id)
+                    continue
+                ic_res = prep_evaluator.calculate_cross_sectional_ic(cs_df)
+                series_list = ic_res.get('rank_ic_series') or []
+                if not series_list:
+                    failed_factor_ids.append(factor_id)
+                    continue
+                dates = []
+                values = []
+                for item in series_list:
+                    try:
+                        d = pd.Timestamp(item.get('date'))
+                    except Exception:
+                        continue
+                    v = item.get('rank_ic')
+                    if v is None or not np.isfinite(v):
+                        continue
+                    dates.append(d)
+                    values.append(float(v))
+                if len(values) < max(int(min_valid_count // 2), 10):
+                    failed_factor_ids.append(factor_id)
+                    continue
+                s = pd.Series(values, index=pd.DatetimeIndex(dates))
+                s = s[~s.index.duplicated(keep='last')].sort_index()
+                rank_ic_series_map[factor_id] = s
+                usable_factor_ids.append(factor_id)
+            except Exception as ex:
+                print(f"[ic_corr] 因子 {factor_id} Rank IC 时序准备失败: {ex}")
+                failed_factor_ids.append(factor_id)
+                continue
+
+        if len(usable_factor_ids) < 2:
+            return jsonify({
+                'success': False,
+                'message': (
+                    f'成功计算 Rank IC 时序的因子不足 2 个（可用 {len(usable_factor_ids)}，'
+                    f'失败 {len(failed_factor_ids)}）'
+                ),
+                'failed_factor_ids': failed_factor_ids,
+            })
+
+        # 对齐所有因子的 Rank IC 时间序列为宽表（index=date, columns=factor_id）
+        rank_ic_wide = pd.concat(
+            [rank_ic_series_map[fid].rename(fid) for fid in usable_factor_ids],
+            axis=1,
+            join='outer',
+        ).sort_index()
+
+        # 只保留全部因子都有 IC 的时间点（确保相关性口径一致）
+        complete = rank_ic_wide.dropna(how='any')
+        # 若共同有效时点过少（极端工况），退化为成对删除
+        if len(complete) < 30 and len(rank_ic_wide) >= 30:
+            pearson_corr = rank_ic_wide.corr(method='pearson', min_periods=30)
+            spearman_corr = rank_ic_wide.corr(
+                method='spearman', min_periods=30)
+            n_aligned = int(len(rank_ic_wide))
+            alignment_mode = 'pairwise'
+        else:
+            pearson_corr = complete.corr(method='pearson')
+            spearman_corr = complete.corr(method='spearman')
+            n_aligned = int(len(complete))
+            alignment_mode = 'intersection'
+
+        factor_cols = list(usable_factor_ids)
+        pearson_matrix = []
+        spearman_matrix = []
+        for i, fid_i in enumerate(factor_cols):
+            prow = []
+            srow = []
+            for j, fid_j in enumerate(factor_cols):
+                p_val = pearson_corr.loc[fid_i,
+                                         fid_j] if fid_i in pearson_corr.index and fid_j in pearson_corr.columns else np.nan
+                s_val = spearman_corr.loc[fid_i,
+                                          fid_j] if fid_i in spearman_corr.index and fid_j in spearman_corr.columns else np.nan
+                prow.append(float(p_val) if np.isfinite(p_val) else None)
+                srow.append(float(s_val) if np.isfinite(s_val) else None)
+            pearson_matrix.append(prow)
+            spearman_matrix.append(srow)
+
+        high_corr_pairs = []
+        for i in range(len(factor_cols)):
+            for j in range(i + 1, len(factor_cols)):
+                p_val = pearson_matrix[i][j]
+                s_val = spearman_matrix[i][j]
+                p_abs = abs(p_val) if p_val is not None else 0.0
+                s_abs = abs(s_val) if s_val is not None else 0.0
+                composite = max(p_abs, s_abs)
+                if composite >= corr_threshold:
+                    high_corr_pairs.append({
+                        'factor_1': factor_cols[i],
+                        'factor_2': factor_cols[j],
+                        'pearson': p_val,
+                        'spearman': s_val,
+                        'max_abs': composite,
+                    })
+        high_corr_pairs.sort(key=lambda x: x['max_abs'], reverse=True)
+
+        def _clean_nan(obj):
+            import math
+            if isinstance(obj, dict):
+                return {k: _clean_nan(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [_clean_nan(v) for v in obj]
+            elif isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+                return None
+            else:
+                return obj
+
+        return jsonify(_clean_nan({
+            'success': True,
+            'mode': 'rank_ic_series',
+            'factor_ids': factor_cols,
+            'failed_factor_ids': failed_factor_ids,
+            'n_aligned_periods': n_aligned,
+            'alignment_mode': alignment_mode,
+            'pearson_matrix': pearson_matrix,
+            'spearman_matrix': spearman_matrix,
+            'high_corr_pairs': high_corr_pairs,
+            'corr_threshold': corr_threshold,
+            'request_id': request_id,
+        }))
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'message': f'IC 时序相关性计算失败: {str(e)}'
+        })
+    finally:
+        try:
+            _discard_cancel_event(request_id)
+        except Exception:
+            pass
+
+
+# ============================================================================
+# 方法对比（walk-forward 对照实验）
+# ----------------------------------------------------------------------------
+# 在完全相同的 rolling (train, oos) 切分上，对三种组合权重估计方法：
+#   - equal_weight
+#   - ic_weight           （训练段平均 Rank IC，L1 归一化）
+#   - max_icir_weight     （训练段 μ=mean IC, Σ=cov(IC)；w=project_l1(Σ⁻¹ μ)）
+# 进行严格样本外比较，返回每种方法的 OOS 累计收益曲线、聚合指标与两两配对 t 检验。
+# ============================================================================
+
+def _mc_compute_daily_ic_matrix(ranks_by_factor, returns_rank):
+    """
+    vectorized 地计算每日 Rank IC 矩阵（T 行 × N 列）。
+
+    参数：
+        ranks_by_factor: {factor_id: DataFrame(T×S)}，每个因子的截面秩（已对日期做 rank(axis=1)）
+        returns_rank: DataFrame(T×S)，未来收益的截面秩
+    返回：
+        DataFrame(index=date, columns=factor_id)：每日每因子的 Rank IC
+    """
+    ic_cols = {}
+    for fid, rdf in ranks_by_factor.items():
+        # pandas corrwith(..., axis=1) 会按行（每个日期）计算两张表的相关性，
+        # 两张表都已按行 rank → pearson(rank) = spearman = Rank IC
+        try:
+            ic_cols[fid] = rdf.corrwith(returns_rank, axis=1, method='pearson')
+        except Exception:
+            ic_cols[fid] = pd.Series(index=rdf.index, dtype=float)
+    return pd.DataFrame(ic_cols)
+
+
+def _mc_project_l1(w, enforce_non_negative=False):
+    """把一个权重向量归一到 ||w||_1 = 1。全 0 时退化为等权。"""
+    import numpy as np
+    w = np.asarray(w, dtype=float).ravel()
+    if enforce_non_negative:
+        w = np.clip(w, a_min=0.0, a_max=None)
+    s = np.sum(np.abs(w))
+    if not np.isfinite(s) or s <= 0:
+        n = len(w) if len(w) > 0 else 1
+        return np.ones(n) / n
+    return w / s
+
+
+def _mc_compute_weights(ic_train_matrix, method, ridge=1e-6, use_ledoit_wolf=True):
+    """
+    从训练段的 T×N IC 矩阵估一组全局静态权重。
+
+    - equal_weight:     w_i = 1/N
+    - ic_weight:        w_i ∝ mean(IC_i)，L1 归一化
+    - max_icir_weight:  w ∝ Σ⁻¹ μ，L1 归一化
+    """
+    import numpy as np
+    factors = list(ic_train_matrix.columns)
+    n = len(factors)
+    if n == 0:
+        return {}, '空因子'
+
+    if method == 'equal_weight':
+        w = np.ones(n) / n
+        return {f: float(w[i]) for i, f in enumerate(factors)}, None
+
+    mat = ic_train_matrix.to_numpy(dtype=float)
+    # 丢掉 IC 全为 NaN 的行
+    mat = mat[~np.all(~np.isfinite(mat), axis=1)]
+    if mat.shape[0] < max(5, n):
+        # 训练段 IC 行数太少：退化等权
+        w = np.ones(n) / n
+        return {f: float(w[i]) for i, f in enumerate(factors)}, '训练段 IC 行数不足，退化等权'
+
+    # 均值：用 nanmean；NaN 权重按 0 处理
+    mu = np.nanmean(mat, axis=0)
+    mu = np.where(np.isfinite(mu), mu, 0.0)
+
+    if method == 'ic_weight':
+        w = _mc_project_l1(mu, enforce_non_negative=False)
+        return {f: float(w[i]) for i, f in enumerate(factors)}, None
+
+    if method == 'max_icir_weight':
+        # 协方差：用有限行构造
+        finite_mat = np.where(np.isfinite(mat), mat, 0.0)
+        cov = None
+        if use_ledoit_wolf and finite_mat.shape[0] >= max(2, n + 1):
+            try:
+                from sklearn.covariance import LedoitWolf
+                cov = LedoitWolf().fit(finite_mat).covariance_
+            except Exception:
+                cov = None
+        if cov is None:
+            cov = np.cov(finite_mat, rowvar=False)
+        cov = np.asarray(cov, dtype=float)
+        if cov.ndim != 2 or cov.shape[0] != n:
+            w = _mc_project_l1(mu)
+            return {f: float(w[i]) for i, f in enumerate(factors)}, 'cov 估计失败，回退 ic_weight'
+        cov = cov + np.eye(n, dtype=float) * float(ridge)
+        try:
+            raw_w = np.linalg.solve(cov, mu)
+        except np.linalg.LinAlgError:
+            raw_w, *_ = np.linalg.lstsq(cov, mu, rcond=None)
+        w = _mc_project_l1(raw_w, enforce_non_negative=False)
+        return {f: float(w[i]) for i, f in enumerate(factors)}, None
+
+    # 未知方法：等权兜底
+    w = np.ones(n) / n
+    return {f: float(w[i]) for i, f in enumerate(factors)}, f'未知方法 {method}，已退化等权'
+
+
+def _mc_apply_and_measure(ranks_by_factor_oos, returns_pivot_oos, returns_rank_oos,
+                          weights, n_groups, transaction_cost):
+    """
+    给定一组权重，在 OOS 段 ranks / returns 面板上跑组合因子，返回：
+      - 每日 Rank IC Series
+      - 每日多空收益 Series（未扣费）
+      - 每日换手率 Series
+      - 每日多空收益 Series（扣费后）
+    """
+    import numpy as np
+    factors = list(weights.keys())
+    if not factors:
+        return None
+
+    # 合成因子的截面"得分"= Σ w_i * rank_i（秩 in [1, n_symbols]）
+    composite_rank = None
+    for f in factors:
+        w = float(weights.get(f, 0.0))
+        if w == 0:
+            continue
+        rdf = ranks_by_factor_oos.get(f)
+        if rdf is None:
+            continue
+        contrib = rdf * w
+        composite_rank = contrib if composite_rank is None else composite_rank.add(
+            contrib, fill_value=0.0)
+
+    if composite_rank is None or composite_rank.empty:
+        return None
+
+    # 每日 Rank IC = pearson(composite_rank_row, returns_rank_row)
+    # 二者均已是同量纲的秩
+    daily_ic = composite_rank.corrwith(
+        returns_rank_oos, axis=1, method='pearson')
+
+    # 按每日 composite_rank 排序分组 → 多空收益
+    # 每行保留有效列（非 NaN），按分位分组
+    def _long_short_return(row_composite, row_returns):
+        mask = row_composite.notna() & row_returns.notna()
+        if mask.sum() < max(n_groups * 2, 4):
+            return np.nan, np.nan  # long_short, long_weights (None)
+        comp = row_composite[mask]
+        rets = row_returns[mask]
+        n = len(comp)
+        n_per_group = max(1, n // n_groups)
+        order = comp.sort_values(ascending=False)
+        top_syms = order.iloc[:n_per_group].index
+        bot_syms = order.iloc[-n_per_group:].index
+        top_ret = rets.loc[top_syms].mean()
+        bot_ret = rets.loc[bot_syms].mean()
+        return top_ret - bot_ret, (top_syms, bot_syms)
+
+    # 逐日计算并累积，同时记录上一期多空持仓用于 turnover
+    dates = composite_rank.index
+    ls_returns = []
+    turnover_list = []
+    prev_weights = None  # dict {symbol: weight}，多头正、空头负；仓位各自 1/n_per_group
+    for d in dates:
+        comp_row = composite_rank.loc[d]
+        ret_row = returns_pivot_oos.loc[d] if d in returns_pivot_oos.index else None
+        if ret_row is None:
+            ls_returns.append(np.nan)
+            turnover_list.append(np.nan)
+            continue
+        ls, syms = _long_short_return(comp_row, ret_row)
+        ls_returns.append(ls)
+        if isinstance(syms, tuple):
+            top_syms, bot_syms = syms
+            n_long = max(len(top_syms), 1)
+            n_short = max(len(bot_syms), 1)
+            cur_weights = {}
+            for s in top_syms:
+                cur_weights[s] = cur_weights.get(s, 0.0) + 1.0 / n_long
+            for s in bot_syms:
+                cur_weights[s] = cur_weights.get(s, 0.0) - 1.0 / n_short
+            if prev_weights is None:
+                turnover_list.append(np.nan)
+            else:
+                all_syms = set(cur_weights.keys()) | set(prev_weights.keys())
+                diff = sum(abs(cur_weights.get(s, 0.0) -
+                           prev_weights.get(s, 0.0)) for s in all_syms)
+                # 0.5 * L1 差：得到"组合变动比例"，0=不换仓，1=完全换仓
+                turnover_list.append(0.5 * diff)
+            prev_weights = cur_weights
+        else:
+            turnover_list.append(np.nan)
+
+    ls_series = pd.Series(ls_returns, index=dates, dtype=float)
+    turnover_series = pd.Series(turnover_list, index=dates, dtype=float)
+
+    # 扣费：每期扣 turnover * transaction_cost（单边成本；double-sided 可按需调 ×2）
+    cost_cost = turnover_series.fillna(0.0) * float(transaction_cost)
+    ls_after_cost = ls_series - cost_cost
+
+    return {
+        'daily_ic': daily_ic,
+        'long_short_return': ls_series,
+        'long_short_return_after_cost': ls_after_cost,
+        'turnover': turnover_series,
+    }
+
+
+@bp.route('/method_comparison_stream', methods=['POST'])
+def method_comparison_stream():
+    """
+    方法对比：rolling walk-forward 对照实验（SSE 流式）
+
+    请求 JSON：
+    {
+        factor_ids: [..],
+        symbols: [..],
+        timeframe: '1h',
+        start_date, end_date: 'YYYY-MM-DD',
+        predict_step, sample_step, n_groups,
+        min_coverage, min_valid_count, min_group_size,
+        treat_zero_as_invalid, factor_timeframe, factor_bar_mode, max_lookback,
+        train_window_days, oos_window_days, step_days,   # walk-forward 切分
+        transaction_cost,                                 # 交易成本，比如 0.001
+        methods: ['equal_weight', 'ic_weight', 'max_icir_weight']   # 默认全选
+        request_id
+    }
+    """
+    import logging
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from flask import Response, stream_with_context
+    import numpy as np
+
+    logger = logging.getLogger(__name__)
+
+    payload = request.get_json() or {}
+    factor_ids = payload.get('factor_ids') or []
+    symbols = payload.get('symbols') or []
+    timeframe = payload.get('timeframe') or payload.get('base_timeframe', '1h')
+    factor_timeframe = payload.get('factor_timeframe') or timeframe
+    factor_bar_mode = str(payload.get('factor_bar_mode', 'completed')).lower()
+    start_date = payload.get('start_date')
+    end_date = payload.get('end_date')
+    exchange = payload.get('exchange', 'binance')
+    trade_type = payload.get('trade_type', 'futures')
+    predict_step = int(payload.get('predict_step', 1) or 1)
+    sample_step = int(payload.get('sample_step', 1) or 1)
+    n_groups = int(payload.get('n_groups', 5) or 5)
+    max_lookback = int(payload.get('max_lookback', 200) or 200)
+    min_coverage = float(payload.get('min_coverage', 0.3) or 0.3)
+    min_valid_count = int(payload.get('min_valid_count', 30) or 30)
+    min_group_size = int(payload.get('min_group_size', 3) or 3)
+    treat_zero_as_invalid = bool(payload.get('treat_zero_as_invalid', True))
+    train_window_days = float(payload.get('train_window_days', 60) or 60)
+    oos_window_days = float(payload.get('oos_window_days', 14) or 14)
+    step_days = float(payload.get(
+        'step_days', oos_window_days) or oos_window_days)
+    transaction_cost = float(payload.get('transaction_cost', 0.001) or 0.001)
+    methods = payload.get('methods') or [
+        'equal_weight', 'ic_weight', 'max_icir_weight']
+    methods = [m for m in methods if m in (
+        'equal_weight', 'ic_weight', 'max_icir_weight')]
+    if not methods:
+        methods = ['equal_weight', 'ic_weight', 'max_icir_weight']
+    request_id = str(payload.get('request_id')
+                     or '').strip() or _LEGACY_CANCEL_ID
+
+    # ── 基础参数校验 ──
+    if not factor_ids or len(factor_ids) < 2:
+        return jsonify({'success': False, 'message': '至少选择 2 个因子'}), 400
+    if not symbols or len(symbols) < 2:
+        return jsonify({'success': False, 'message': '至少选择 2 个币种'}), 400
+    if not start_date or not end_date:
+        return jsonify({'success': False, 'message': '请选择日期范围'}), 400
+    if train_window_days < 1 or oos_window_days < 1 or step_days < 1:
+        return jsonify({'success': False, 'message': 'train/oos/step 窗口必须 ≥ 1 天'}), 400
+
+    cancel_event = _get_cancel_event(request_id)
+    cancel_event.clear()
+
+    def generate():
+        import time as _time
+        try:
+            t_start = _time.time()
+            total_factors = len(factor_ids)
+            yield _sse_event('progress', {
+                'phase': 'loading',
+                'message': f'准备加载 {len(symbols)} 个币种的市场数据...',
+                'completed': 0,
+                'total': total_factors,
+            })
+
+            engine = get_global_engine()
+
+            # Phase 1: 加载所有 symbol 的市场数据
+            data_dict = {}
+            load_workers = min(len(symbols), 8)
+            with ThreadPoolExecutor(max_workers=load_workers) as pool:
+                futures = {
+                    pool.submit(load_local_market_data, s, timeframe, start_date, end_date, exchange, trade_type): s
+                    for s in symbols
+                }
+                loaded = 0
+                for fut in as_completed(futures):
+                    if cancel_event.is_set():
+                        break
+                    loaded += 1
+                    sym = futures[fut]
+                    try:
+                        md = fut.result()
+                        if md is not None and not md.empty:
+                            data_dict[sym] = md
+                    except Exception as ex:
+                        logger.warning(
+                            f"[method_comparison] 加载 {sym} 失败: {ex}")
+                    if loaded % 5 == 0 or loaded == len(symbols):
+                        yield _sse_event('progress', {
+                            'phase': 'loading',
+                            'message': f'已加载 {loaded}/{len(symbols)}，有效 {len(data_dict)}',
+                            'completed': 0,
+                            'total': total_factors,
+                        })
+
+            if len(data_dict) < 2:
+                yield _sse_event('error', {'message': f'有效币种不足 ({len(data_dict)} < 2)'})
+                yield _sse_event('done', {'success': False})
+                return
+
+            # Phase 2: 对每个因子计算截面面板（date, symbol, factor_value, returns）
+            cs_evaluator = CrossSectionalEvaluator(
+                n_groups=n_groups,
+                normalize_method='rank',
+                predict_step=predict_step,
+                sample_step=sample_step,
+                base_timeframe=timeframe,
+                factor_timeframe=factor_timeframe,
+                factor_bar_mode=factor_bar_mode,
+                max_lookback=max_lookback,
+                min_coverage=min_coverage,
+                min_valid_count=min_valid_count,
+                min_group_size=min_group_size,
+                treat_zero_as_invalid=treat_zero_as_invalid,
+            )
+
+            factor_panels = {}
+            for i, fid in enumerate(factor_ids):
+                if cancel_event.is_set():
+                    yield _sse_event('error', {'message': '已取消'})
+                    yield _sse_event('done', {'success': False})
+                    return
+                try:
+                    cs_df = cs_evaluator.prepare_cross_sectional_data(
+                        data_dict, fid, engine)
+                    if cs_df is None or cs_df.empty:
+                        logger.warning(f"[method_comparison] 因子 {fid} 无可用截面数据")
+                        continue
+                    factor_panels[fid] = cs_df[['date', 'symbol',
+                                                'factor_value', 'returns']].copy()
+                except Exception as ex:
+                    logger.warning(
+                        f"[method_comparison] 因子 {fid} 面板准备失败: {ex}")
+                yield _sse_event('progress', {
+                    'phase': 'preparing',
+                    'message': f'面板准备中 {i+1}/{total_factors}: {fid}',
+                    'completed': i + 1,
+                    'total': total_factors,
+                })
+
+            usable_factors = [f for f in factor_ids if f in factor_panels]
+            if len(usable_factors) < 2:
+                yield _sse_event('error', {'message': f'成功准备面板的因子不足 2 ({len(usable_factors)})'})
+                yield _sse_event('done', {'success': False})
+                return
+
+            # Phase 3: pivot 成 wide form：index=date, columns=symbol, values=factor_i / returns
+            yield _sse_event('progress', {
+                'phase': 'pivoting',
+                'message': f'因子面板 pivot / 排名归一化（{len(usable_factors)} 个因子）...',
+            })
+
+            # returns pivot 取第一个因子的（它们的 returns 应该一致；以交集日期为准）
+            first_panel = factor_panels[usable_factors[0]]
+            returns_pivot = first_panel.pivot_table(
+                index='date', columns='symbol', values='returns', aggfunc='last')
+            returns_pivot = returns_pivot.sort_index()
+
+            ranks_by_factor = {}
+            for fid in usable_factors:
+                p = factor_panels[fid]
+                fv_pivot = p.pivot_table(
+                    index='date', columns='symbol', values='factor_value', aggfunc='last')
+                # 截面秩：对每一行（日期）rank，NaN 保持为 NaN
+                ranks_by_factor[fid] = fv_pivot.rank(axis=1, method='average')
+
+            # 对齐所有因子 + returns 的 (date × symbol) 索引：取公共日期 & 公共 symbol
+            common_dates = returns_pivot.index
+            for rdf in ranks_by_factor.values():
+                common_dates = common_dates.intersection(rdf.index)
+            common_dates = common_dates.sort_values()
+
+            common_symbols = set(returns_pivot.columns)
+            for rdf in ranks_by_factor.values():
+                common_symbols &= set(rdf.columns)
+            common_symbols = sorted(common_symbols)
+            if len(common_dates) < 30 or len(common_symbols) < 3:
+                yield _sse_event('error', {
+                    'message': f'对齐后样本量过少：{len(common_dates)} 个截面 × {len(common_symbols)} 个 symbol'
+                })
+                yield _sse_event('done', {'success': False})
+                return
+
+            returns_pivot = returns_pivot.loc[common_dates, common_symbols]
+            returns_rank = returns_pivot.rank(axis=1, method='average')
+            for fid in usable_factors:
+                ranks_by_factor[fid] = ranks_by_factor[fid].loc[common_dates,
+                                                                common_symbols]
+
+            # Phase 4: 计算全局每日 Rank IC 矩阵（供 train 段直接切片使用）
+            yield _sse_event('progress', {
+                'phase': 'ic_matrix',
+                'message': f'计算每日 Rank IC 矩阵（{len(common_dates)} 天 × {len(usable_factors)} 因子）...',
+            })
+            full_ic_matrix = _mc_compute_daily_ic_matrix(
+                ranks_by_factor, returns_rank)
+
+            # Phase 5: 构造 walk-forward 切分
+            date_index = pd.DatetimeIndex(common_dates)
+            if len(date_index) < 2:
+                yield _sse_event('error', {'message': '日期数不足'})
+                yield _sse_event('done', {'success': False})
+                return
+            t0_date = date_index[0]
+            t_end_date = date_index[-1]
+            train_td = pd.Timedelta(days=float(train_window_days))
+            oos_td = pd.Timedelta(days=float(oos_window_days))
+            step_td = pd.Timedelta(days=float(step_days))
+
+            splits = []
+            train_start = t0_date
+            while True:
+                train_end = train_start + train_td
+                oos_start = train_end
+                oos_end = oos_start + oos_td
+                if oos_end > t_end_date + pd.Timedelta(hours=23):
+                    break
+                splits.append({
+                    'train_start': train_start,
+                    'train_end': train_end,
+                    'oos_start': oos_start,
+                    'oos_end': oos_end,
+                })
+                train_start = train_start + step_td
+
+            if len(splits) == 0:
+                yield _sse_event('error', {
+                    'message': (f'无法构造任何切分。数据范围 {t0_date.date()} ~ {t_end_date.date()}，'
+                                f'train={train_window_days}d + oos={oos_window_days}d 超出范围')
+                })
+                yield _sse_event('done', {'success': False})
+                return
+
+            yield _sse_event('progress', {
+                'phase': 'splitting',
+                'message': f'生成 {len(splits)} 个切分，开始 walk-forward 评估...',
+                'n_splits': len(splits),
+            })
+
+            # Phase 6: 遍历切分 × 方法，计算每段 OOS 指标
+            # list of pd.Series，拼接后得到总 OOS LS 收益
+            per_method_ls = {m: [] for m in methods}
+            per_method_ls_after = {m: [] for m in methods}
+            per_method_ic = {m: [] for m in methods}
+            per_method_turnover = {m: [] for m in methods}
+            per_method_weights_by_split = {m: [] for m in methods}
+
+            for split_idx, sp in enumerate(splits):
+                if cancel_event.is_set():
+                    yield _sse_event('error', {'message': '已取消'})
+                    yield _sse_event('done', {'success': False})
+                    return
+
+                # 训练段：取 full_ic_matrix 中该区间
+                train_mask = (full_ic_matrix.index >= sp['train_start']) & (
+                    full_ic_matrix.index < sp['train_end'])
+                ic_train = full_ic_matrix.loc[train_mask]
+
+                # OOS 段面板切片
+                oos_mask = (common_dates >= sp['oos_start']) & (
+                    common_dates < sp['oos_end'])
+                oos_dates = common_dates[oos_mask]
+                if len(oos_dates) == 0:
+                    continue
+                returns_pivot_oos = returns_pivot.loc[oos_dates]
+                returns_rank_oos = returns_rank.loc[oos_dates]
+                ranks_by_factor_oos = {f: r.loc[oos_dates]
+                                       for f, r in ranks_by_factor.items()}
+
+                for m in methods:
+                    weights, warn_msg = _mc_compute_weights(ic_train, m)
+                    per_method_weights_by_split[m].append({
+                        'split': split_idx + 1,
+                        'train_start': str(sp['train_start']),
+                        'train_end': str(sp['train_end']),
+                        'oos_start': str(sp['oos_start']),
+                        'oos_end': str(sp['oos_end']),
+                        'weights': weights,
+                        'warn': warn_msg,
+                    })
+                    res = _mc_apply_and_measure(
+                        ranks_by_factor_oos, returns_pivot_oos, returns_rank_oos,
+                        weights, n_groups, transaction_cost
+                    )
+                    if res is None:
+                        continue
+                    per_method_ls[m].append(res['long_short_return'])
+                    per_method_ls_after[m].append(
+                        res['long_short_return_after_cost'])
+                    per_method_ic[m].append(res['daily_ic'])
+                    per_method_turnover[m].append(res['turnover'])
+
+                yield _sse_event('progress', {
+                    'phase': 'walking',
+                    'message': (f'切分 {split_idx+1}/{len(splits)}：'
+                                f'train {sp["train_start"].date()}→{sp["train_end"].date()}, '
+                                f'oos {sp["oos_start"].date()}→{sp["oos_end"].date()}'),
+                    'completed': split_idx + 1,
+                    'total': len(splits),
+                })
+
+            # Phase 7: 聚合每个方法的 OOS 指标
+            def _agg_metrics(ls_series, ls_after_series, ic_series, turnover_series):
+                ls = ls_series.dropna() if ls_series is not None else pd.Series(dtype=float)
+                ls_after = ls_after_series.dropna(
+                ) if ls_after_series is not None else pd.Series(dtype=float)
+                ic = ic_series.dropna() if ic_series is not None else pd.Series(dtype=float)
+                tv = turnover_series.dropna() if turnover_series is not None else pd.Series(dtype=float)
+
+                def _sharpe(r):
+                    if len(r) < 2 or r.std() == 0 or not np.isfinite(r.std()):
+                        return None
+                    # 粗略年化常数，前端同口径比较
+                    return float(r.mean() / r.std() * np.sqrt(252))
+
+                def _max_dd(r):
+                    if r.empty:
+                        return None
+                    equity = (1.0 + r).cumprod()
+                    peak = equity.cummax()
+                    dd = (equity - peak) / peak
+                    return float(dd.min()) if not dd.empty else None
+
+                metrics = {
+                    'n_periods': int(len(ls)),
+                    'n_ic_periods': int(len(ic)),
+                    'ic_mean': float(ic.mean()) if not ic.empty else None,
+                    'ic_std': float(ic.std()) if len(ic) >= 2 else None,
+                    'icir': float(ic.mean() / ic.std()) if (len(ic) >= 2 and ic.std() > 0) else None,
+                    'ic_tstat': (float(ic.mean() * np.sqrt(len(ic)) / ic.std())
+                                 if (len(ic) >= 2 and ic.std() > 0) else None),
+                    'ls_return_mean': float(ls.mean()) if not ls.empty else None,
+                    'ls_total_return': float((1.0 + ls).prod() - 1.0) if not ls.empty else None,
+                    'ls_total_return_after_cost': (float((1.0 + ls_after).prod() - 1.0)
+                                                   if not ls_after.empty else None),
+                    'sharpe': _sharpe(ls),
+                    'sharpe_after_cost': _sharpe(ls_after),
+                    'max_drawdown': _max_dd(ls),
+                    'max_drawdown_after_cost': _max_dd(ls_after),
+                    'turnover_mean': float(tv.mean()) if not tv.empty else None,
+                }
+                return metrics
+
+            per_method_summary = {}
+            per_method_curves = {}
+            per_method_dates = {}
+            per_method_ic_agg = {}
+            per_method_ls_agg = {}
+            per_method_ls_after_agg = {}
+            per_method_turnover_agg = {}
+
+            for m in methods:
+                ls_concat = pd.concat(per_method_ls[m]).sort_index(
+                ) if per_method_ls[m] else pd.Series(dtype=float)
+                ls_after_concat = pd.concat(per_method_ls_after[m]).sort_index(
+                ) if per_method_ls_after[m] else pd.Series(dtype=float)
+                ic_concat = pd.concat(per_method_ic[m]).sort_index(
+                ) if per_method_ic[m] else pd.Series(dtype=float)
+                tv_concat = pd.concat(per_method_turnover[m]).sort_index(
+                ) if per_method_turnover[m] else pd.Series(dtype=float)
+
+                # 同一时间戳可能出现在相邻切分的 OOS 边界，保留最后一个
+                ls_concat = ls_concat[~ls_concat.index.duplicated(keep='last')]
+                ls_after_concat = ls_after_concat[~ls_after_concat.index.duplicated(
+                    keep='last')]
+                ic_concat = ic_concat[~ic_concat.index.duplicated(keep='last')]
+                tv_concat = tv_concat[~tv_concat.index.duplicated(keep='last')]
+
+                per_method_summary[m] = _agg_metrics(
+                    ls_concat, ls_after_concat, ic_concat, tv_concat)
+
+                # 累计净值曲线（基于 ls_after_cost）；时间戳 ISO
+                ls_after_plot = ls_after_concat.fillna(0.0)
+                equity_after = (1.0 + ls_after_plot).cumprod()
+                per_method_curves[m] = {
+                    'equity_after_cost': [float(v) for v in equity_after.values],
+                    'equity_before_cost': [float(v) for v in (1.0 + ls_concat.fillna(0.0)).cumprod().values],
+                }
+                per_method_dates[m] = [pd.Timestamp(
+                    d).isoformat() for d in equity_after.index]
+
+                per_method_ic_agg[m] = ic_concat
+                per_method_ls_agg[m] = ls_concat
+                per_method_ls_after_agg[m] = ls_after_concat
+                per_method_turnover_agg[m] = tv_concat
+
+            # Phase 8: 配对 t 检验（基于 ls_after_cost 的同步日期差值）
+            paired_tests = []
+            try:
+                from scipy.stats import ttest_rel, wilcoxon
+            except Exception:
+                ttest_rel = None
+                wilcoxon = None
+
+            for i, m_a in enumerate(methods):
+                for m_b in methods[i + 1:]:
+                    sa = per_method_ls_after_agg.get(m_a)
+                    sb = per_method_ls_after_agg.get(m_b)
+                    if sa is None or sb is None or sa.empty or sb.empty:
+                        continue
+                    aligned = pd.concat(
+                        [sa, sb], axis=1, join='inner').dropna()
+                    if len(aligned) < 10:
+                        paired_tests.append({
+                            'method_a': m_a, 'method_b': m_b,
+                            'n': int(len(aligned)),
+                            't_stat': None, 'p_value': None,
+                            'mean_diff': None, 'message': '对齐后期数不足 10，跳过检验',
+                        })
+                        continue
+                    diff = aligned.iloc[:, 0].to_numpy(
+                    ) - aligned.iloc[:, 1].to_numpy()
+                    t_stat = p_val = None
+                    if ttest_rel is not None:
+                        try:
+                            t_stat_, p_val_ = ttest_rel(
+                                aligned.iloc[:, 0], aligned.iloc[:, 1])
+                            t_stat = float(t_stat_) if np.isfinite(
+                                t_stat_) else None
+                            p_val = float(p_val_) if np.isfinite(
+                                p_val_) else None
+                        except Exception:
+                            pass
+                    paired_tests.append({
+                        'method_a': m_a, 'method_b': m_b,
+                        'n': int(len(aligned)),
+                        'mean_diff': float(np.mean(diff)),
+                        'std_diff': float(np.std(diff, ddof=1)) if len(diff) > 1 else None,
+                        't_stat': t_stat,
+                        'p_value': p_val,
+                    })
+
+            # Phase 9: 收尾 → done
+            total_elapsed = round(_time.time() - t_start, 2)
+
+            # 方便前端画一条对齐的日期轴：取所有方法并集的日期排序
+            all_dates = sorted(set().union(
+                *[set(per_method_dates[m]) for m in methods]))
+
+            result = {
+                'success': True,
+                'methods': methods,
+                'factor_ids': usable_factors,
+                'n_splits': len(splits),
+                'splits': [
+                    {k: (str(v) if hasattr(v, 'isoformat') else v)
+                     for k, v in s.items()}
+                    for s in splits
+                ],
+                'summary': per_method_summary,
+                'curves': per_method_curves,
+                'dates_by_method': per_method_dates,
+                'all_dates': all_dates,
+                'paired_tests': paired_tests,
+                'weights_by_split': per_method_weights_by_split,
+                'config': {
+                    'train_window_days': train_window_days,
+                    'oos_window_days': oos_window_days,
+                    'step_days': step_days,
+                    'n_groups': n_groups,
+                    'predict_step': predict_step,
+                    'sample_step': sample_step,
+                    'transaction_cost': transaction_cost,
+                    'timeframe': timeframe,
+                },
+                'total_elapsed': total_elapsed,
+                'request_id': request_id,
+            }
+
+            yield _sse_event('done', _sanitize_for_json(result))
+
+        except Exception as ex:
+            logger.error(f"[method_comparison] 异常: {ex}", exc_info=True)
+            yield _sse_event('error', {'message': f'方法对比失败: {str(ex)}'})
+            yield _sse_event('done', {'success': False})
+        finally:
+            try:
+                _discard_cancel_event(request_id)
+            except Exception:
+                pass
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype='text/event-stream',
+        headers={
+            'Cache-Control': 'no-cache',
+            'X-Accel-Buffering': 'no',
+            'Connection': 'keep-alive',
+        }
+    )
 
 
 # 新增：因子计算API
@@ -1936,40 +3602,41 @@ def calculate_factor():
         factor_id = data.get('factor_id')
         market_data = data.get('data', {})
         parameters = data.get('parameters', {})
-        
+
         print(f"🔍 收到因子计算请求: {factor_id}")
         print(f"🔍 市场数据长度: {len(market_data.get('close', []))}")
         print(f"🔍 参数: {parameters}")
-        
+
         if not factor_id:
             return jsonify({'success': False, 'error': '缺少factor_id参数'})
-        
-        # 查找因子定义（先在minactors中查找，再在technicals中查找）
-        factor_file = FACTOR_LIBRARY_DIR / "minactors" / "definitions" / f"{factor_id}.json"
-        if not factor_file.exists():
-            factor_file = FACTOR_LIBRARY_DIR / "technicals" / "definitions" / f"{factor_id}.json"
-            if not factor_file.exists():
-                print(f"❌ 因子定义文件不存在: {factor_id}")
-                return jsonify({'success': False, 'error': f'因子 {factor_id} 不存在'})
-        
+
+        # 查找因子定义（v4：按一级分类目录动态查找）
+        factor_file = _find_factor_definition_file(factor_id)
+        if factor_file is None:
+            print(f"❌ 因子定义文件不存在: {factor_id}")
+            return jsonify({'success': False, 'error': f'因子 {factor_id} 不存在'})
+
         with open(factor_file, 'r', encoding='utf-8') as f:
             factor_info = json.load(f)
-        
+
         print(f"🔍 因子信息: {factor_info.get('name', factor_id)}")
-        
+
         # 检查因子类型
         computation_type = factor_info.get('computation_type')
-        
+
         if computation_type == 'formula':
             # 公式因子
-            factor_values = calculate_formula_factor(factor_info, market_data, parameters)
+            factor_values = calculate_formula_factor(
+                factor_info, market_data, parameters)
         elif computation_type == 'ml':
             # ML因子
-            factor_values = calculate_ml_factor(factor_info, market_data, parameters)
+            factor_values = calculate_ml_factor(
+                factor_info, market_data, parameters)
         else:
             # 默认使用函数计算
-            factor_values = calculate_function_factor(factor_info, market_data, parameters)
-        
+            factor_values = calculate_function_factor(
+                factor_info, market_data, parameters)
+
         if factor_values is not None:
             print(f"✅ 因子计算成功，返回 {len(factor_values)} 个值")
             return jsonify({
@@ -1980,10 +3647,11 @@ def calculate_factor():
         else:
             print(f"❌ 因子计算失败")
             return jsonify({'success': False, 'error': '因子计算失败'})
-            
+
     except Exception as e:
         print(f"❌ 因子计算API异常: {e}")
         return jsonify({'success': False, 'error': str(e)})
+
 
 def calculate_formula_factor(factor_info, market_data, parameters):
     """计算公式因子"""
@@ -1995,12 +3663,12 @@ def calculate_formula_factor(factor_info, market_data, parameters):
         if not close_prices:
             print("❌ 没有收盘价数据")
             return None
-        
+
         period = parameters.get('period', 20)
         if len(close_prices) < period:
             print(f"❌ 数据长度 {len(close_prices)} 小于周期 {period}")
             return None
-        
+
         # 计算简单移动平均线
         factor_values = []
         for i in range(len(close_prices)):
@@ -2010,12 +3678,13 @@ def calculate_formula_factor(factor_info, market_data, parameters):
                 window = close_prices[i-period+1:i+1]
                 avg = sum(window) / len(window)
                 factor_values.append(avg)
-        
+
         print(f"✅ 公式因子计算完成，返回 {len(factor_values)} 个值")
         return factor_values
     except Exception as e:
         print(f"❌ 公式因子计算失败: {e}")
         return None
+
 
 def calculate_ml_factor(factor_info, market_data, parameters):
     """计算ML因子"""
@@ -2027,14 +3696,16 @@ def calculate_ml_factor(factor_info, market_data, parameters):
         if not close_prices:
             print("❌ 没有收盘价数据")
             return None
-        
+
         import random
-        factor_values = [random.uniform(-1, 1) for _ in range(len(close_prices))]
+        factor_values = [random.uniform(-1, 1)
+                         for _ in range(len(close_prices))]
         print(f"✅ ML因子计算完成，返回 {len(factor_values)} 个值")
         return factor_values
     except Exception as e:
         print(f"❌ ML因子计算失败: {e}")
         return None
+
 
 def calculate_function_factor(factor_info, market_data, parameters):
     """计算函数因子"""
@@ -2045,23 +3716,22 @@ def calculate_function_factor(factor_info, market_data, parameters):
         if not factor_name:
             print("❌ 因子ID为空")
             return None
-        
-        # 构建函数文件路径（先在technicals中查找，再在minactors中查找）
-        function_file = FACTOR_LIBRARY_DIR / "technicals" / "functions" / f"{factor_name}.py"
-        if not function_file.exists():
-            function_file = FACTOR_LIBRARY_DIR / "minactors" / "functions" / f"{factor_name}.py"
-            if not function_file.exists():
-                print(f"❌ 因子函数文件不存在: {factor_name}")
-                return None
-        
+
+        # 构建函数文件路径（v4：按一级分类目录动态查找）
+        function_file = _find_factor_function_file(factor_name)
+        if function_file is None:
+            print(f"❌ 因子函数文件不存在: {factor_name}")
+            return None
+
         print(f"🔍 找到因子函数文件: {function_file}")
-        
+
         # 动态导入因子函数
         import importlib.util
-        spec = importlib.util.spec_from_file_location(factor_name, function_file)
+        spec = importlib.util.spec_from_file_location(
+            factor_name, function_file)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        
+
         # 准备数据
         df_data = pd.DataFrame({
             'open': market_data.get('open', []),
@@ -2070,14 +3740,14 @@ def calculate_function_factor(factor_info, market_data, parameters):
             'close': market_data.get('close', []),
             'volume': market_data.get('volume', [])
         })
-        
+
         print(f"🔍 准备数据DataFrame: {df_data.shape}")
-        
+
         # 调用calculate函数
         if hasattr(module, 'calculate'):
             print(f"🔍 调用因子函数: {factor_name}.calculate()")
             factor_values = module.calculate(df_data, **parameters)
-            
+
             if isinstance(factor_values, pd.Series):
                 result = factor_values.tolist()
             elif isinstance(factor_values, (list, tuple)):
@@ -2085,15 +3755,15 @@ def calculate_function_factor(factor_info, market_data, parameters):
             else:
                 print(f"❌ 因子函数返回类型不支持: {type(factor_values)}")
                 return None
-            
+
             print(f"✅ 函数因子计算完成，返回 {len(result)} 个值")
             return result
         else:
             print(f"❌ 因子函数 {factor_name} 没有calculate函数")
             return None
-            
+
     except Exception as e:
         print(f"❌ 函数因子计算失败: {e}")
         import traceback
         traceback.print_exc()
-        return None 
+        return None

@@ -14,6 +14,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import sys
+from typing import Dict
 try:
     import pyarrow.feather as pa_feather
 except Exception:
@@ -36,6 +37,36 @@ LAST_DOWNLOADS_CLEANUP_TS = 0.0
 MARKETS_CACHE = {}
 MARKETS_CACHE_TTL_SECONDS = 300
 MARKETS_CACHE_LOCK = threading.Lock()
+
+SYMBOL_CACHE_DIR = Path(__file__).parent.parent.parent / 'data' / 'symbol_cache'
+SYMBOL_CACHE_LOCK = threading.Lock()
+
+def _ensure_cache_dir():
+    SYMBOL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+def _read_symbol_cache(cache_type, key):
+    _ensure_cache_dir()
+    safe_key = key.replace('/', '_').replace('\\', '_')
+    cache_path = SYMBOL_CACHE_DIR / f"{cache_type}_{safe_key}.json"
+    if cache_path.exists():
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"读取缓存文件失败 {cache_path}: {e}")
+    return None
+
+def _write_symbol_cache(cache_type, key, data):
+    _ensure_cache_dir()
+    safe_key = key.replace('/', '_').replace('\\', '_')
+    cache_path = SYMBOL_CACHE_DIR / f"{cache_type}_{safe_key}.json"
+    try:
+        with SYMBOL_CACHE_LOCK:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False)
+        logger.info(f"缓存文件已更新: {cache_path.name}")
+    except Exception as e:
+        logger.warning(f"写入缓存文件失败 {cache_path}: {e}")
 
 def validate_data_path(file_path):
     """验证文件路径是否在允许的数据目录内，防止路径遍历攻击"""
@@ -239,50 +270,71 @@ def _filter_markets(markets_data, market_type, exchange, filter_func):
 
 @bp.route('/symbols/<exchange>', methods=['GET'])
 def get_symbols(exchange):
-    """获取指定交易所的交易对列表"""
+    """获取指定交易所的交易对列表（缓存优先，force=1 强制刷新）"""
     try:
+        force_refresh = request.args.get('force', '0') == '1'
+
+        if not force_refresh:
+            cached = _read_symbol_cache('exchange_symbols', exchange)
+            if cached and cached.get('data'):
+                logger.info(f"从缓存文件加载 {exchange} 交易对列表")
+                return jsonify({
+                    'success': True,
+                    'data': cached['data'],
+                    'cached': True,
+                    'cached_at': cached.get('updated_at', '')
+                })
+
         spot_markets = []
         perpetual_markets = []
-        
-        logger.debug(f"获取 {exchange} 交易对列表")
-        
+
+        logger.info(f"强制刷新 {exchange} 交易对列表")
+
         spot_markets_data = {}
         futures_markets_data = {}
-        
+
         try:
             spot_markets_data = load_markets_cached(exchange, is_futures=False)
         except Exception as e:
             logger.warning(f"获取现货市场失败: {e}")
-        
+
         try:
             futures_markets_data = load_markets_cached(exchange, is_futures=True)
         except Exception as e:
             logger.warning(f"获取期货市场失败: {e}")
-        
+
         spot_markets = _filter_markets(
             spot_markets_data, 'spot', exchange,
             lambda m: m.get('quote') == 'USDT'
         )
-        
+
         perpetual_markets = _filter_markets(
             futures_markets_data, 'futures', exchange,
-            lambda m: m.get('settle') == 'USDT' and 
+            lambda m: m.get('settle') == 'USDT' and
                       m.get('info', {}).get('contractType') == 'PERPETUAL'
         )
-        
+
         spot_markets.sort(key=lambda x: x['symbol'])
         perpetual_markets.sort(key=lambda x: x['symbol'])
-        
+
         logger.info(f"现货: {len(spot_markets)} 个 | 期货(永续): {len(perpetual_markets)} 个")
-        
+
+        result_data = {
+            'spot': spot_markets,
+            'futures': perpetual_markets
+        }
+
+        _write_symbol_cache('exchange_symbols', exchange, {
+            'data': result_data,
+            'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+
         return jsonify({
             'success': True,
-            'data': {
-                'spot': spot_markets,
-                'futures': perpetual_markets
-            }
+            'data': result_data,
+            'cached': False
         })
-        
+
     except Exception as e:
         return jsonify({
             'success': False,
@@ -408,78 +460,89 @@ def _extract_feather_metadata(file_path):
             end_str = dt.max().strftime('%Y-%m-%d')
     return data_points, start_str, end_str, columns
 
+def _scan_local_data(exchange, trade_type):
+    """扫描本地feather文件，返回数据信息列表"""
+    configured_data_dir = current_app.config.get('DATA_DIR', 'data')
+    if 'binance' in str(configured_data_dir) and ('futures' in str(configured_data_dir) or 'spot' in str(configured_data_dir)):
+        base_data_dir = Path(configured_data_dir).parent.parent
+    else:
+        base_data_dir = Path(configured_data_dir)
+
+    local_data = []
+
+    if trade_type:
+        search_dirs = [base_data_dir / exchange / trade_type]
+    else:
+        search_dirs = [
+            base_data_dir / exchange / 'futures',
+            base_data_dir / exchange / 'spot'
+        ]
+
+    for data_dir in search_dirs:
+        if not data_dir.exists():
+            continue
+        for file_path in data_dir.glob('*.feather'):
+            try:
+                filename = file_path.stem
+                symbol, timeframe_part, data_type = _parse_filename(filename)
+                if timeframe_part == 'unknown':
+                    continue
+                data_points, start_str, end_str, _ = _extract_feather_metadata(file_path)
+                data_info = {
+                    'exchange': exchange,
+                    'symbol': symbol,
+                    'timeframe': timeframe_part,
+                    'data_type': data_type,
+                    'file_path': str(file_path),
+                    'file_size': f"{file_path.stat().st_size / 1024 / 1024:.2f} MB",
+                    'data_points': data_points,
+                    'date_range': {
+                        'start': start_str,
+                        'end': end_str
+                    },
+                    'last_modified': datetime.fromtimestamp(file_path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
+                }
+                local_data.append(data_info)
+            except Exception as e:
+                logger.warning(f"读取文件失败 {file_path}: {e}")
+                continue
+
+    return local_data
+
 @bp.route('/local-data', methods=['GET'])
 def get_local_data():
-    """获取本地存储的数据信息"""
+    """获取本地存储的数据信息（缓存优先，force=1 强制刷新）"""
     try:
-        # 获取查询参数
         exchange = request.args.get('exchange', 'binance')
-        trade_type = request.args.get('trade_type', '')  # 空字符串表示所有类型
-        
-        # 构建数据目录路径
-        configured_data_dir = current_app.config.get('DATA_DIR', 'data')
-        logger.debug(f"配置的DATA_DIR: {configured_data_dir}")
-        
-        # 如果配置的路径已经指向具体目录，则使用其父目录
-        if 'binance' in str(configured_data_dir) and ('futures' in str(configured_data_dir) or 'spot' in str(configured_data_dir)):
-            base_data_dir = Path(configured_data_dir).parent.parent
-        else:
-            base_data_dir = Path(configured_data_dir)
-        
-        local_data = []
-        
-        # 如果指定了特定类型，只扫描该类型目录
-        if trade_type:
-            search_dirs = [base_data_dir / exchange / trade_type]
-        else:
-            # 仅扫描现货与期货目录
-            search_dirs = [
-                base_data_dir / exchange / 'futures',
-                base_data_dir / exchange / 'spot'
-            ]
-        
-        logger.debug(f"基础数据目录: {base_data_dir}")
-        logger.debug(f"扫描目录: {[str(d) for d in search_dirs]}")
-        
-        for data_dir in search_dirs:
-            if not data_dir.exists():
-                logger.debug(f"目录不存在: {data_dir}")
-                continue
-                
-            logger.debug(f"扫描目录: {data_dir}")
-            logger.debug(f"目录内容: {list(data_dir.glob('*.feather'))}")
-            
-            for file_path in data_dir.glob('*.feather'):
-                try:
-                    filename = file_path.stem
-                    symbol, timeframe_part, data_type = _parse_filename(filename)
+        trade_type = request.args.get('trade_type', '')
+        force_refresh = request.args.get('force', '0') == '1'
 
-                    if timeframe_part == 'unknown':
-                        continue
+        cache_key = f"{exchange}_{trade_type or 'all'}"
 
-                    data_points, start_str, end_str, _ = _extract_feather_metadata(file_path)
-                    
-                    data_info = {
-                        'exchange': exchange,
-                        'symbol': symbol,
-                        'timeframe': timeframe_part,
-                        'data_type': data_type,
-                        'file_path': str(file_path),
-                        'file_size': f"{file_path.stat().st_size / 1024 / 1024:.2f} MB",
-                        'data_points': data_points,
-                        'date_range': {
-                            'start': start_str,
-                            'end': end_str
-                        },
-                        'last_modified': datetime.fromtimestamp(file_path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                    }
-                    local_data.append(data_info)
-                except Exception as e:
-                    logger.warning(f"读取文件失败 {file_path}: {e}")
-                    continue
-        
-        logger.debug(f"返回数据条数: {len(local_data)}")
-        return jsonify({'success': True, 'data': local_data})
+        if not force_refresh:
+            cached = _read_symbol_cache('local_data', cache_key)
+            if cached and cached.get('data'):
+                logger.info(f"从缓存文件加载本地数据: {cache_key}")
+                return jsonify({
+                    'success': True,
+                    'data': cached['data'],
+                    'cached': True,
+                    'cached_at': cached.get('updated_at', '')
+                })
+
+        logger.info(f"强制刷新本地数据: {cache_key}")
+        local_data = _scan_local_data(exchange, trade_type)
+
+        _write_symbol_cache('local_data', cache_key, {
+            'data': local_data,
+            'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+
+        return jsonify({
+            'success': True,
+            'data': local_data,
+            'cached': False
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -490,72 +553,39 @@ _LOCAL_DATA_CACHE_TTL = 300
 
 @bp.route('/local-data-cached', methods=['GET'])
 def get_local_data_cached():
-    global _local_data_cache
+    """获取本地存储的数据信息（缓存优先，force=1 强制刷新）
+    保留此路由以兼容旧前端调用，内部逻辑与 local-data 一致
+    """
     exchange = request.args.get('exchange', 'binance')
     trade_type = request.args.get('trade_type', '')
     force_refresh = request.args.get('force', '0') == '1'
-    
-    cache_key = f"{exchange}_{trade_type}"
-    
-    with _local_data_cache_lock:
-        if not force_refresh and cache_key in _local_data_cache:
-            cached = _local_data_cache[cache_key]
-            if time.time() - cached['timestamp'] < _LOCAL_DATA_CACHE_TTL:
-                return jsonify({'success': True, 'data': cached['data'], 'cached': True})
-    
+
+    cache_key = f"{exchange}_{trade_type or 'all'}"
+
+    if not force_refresh:
+        cached = _read_symbol_cache('local_data', cache_key)
+        if cached and cached.get('data'):
+            return jsonify({
+                'success': True,
+                'data': cached['data'],
+                'cached': True,
+                'cached_at': cached.get('updated_at', '')
+            })
+
     try:
-        configured_data_dir = current_app.config.get('DATA_DIR', 'data')
-        if 'binance' in str(configured_data_dir) and ('futures' in str(configured_data_dir) or 'spot' in str(configured_data_dir)):
-            base_data_dir = Path(configured_data_dir).parent.parent
-        else:
-            base_data_dir = Path(configured_data_dir)
-        
-        local_data = []
-        
-        if trade_type:
-            search_dirs = [base_data_dir / exchange / trade_type]
-        else:
-            search_dirs = [
-                base_data_dir / exchange / 'futures',
-                base_data_dir / exchange / 'spot'
-            ]
-        
-        for data_dir in search_dirs:
-            if not data_dir.exists():
-                continue
-            for file_path in data_dir.glob('*.feather'):
-                try:
-                    filename = file_path.stem
-                    symbol, timeframe_part, data_type = _parse_filename(filename)
-                    if timeframe_part == 'unknown':
-                        continue
-                    data_points, start_str, end_str, _ = _extract_feather_metadata(file_path)
-                    data_info = {
-                        'exchange': exchange,
-                        'symbol': symbol,
-                        'timeframe': timeframe_part,
-                        'data_type': data_type,
-                        'file_path': str(file_path),
-                        'file_size': f"{file_path.stat().st_size / 1024 / 1024:.2f} MB",
-                        'data_points': data_points,
-                        'date_range': {
-                            'start': start_str,
-                            'end': end_str
-                        },
-                        'last_modified': datetime.fromtimestamp(file_path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')
-                    }
-                    local_data.append(data_info)
-                except Exception as e:
-                    logger.warning(f"读取文件失败 {file_path}: {e}")
-                    continue
-        
-        with _local_data_cache_lock:
-            _local_data_cache[cache_key] = {
-                'data': local_data,
-                'timestamp': time.time()
-            }
-        
-        return jsonify({'success': True, 'data': local_data, 'cached': False})
+        logger.info(f"强制刷新本地数据(cached): {cache_key}")
+        local_data = _scan_local_data(exchange, trade_type)
+
+        _write_symbol_cache('local_data', cache_key, {
+            'data': local_data,
+            'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+
+        return jsonify({
+            'success': True,
+            'data': local_data,
+            'cached': False
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -1045,72 +1075,20 @@ def get_download_suggestions():
         
         # 获取本地数据
         local_data = []
-        
-        # 构建数据目录路径
-        search_dirs = []
-        
-        if trade_type == 'futures':
-            # 期货类型：检查 DATA_DIR 是否已经是 futures 目录
-            base_dir = Path(current_app.config.get('DATA_DIR', 'data'))
-            logger.debug(f"DATA_DIR 配置: {base_dir}")
-            
-            # 如果 DATA_DIR 已经是 futures 目录，直接使用
-            if base_dir.name == 'futures':
-                search_dirs.append(base_dir)
-                logger.debug(f"期货类型：DATA_DIR 已是 futures 目录，使用 {base_dir}")
-            else:
-                # 否则构建标准路径
-                futures_dir = base_dir / exchange / 'futures'
-                search_dirs.append(futures_dir)
-                logger.debug(f"期货类型：构建标准路径 {futures_dir}")
-        else:
-            # 现货
-            data_dir = Path(current_app.config.get('DATA_DIR', 'data')) / exchange / trade_type
-            search_dirs.append(data_dir)
-        
-        # 在所有相关目录中查找数据
-        import re
-        # 构建精确的正则匹配模式
-        # 文件名格式通常为: SYMBOL_TIMEFRAME-type.feather 或 SYMBOL-TIMEFRAME-type.feather
-        pattern = re.compile(rf"^{re.escape(symbol)}[-_]{re.escape(timeframe)}[-_].*\.feather$", re.IGNORECASE)
-        
-        for search_dir in search_dirs:
-            if search_dir.exists():
-                logger.debug(f"在目录 {search_dir} 中查找数据文件...")
-                logger.debug(f"使用正则匹配模式: {pattern.pattern}")
-                
-                # 遍历所有feather文件，使用正则精确匹配
-                for file_path in search_dir.glob("*.feather"):
-                    filename = file_path.name
-                    if not pattern.match(filename):
-                        continue
-                    try:
-                        logger.debug(f"找到数据文件: {file_path}")
-                        df = pd.read_feather(file_path)
-                        # 获取时间范围 - 支持多种时间列名
-                        time_col = None
-                        for col in df.columns:
-                            if col.lower() in ['date', 'time', 'datetime', 'timestamp']:
-                                time_col = col
-                                break
-                        
-                        if time_col:
-                            start_date = pd.to_datetime(df[time_col].min()).strftime('%Y-%m-%d')
-                            end_date = pd.to_datetime(df[time_col].max()).strftime('%Y-%m-%d')
-                            local_data.append({
-                                'data_type': trade_type,
-                                'start_date': start_date,
-                                'end_date': end_date,
-                                'data_points': len(df),
-                                'file_size': f"{file_path.stat().st_size / 1024 / 1024:.2f} MB",
-                                'file_path': str(file_path)
-                            })
-                            logger.debug(f"成功读取数据文件: {file_path}, 数据点数: {len(df)}")
-                    except Exception as e:
-                        logger.warning(f"读取文件 {file_path} 失败: {str(e)}")
-            else:
-                logger.debug(f"目录不存在: {search_dir}")
-        
+
+        all_local_data = _scan_local_data(exchange, trade_type)
+
+        for item in all_local_data:
+            if item['symbol'] == symbol and (not timeframe or item['timeframe'] == timeframe):
+                local_data.append({
+                    'data_type': item.get('data_type', trade_type),
+                    'start_date': item['date_range']['start'],
+                    'end_date': item['date_range']['end'],
+                    'data_points': item['data_points'],
+                    'file_size': item['file_size'],
+                    'file_path': item['file_path']
+                })
+
         logger.info(f"总共找到 {len(local_data)} 个数据文件")
         
         # 生成下载建议
@@ -1270,4 +1248,386 @@ def delete_data():
         return jsonify({'success': True, 'message': '数据删除成功'})
     except Exception as e:
         logger.error(f"删除数据失败: {e}")
-        return jsonify({'success': False, 'error': str(e)}) 
+        return jsonify({'success': False, 'error': str(e)})
+
+
+# =====================================================================
+# 额外数据下载（OI / LSR / Funding / Mark-Index）—— v4
+#
+# 只支持币安 U 本位合约（trade_type=futures）。每个 symbol 下载时按所选
+# data_types 分别启动子任务，整体进度取各子任务平均值。结果落盘到：
+#   data/binance/futures_metrics/      （OI + LSR + taker_buy_ratio_metrics）
+#   data/binance/futures_funding/       （资金费率）
+#   data/binance/futures_markprice/     （Mark K 线）
+#   data/binance/futures_indexprice/    （Index K 线）
+#
+# 对应因子目录：factorlib/derivatives/, factorlib/funding/。
+# =====================================================================
+
+EXTRA_DOWNLOADS = {}
+EXTRA_DOWNLOADS_LOCK = threading.Lock()
+
+_EXTRA_SUPPORTED_TYPES = ('metrics', 'funding', 'mark', 'index')
+_EXTRA_TYPE_LABELS = {
+    'metrics': '持仓量/多空比/主动买入占比',
+    'funding': '资金费率',
+    'mark': 'Mark Price K 线',
+    'index': 'Index Price K 线',
+}
+
+
+def _extra_storage_root():
+    return Path(__file__).parent.parent.parent / 'data' / 'binance'
+
+
+def _extra_update(task_id: str, **fields):
+    with EXTRA_DOWNLOADS_LOCK:
+        task = EXTRA_DOWNLOADS.get(task_id)
+        if task is None:
+            return
+        task.update(fields)
+
+
+def _extra_update_subtype(task_id: str, data_type: str, **fields):
+    """更新子数据类型的状态并重算整体 progress。"""
+    with EXTRA_DOWNLOADS_LOCK:
+        task = EXTRA_DOWNLOADS.get(task_id)
+        if task is None:
+            return
+        subtasks = task.setdefault('subtasks', {})
+        sub = subtasks.setdefault(data_type, {})
+        sub.update(fields)
+        # 整体 progress = 各子任务 progress 平均
+        if subtasks:
+            progs = [int(s.get('progress', 0) or 0) for s in subtasks.values()]
+            task['progress'] = int(sum(progs) / len(progs))
+
+
+def _extra_normalize_symbol_to_ccxt(symbol: str) -> str:
+    """
+    前端传过来的可能是 BTC_USDT / BTC_USDT_USDT / BTCUSDT / BTC/USDT。
+    统一规整成 ccxt 统一符号 BTC/USDT:USDT 供 ExtraDataDownloader 使用。
+    """
+    if not symbol:
+        return symbol
+    s = symbol.strip().upper()
+    if '/' in s:
+        return s if ':' in s else (s + ':USDT' if s.endswith('/USDT') else s)
+    if '_' in s:
+        parts = [p for p in s.split('_') if p]
+        base = parts[0] if parts else s
+        quote = parts[1] if len(parts) >= 2 else 'USDT'
+        settle = parts[2] if len(parts) >= 3 else quote
+        return f"{base}/{quote}:{settle}"
+    if s.endswith('USDT'):
+        base = s[:-4]
+        return f"{base}/USDT:USDT"
+    return s
+
+
+def _run_single_extra_task(
+    task_id: str,
+    ccxt_symbol: str,
+    timeframe: str,
+    start_date: str,
+    end_date: str,
+    data_types: list,
+):
+    """单 symbol 多 data_type 的下载主循环（在后台线程里跑）。"""
+    from factor_miner.core.extra_data_downloader import get_extra_downloader
+
+    downloader = get_extra_downloader()
+    _extra_update(task_id, status='downloading', message='开始下载额外数据...')
+
+    results = {}
+    for dt in data_types:
+        label = _EXTRA_TYPE_LABELS.get(dt, dt)
+        _extra_update_subtype(
+            task_id, dt, status='downloading', progress=0,
+            message=f'开始下载 {label} ...',
+        )
+
+        def _cb(progress, message, _dt=dt):
+            _extra_update_subtype(task_id, _dt, progress=int(progress), message=message)
+
+        try:
+            if dt == 'metrics':
+                res = downloader.download_metrics(
+                    symbol=ccxt_symbol, timeframe=timeframe or '5m',
+                    start_date=start_date, end_date=end_date,
+                    progress_callback=_cb,
+                )
+            elif dt == 'funding':
+                res = downloader.download_funding_rate(
+                    symbol=ccxt_symbol,
+                    start_date=start_date, end_date=end_date,
+                    progress_callback=_cb,
+                )
+            elif dt == 'mark':
+                res = downloader.download_mark_index_klines(
+                    symbol=ccxt_symbol, timeframe=timeframe or '1h',
+                    start_date=start_date, end_date=end_date, kind='mark',
+                    progress_callback=_cb,
+                )
+            elif dt == 'index':
+                res = downloader.download_mark_index_klines(
+                    symbol=ccxt_symbol, timeframe=timeframe or '1h',
+                    start_date=start_date, end_date=end_date, kind='index',
+                    progress_callback=_cb,
+                )
+            else:
+                res = {'success': False, 'error': f'不支持的数据类型: {dt}'}
+        except Exception as e:
+            logger.exception(f'[extra-download] {dt} 任务失败')
+            res = {'success': False, 'error': str(e)}
+
+        results[dt] = res
+        if res.get('success'):
+            _extra_update_subtype(
+                task_id, dt, status='completed', progress=100,
+                message=f'{label} 完成，共 {res.get("data_points", 0)} 条',
+                file_path=res.get('file_path'),
+                data_points=res.get('data_points', 0),
+            )
+        else:
+            _extra_update_subtype(
+                task_id, dt, status='failed', progress=100,
+                message=f'{label} 失败: {res.get("error", "未知错误")}',
+            )
+
+    all_ok = all(r.get('success') for r in results.values())
+    _extra_update(
+        task_id,
+        status='completed' if all_ok else 'partial_failed',
+        progress=100,
+        message='全部完成' if all_ok else '部分子任务失败，请查看子任务错误信息',
+        end_time=datetime.now().isoformat(),
+        results=results,
+    )
+
+
+@bp.route('/extra/download', methods=['POST'])
+def start_extra_download():
+    """单个 symbol 的额外数据下载（可多选 data_types）。"""
+    try:
+        payload = request.get_json() or {}
+        symbol = payload.get('symbol')
+        timeframe = payload.get('timeframe') or '1h'
+        start_date = payload.get('start_date')
+        end_date = payload.get('end_date')
+        data_types = payload.get('data_types') or []
+
+        if not symbol:
+            return jsonify({'success': False, 'error': '缺少 symbol'})
+        if not start_date or not end_date:
+            return jsonify({'success': False, 'error': '缺少 start_date/end_date'})
+        data_types = [dt for dt in data_types if dt in _EXTRA_SUPPORTED_TYPES]
+        if not data_types:
+            return jsonify({'success': False, 'error': '未选择任何数据类型'})
+
+        ccxt_symbol = _extra_normalize_symbol_to_ccxt(symbol)
+        task_id = f"extra_{symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        with EXTRA_DOWNLOADS_LOCK:
+            EXTRA_DOWNLOADS[task_id] = {
+                'id': task_id,
+                'kind': 'single',
+                'symbol': symbol,
+                'ccxt_symbol': ccxt_symbol,
+                'timeframe': timeframe,
+                'start_date': start_date,
+                'end_date': end_date,
+                'data_types': list(data_types),
+                'status': 'starting',
+                'progress': 0,
+                'message': '正在初始化下载...',
+                'start_time': datetime.now().isoformat(),
+                'subtasks': {dt: {'status': 'pending', 'progress': 0} for dt in data_types},
+            }
+
+        thread = threading.Thread(
+            target=_run_single_extra_task,
+            args=(task_id, ccxt_symbol, timeframe, start_date, end_date, list(data_types)),
+            daemon=True,
+        )
+        thread.start()
+
+        with EXTRA_DOWNLOADS_LOCK:
+            snapshot = dict(EXTRA_DOWNLOADS[task_id])
+        return jsonify({'success': True, 'data': snapshot})
+    except Exception as e:
+        logger.exception('extra/download 异常')
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@bp.route('/extra/batch-download', methods=['POST'])
+def start_extra_batch_download():
+    """多 symbol 的额外数据下载。每个 symbol 生成一个独立 task_id。"""
+    try:
+        payload = request.get_json() or {}
+        symbols = payload.get('symbols') or []
+        timeframe = payload.get('timeframe') or '1h'
+        start_date = payload.get('start_date')
+        end_date = payload.get('end_date')
+        data_types = payload.get('data_types') or []
+
+        if not symbols:
+            return jsonify({'success': False, 'error': '未选择任何 symbol'})
+        if not start_date or not end_date:
+            return jsonify({'success': False, 'error': '缺少 start_date/end_date'})
+        data_types = [dt for dt in data_types if dt in _EXTRA_SUPPORTED_TYPES]
+        if not data_types:
+            return jsonify({'success': False, 'error': '未选择任何数据类型'})
+
+        batch_id = f"extra_batch_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        task_ids = []
+        for i, sym in enumerate(symbols):
+            ccxt_symbol = _extra_normalize_symbol_to_ccxt(sym)
+            task_id = f"{batch_id}_{i}_{sym}"
+            with EXTRA_DOWNLOADS_LOCK:
+                EXTRA_DOWNLOADS[task_id] = {
+                    'id': task_id,
+                    'kind': 'batch-child',
+                    'batch_id': batch_id,
+                    'symbol': sym,
+                    'ccxt_symbol': ccxt_symbol,
+                    'timeframe': timeframe,
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'data_types': list(data_types),
+                    'status': 'starting',
+                    'progress': 0,
+                    'message': '等待执行...',
+                    'start_time': datetime.now().isoformat(),
+                    'subtasks': {dt: {'status': 'pending', 'progress': 0} for dt in data_types},
+                }
+            task_ids.append(task_id)
+
+            thread = threading.Thread(
+                target=_run_single_extra_task,
+                args=(task_id, ccxt_symbol, timeframe, start_date, end_date, list(data_types)),
+                daemon=True,
+            )
+            thread.start()
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'batch_id': batch_id,
+                'task_ids': task_ids,
+                'total_tasks': len(task_ids),
+            },
+        })
+    except Exception as e:
+        logger.exception('extra/batch-download 异常')
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@bp.route('/extra/download-status/<task_id>', methods=['GET'])
+def get_extra_download_status(task_id):
+    """获取单个额外数据下载任务的状态。"""
+    try:
+        with EXTRA_DOWNLOADS_LOCK:
+            task = EXTRA_DOWNLOADS.get(task_id)
+            if task is None:
+                return jsonify({'success': False, 'error': '任务不存在'}), 404
+            snapshot = dict(task)
+        return jsonify({'success': True, 'data': snapshot})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@bp.route('/extra/downloads', methods=['GET'])
+def list_extra_downloads():
+    """列出所有额外数据下载任务（可按 batch_id 过滤）。"""
+    try:
+        batch_id = request.args.get('batch_id')
+        with EXTRA_DOWNLOADS_LOCK:
+            items = [dict(v) for v in EXTRA_DOWNLOADS.values()]
+        if batch_id:
+            items = [it for it in items if it.get('batch_id') == batch_id]
+        items.sort(key=lambda x: x.get('start_time', ''), reverse=True)
+        return jsonify({'success': True, 'data': items})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@bp.route('/extra/inventory', methods=['GET'])
+def list_extra_inventory():
+    """
+    列出本地已下载的额外数据文件清单，按 symbol 聚合。
+
+    查询参数 trade_type（目前仅 futures 支持这些数据）。
+    """
+    try:
+        root = _extra_storage_root()
+        sub_dirs = {
+            'metrics': root / 'futures_metrics',
+            'funding': root / 'futures_funding',
+            'mark': root / 'futures_markprice',
+            'index': root / 'futures_indexprice',
+        }
+        inventory: Dict = {}
+        for kind, d in sub_dirs.items():
+            if not d.exists():
+                continue
+            for f in d.glob('*.feather'):
+                stem = f.stem
+                # 命名约定：
+                # metrics:  {SAFE_SYM}-{tf}-metrics
+                # funding:  {SAFE_SYM}-funding
+                # mark:     {SAFE_SYM}-{tf}-mark
+                # index:    {SAFE_SYM}-{tf}-index
+                parts = stem.split('-')
+                if kind == 'funding':
+                    safe_sym = '-'.join(parts[:-1]) if len(parts) >= 2 else parts[0]
+                    tf = None
+                else:
+                    if len(parts) >= 3:
+                        tf = parts[-2]
+                        safe_sym = '-'.join(parts[:-2])
+                    else:
+                        tf = None
+                        safe_sym = stem
+                try:
+                    size_kb = round(f.stat().st_size / 1024, 1)
+                except Exception:
+                    size_kb = None
+                entry = inventory.setdefault(safe_sym, {
+                    'symbol': safe_sym,
+                    'items': [],
+                })
+                entry['items'].append({
+                    'data_type': kind,
+                    'label': _EXTRA_TYPE_LABELS.get(kind, kind),
+                    'timeframe': tf,
+                    'file': str(f),
+                    'size_kb': size_kb,
+                })
+
+        # 补充起止时间（延迟到用户点击"详情"再查，避免全量读取 feather 太慢）
+        items = list(inventory.values())
+        items.sort(key=lambda x: x['symbol'])
+        return jsonify({
+            'success': True,
+            'data': {
+                'types': [
+                    {'id': k, 'label': v, 'dir': str(sub_dirs[k])}
+                    for k, v in _EXTRA_TYPE_LABELS.items()
+                ],
+                'symbols': items,
+            },
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@bp.route('/extra/supported-types', methods=['GET'])
+def get_extra_supported_types():
+    """前端下拉/复选框初始化用。"""
+    return jsonify({
+        'success': True,
+        'data': [
+            {'id': k, 'label': _EXTRA_TYPE_LABELS[k]}
+            for k in _EXTRA_SUPPORTED_TYPES
+        ],
+    })

@@ -224,18 +224,18 @@ function renderFactorList(factors) {
             desc: '方向信号/交叉突破等离散事件类因子',
             factors: []
         },
-        'extra_data': {
-            name: '额外数据因子',
+        'derivatives': {
+            name: '衍生品微观结构因子',
             icon: 'fa-database',
             color: 'warning',
-            desc: '需要资金费率、持仓量等额外数据',
+            desc: '需要持仓量、多空比、主动买入量、基差等衍生品数据',
             factors: []
         },
-        'ml_pretrained': {
-            name: 'ML预训练因子',
-            icon: 'fa-brain',
+        'funding': {
+            name: '资金费率因子',
+            icon: 'fa-coins',
             color: 'info',
-            desc: '需要ML模型或预训练数据',
+            desc: '需要资金费率（Funding Rate）历史',
             factors: []
         }
     };
@@ -385,28 +385,13 @@ document.getElementById('timeframesSelect').addEventListener('change', updateRan
 async function refreshLocalMeta(forceRefresh) {
     const ex = document.getElementById('exchangeSelect').value;
     const tt = document.getElementById('tradeTypeSelect').value;
-    const cacheKey = `localData_${ex}_${tt}`;
     const symbolsSel = document.getElementById('symbolsSelect');
     const tfsSel = document.getElementById('timeframesSelect');
     symbolsSel.innerHTML = '';
     tfsSel.innerHTML = '';
 
-    if (!forceRefresh) {
-        const cached = localStorage.getItem(cacheKey);
-        if (cached) {
-            try {
-                const parsed = JSON.parse(cached);
-                if (parsed.timestamp && Date.now() - parsed.timestamp < 300000) {
-                    localDataRows = parsed.data || [];
-                    populateSymbolsAndTimeframes(localDataRows, symbolsSel, tfsSel);
-                    return;
-                }
-            } catch (e) {}
-        }
-    }
-
     const btn = document.getElementById('refreshDataBtn');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>刷新中'; }
+    if (btn && forceRefresh) { btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>刷新中'; }
 
     try {
         const forceParam = forceRefresh ? '&force=1' : '';
@@ -415,7 +400,6 @@ async function refreshLocalMeta(forceRefresh) {
         if (data.success) {
             const rows = data.data || [];
             localDataRows = rows;
-            localStorage.setItem(cacheKey, JSON.stringify({ data: rows, timestamp: Date.now() }));
             populateSymbolsAndTimeframes(rows, symbolsSel, tfsSel);
         }
     } catch (e) {

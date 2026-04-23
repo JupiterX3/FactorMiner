@@ -1,0 +1,21 @@
+{
+  "factor_id": "doji",
+  "name": "十字星形态",
+  "description": "Doji Pattern - 开盘价与收盘价几乎相等的K线形态",
+  "category": "basic_kline",
+  "subcategory": "event",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/doji.py",
+    "entry_point": "calculate"
+  },
+  "parameters": {
+    "threshold": 0.001
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "d8c2d411",
+    "created_at": "2025-09-01T15:38:18.622988"
+  }
+}

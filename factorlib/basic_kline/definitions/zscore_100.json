@@ -1,0 +1,19 @@
+{
+  "factor_id": "zscore_100",
+  "name": "zscore_100",
+  "description": "自动生成的zscore_100因子",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/zscore_100.py",
+    "entry_point": "calculate"
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "3bbe11fe",
+    "created_at": "2025-09-01T15:38:18.641641"
+  }
+}

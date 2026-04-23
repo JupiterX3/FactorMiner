@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_cntp_60",
+  "name": "qlib158-CNTP_60",
+  "description": "qlib Alpha158 — mean(close>ref(close,1), w)  (window=60)",
+  "category": "qlib158",
+  "subcategory": "rolling",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha158_cntp_60.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ts_mean((data['close'] > ref(data['close'], 1)).astype(float), 60)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "1ddebd2e",
+    "created_at": "2026-04-23T11:17:23.426571",
+    "is_window": true,
+    "min_warmup_bars": 60,
+    "source_family": "qlib158"
+  }
+}

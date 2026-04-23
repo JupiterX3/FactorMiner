@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha360_close_lag_13",
+  "name": "qlib360-CLOSE_lag13",
+  "description": "qlib Alpha360 — close.shift(13) / close",
+  "category": "qlib360",
+  "subcategory": "close",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha360_close_lag_13.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ref(data['close'], 13) / (data['close'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "05131c61",
+    "created_at": "2026-04-23T11:17:23.483976",
+    "is_window": false,
+    "min_warmup_bars": 14,
+    "source_family": "qlib360"
+  }
+}

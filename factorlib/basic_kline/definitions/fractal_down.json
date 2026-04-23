@@ -1,0 +1,21 @@
+{
+  "factor_id": "fractal_down",
+  "name": "分形下拐点",
+  "description": "Fractal Down - 局部低点分形",
+  "category": "basic_kline",
+  "subcategory": "event",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/fractal_down.py",
+    "entry_point": "calculate",
+    "imports": []
+  },
+  "parameters": {
+    "window": 5
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "lookahead": 2
+  }
+}

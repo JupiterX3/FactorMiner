@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha019",
+  "name": "WQ101-Alpha019",
+  "description": "WorldQuant Alpha#019。原始公式：-sign(((close - delay(close,7)) + delta(close,7))) * (1 + rank(1 + sum(returns, 250)))。 语义折衷：去掉最外层 rank；保留 250 期长窗口。",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/wq101_alpha019.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return -sign((close - ref(close, 7)) + delta(close, 7)) * (2.0 + ts_sum(ret, 250))\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "e0728aa0",
+    "created_at": "2026-04-23T11:18:59.635016",
+    "is_window": true,
+    "min_warmup_bars": 250,
+    "source_family": "wq101"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha014",
+  "name": "WQ101-Alpha014",
+  "description": "WorldQuant Alpha#014。原始公式：(-1 * rank(delta(returns,3))) * correlation(open, volume, 10)。 语义折衷：去掉最外层 rank。",
+  "category": "wq101",
+  "subcategory": "alpha014",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha014.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return -1 * delta(ret, 3) * ts_corr(open_, volume, 10)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "7d34303f",
+    "created_at": "2026-04-23T11:18:59.631945",
+    "is_window": true,
+    "min_warmup_bars": 10,
+    "source_family": "wq101"
+  }
+}

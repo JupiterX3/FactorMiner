@@ -1,0 +1,23 @@
+{
+  "factor_id": "mined_manual_20260420_112327",
+  "name": "Manual_Mined_TSRank20_MADeviation_Neg",
+  "description": "manual mined factor expression: neg(ts_rank(w=20)(ma_deviation))",
+  "category": "mined_factor",
+  "subcategory": "",
+  "computation_type": "ml_model",
+  "computation_data": {
+    "algorithm_name": "gp_cross_sectional",
+    "model_file": "",
+    "performance_metrics": {
+      "expression": "neg(ts_rank(w=20)(ma_deviation))",
+      "source": "manual_add"
+    }
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "d6b9be07",
+    "created_at": "2026-04-20T11:23:27.058200"
+  }
+}

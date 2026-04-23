@@ -654,9 +654,15 @@ async function loadFactorEvaluation() {
                 <div class="col-md-3">
                     <div class="mb-3">
                         <label class="form-label">交易对</label>
-                        <select class="form-select" id="evaluationSymbol" required disabled onchange="onSymbolChange()">
-                            <option value="">先选择交易所和类型</option>
-                        </select>
+                        <div class="d-flex align-items-center">
+                            <select class="form-select me-1" id="evaluationSymbol" required disabled onchange="onSymbolChange()">
+                                <option value="">先选择交易所和类型</option>
+                            </select>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="refreshSymbolsBtn" onclick="forceRefreshSymbols()" title="强制刷新交易对列表" disabled>
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                        <div class="form-text small mt-1" id="symbolsCacheInfo"></div>
                     </div>
                 </div>
                 <div class="col-md-3">
@@ -1196,18 +1202,23 @@ function refreshFactorList() {
 }
 
 // 加载交易对列表
-async function loadSymbols() {
+async function loadSymbols(forceRefresh = false) {
     try {
         const exchange = document.getElementById('evaluationExchange').value;
         const tradeType = document.getElementById('evaluationTradeType').value;
+        const refreshBtn = document.getElementById('refreshSymbolsBtn');
+        const cacheInfoEl = document.getElementById('symbolsCacheInfo');
         
         if (!exchange || !tradeType) {
             console.log('交易所或交易类型未选择');
             return;
         }
         
-        console.log('开始加载交易对...', { exchange, tradeType });
-        const url = `/api/data/local-data?exchange=${exchange}&trade_type=${tradeType}`;
+        if (refreshBtn) refreshBtn.disabled = true;
+        
+        console.log('开始加载交易对...', { exchange, tradeType, forceRefresh });
+        const forceParam = forceRefresh ? '&force=1' : '';
+        const url = `/api/data/local-data?exchange=${exchange}&trade_type=${tradeType}${forceParam}`;
         const response = await fetch(url);
         const data = await response.json();
         
@@ -1215,24 +1226,57 @@ async function loadSymbols() {
             const select = document.getElementById('evaluationSymbol');
             select.innerHTML = '<option value="">选择交易对</option>';
             
-            // 获取唯一的交易对
             const uniqueSymbols = [...new Set(data.data.map(item => item.symbol))];
             
             uniqueSymbols.forEach(symbol => {
                 select.innerHTML += `<option value="${symbol}">${symbol}</option>`;
             });
             
-            // 启用交易对选择
             select.disabled = false;
+            if (refreshBtn) refreshBtn.disabled = false;
+            
+            if (cacheInfoEl) {
+                if (data.cached) {
+                    cacheInfoEl.textContent = `缓存数据 (更新于 ${data.cached_at || '未知'})`;
+                    cacheInfoEl.className = 'form-text small mt-1 text-muted';
+                } else {
+                    cacheInfoEl.textContent = '已从磁盘刷新';
+                    cacheInfoEl.className = 'form-text small mt-1 text-success';
+                    setTimeout(() => {
+                        cacheInfoEl.textContent = '缓存数据 (刚刚更新)';
+                        cacheInfoEl.className = 'form-text small mt-1 text-muted';
+                    }, 3000);
+                }
+            }
         } else {
             const select = document.getElementById('evaluationSymbol');
             select.innerHTML = '<option value="">无可用数据</option>';
             select.disabled = true;
+            if (refreshBtn) refreshBtn.disabled = true;
+            if (cacheInfoEl) cacheInfoEl.textContent = '';
         }
     } catch (error) {
         const select = document.getElementById('evaluationSymbol');
         select.innerHTML = '<option value="">加载失败</option>';
         select.disabled = true;
+        const refreshBtn = document.getElementById('refreshSymbolsBtn');
+        if (refreshBtn) refreshBtn.disabled = true;
+    }
+}
+
+async function forceRefreshSymbols() {
+    const btn = document.getElementById('refreshSymbolsBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
+    }
+    try {
+        await loadSymbols(true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+        }
     }
 }
 

@@ -1,0 +1,29 @@
+{
+  "factor_id": "basis_zscore",
+  "name": "基差 z-score",
+  "description": "basis = (close - index_close) / index_close，相对自身的 z-score。正向高=期货升水；负向高=期货贴水。",
+  "category": "derivatives",
+  "subcategory": "basis",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/basis_zscore.py",
+    "function_code": "def calculate(data, window=96, **kwargs):\n    if 'basis' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    x = data['basis']\n    return (x - x.rolling(window).mean()) / x.rolling(window).std()",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 96
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.221821",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

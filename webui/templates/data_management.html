@@ -39,15 +39,22 @@
                     
                     <div class="mb-2">
                         <label for="symbol" class="form-label small mb-1">交易对</label>
-                        <div class="input-group input-group-sm mb-1">
-                            <input type="text" class="form-control form-control-sm" id="symbolListInputDownload"
-                                   placeholder="导入交易对: BTC_USDT,ETH_USDT 或 [BTC_USDT,ETH_USDT]（自动选第一个匹配）" />
-                            <button class="btn btn-outline-primary" type="button" onclick="importDownloadSymbolList()"
-                                    title="导入并匹配交易对">
-                                <i class="fas fa-upload"></i> 导入
+                        <div class="d-flex align-items-center mb-1">
+                            <div class="input-group input-group-sm flex-grow-1">
+                                <input type="text" class="form-control form-control-sm" id="symbolListInputDownload"
+                                       placeholder="导入交易对: BTC_USDT,ETH_USDT 或 [BTC_USDT,ETH_USDT]（自动选第一个匹配）" />
+                                <button class="btn btn-outline-primary" type="button" onclick="importDownloadSymbolList()"
+                                        title="导入并匹配交易对">
+                                    <i class="fas fa-upload"></i> 导入
+                                </button>
+                            </div>
+                            <button class="btn btn-outline-secondary btn-sm ms-1" type="button" id="refreshSymbolsBtn" onclick="forceRefreshSymbols()"
+                                    title="强制刷新交易对列表（从交易所重新获取）">
+                                <i class="fas fa-sync-alt"></i>
                             </button>
                         </div>
                         <div class="form-text small mt-1" id="downloadSymbolImportResult"></div>
+                        <div class="form-text small mt-1" id="symbolsCacheInfo"></div>
                         <select class="form-select form-select-sm" id="symbol" name="symbol">
                             <option value="">请先选择交易类型</option>
                         </select>
@@ -325,8 +332,9 @@ function updateTradeTypes(exchange) {
     tradeTypeSelect.appendChild(futuresOption);
 }
 
-async function loadSymbolsData(exchange) {
-    const response = await fetch(`/api/data/symbols/${exchange}`);
+async function loadSymbolsData(exchange, forceRefresh = false) {
+    const forceParam = forceRefresh ? '?force=1' : '';
+    const response = await fetch(`/api/data/symbols/${exchange}${forceParam}`);
     return response.json();
 }
 
@@ -337,16 +345,7 @@ function populateSymbolsSelect(markets, targetSelect, placeholder) {
         return;
     }
 
-    const filteredMarkets = markets.filter(item =>
-        item.quote === 'USDT' && item.active === true
-    );
-
-    if (filteredMarkets.length === 0) {
-        targetSelect.innerHTML = '<option value="">暂无符合条件的交易对</option>';
-        return;
-    }
-
-    filteredMarkets.forEach(item => {
+    markets.forEach(item => {
         const option = document.createElement('option');
         option.value = item.symbol;
         option.textContent = `${item.symbol} (${item.name})`;
@@ -354,15 +353,17 @@ function populateSymbolsSelect(markets, targetSelect, placeholder) {
     });
 }
 
-async function refreshSymbols() {
+async function refreshSymbols(forceRefresh = false) {
     const exchange = document.getElementById('exchange').value;
     const tradeType = document.getElementById('tradeType').value;
     const symbolSelect = document.getElementById('symbol');
     const batchSymbolSelect = document.getElementById('batchSymbols');
+    const cacheInfoEl = document.getElementById('symbolsCacheInfo');
     
     if (!tradeType) {
         symbolSelect.innerHTML = '<option value="">请先选择交易类型</option>';
         batchSymbolSelect.innerHTML = '<option value="">请先选择交易类型</option>';
+        if (cacheInfoEl) cacheInfoEl.textContent = '';
         return;
     }
     
@@ -370,13 +371,27 @@ async function refreshSymbols() {
     batchSymbolSelect.innerHTML = '<option value="">加载中...</option>';
     
     try {
-        const result = await loadSymbolsData(exchange);
+        const result = await loadSymbolsData(exchange, forceRefresh);
         
         if (result.success && result.data[tradeType]) {
             const markets = result.data[tradeType] || [];
 
             populateSymbolsSelect(markets, symbolSelect, '请选择交易对');
             populateSymbolsSelect(markets, batchSymbolSelect, '请选择交易对 (可多选)');
+            
+            if (cacheInfoEl) {
+                if (result.cached) {
+                    cacheInfoEl.textContent = `📋 缓存数据 (更新于 ${result.cached_at || '未知'})`;
+                    cacheInfoEl.className = 'form-text small mt-1 text-muted';
+                } else {
+                    cacheInfoEl.textContent = '🔄 已从交易所刷新';
+                    cacheInfoEl.className = 'form-text small mt-1 text-success';
+                    setTimeout(() => {
+                        cacheInfoEl.textContent = '📋 缓存数据 (刚刚更新)';
+                        cacheInfoEl.className = 'form-text small mt-1 text-muted';
+                    }, 3000);
+                }
+            }
         } else {
             symbolSelect.innerHTML = '<option value="">加载失败</option>';
             batchSymbolSelect.innerHTML = '<option value="">加载失败</option>';
@@ -385,6 +400,22 @@ async function refreshSymbols() {
         console.error('加载交易对失败:', error);
         symbolSelect.innerHTML = '<option value="">加载失败</option>';
         batchSymbolSelect.innerHTML = '<option value="">加载失败</option>';
+    }
+}
+
+async function forceRefreshSymbols() {
+    const btn = document.getElementById('refreshSymbolsBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
+    }
+    try {
+        await refreshSymbols(true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+        }
     }
 }
 

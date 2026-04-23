@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_sumn_5",
+  "name": "qlib158-SUMN_5",
+  "description": "qlib Alpha158 — 1 - sump  (window=5)",
+  "category": "qlib158",
+  "subcategory": "rolling",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha158_sumn_5.py",
+    "function_code": "def calculate(data, **kwargs):\n    return 1.0 - ts_sum(delta(data['close'], 1).clip(lower=0), 5) / (ts_sum(delta(data['close'], 1).abs(), 5) + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "0b692b33",
+    "created_at": "2026-04-23T11:17:23.442777",
+    "is_window": true,
+    "min_warmup_bars": 5,
+    "source_family": "qlib158"
+  }
+}

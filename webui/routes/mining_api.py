@@ -7,6 +7,7 @@ import os
 import json
 import uuid
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from flask import Blueprint, request, jsonify
@@ -53,11 +54,17 @@ def start_mining():
         
         # 创建挖掘配置
         mining_config = {
+            'mode': 'standard',
             'symbols': data['symbols'],
             'timeframes': data['timeframes'],
             'selected_algorithms': data['selected_algorithms'],
             'start_date': data.get('start_date'),
             'end_date': data.get('end_date'),
+            'max_factors': data.get('max_factors', 15),
+            'min_ic': data.get('min_ic', 0.02),
+            'min_ir': data.get('min_ir', 0.1),
+            'min_sample_size': data.get('min_sample_size', 30),
+            'optimization_method': data.get('optimization_method', 'greedy'),
             'session_id': session_id
         }
         
@@ -98,133 +105,209 @@ def _run_mining_background(session_id, data, mining_config):
     """后台运行挖掘任务"""
     print(f"开始后台挖掘任务: {session_id}")
     try:
-        # 更新进度
         mining_sessions[session_id]['progress'] = 10
         mining_sessions[session_id]['current_step'] = 'data_loading'
         mining_sessions[session_id]['message'] = '正在加载市场数据...'
-        
-        # 获取挖掘API
+
         mining_api = get_mining_api()
-        
-        # 加载数据
-        print(f"加载数据: {data['symbols'][0]}, {data['timeframes'][0]}")
-        market_data = mining_api.load_data(
-            symbol=data['symbols'][0],
-            timeframe=data['timeframes'][0],
-            start_date=data.get('start_date'),
-            end_date=data.get('end_date')
-        )
-        
-        if market_data is None or len(market_data) == 0:
-            raise ValueError("数据加载失败或数据为空")
-        
-        print(f"数据加载成功，共 {len(market_data)} 条记录")
-        
-        # 更新进度
+
+        symbols = data.get('symbols', [])
+        timeframes = data.get('timeframes', [])
+        all_market_data = {}
+        total_combos = len(symbols) * len(timeframes)
+        loaded_count = 0
+
+        for symbol in symbols:
+            for timeframe in timeframes:
+                loaded_count += 1
+                mining_sessions[session_id]['message'] = f'正在加载数据 ({loaded_count}/{total_combos}): {symbol} {timeframe}...'
+                try:
+                    md = mining_api.load_data(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        start_date=data.get('start_date'),
+                        end_date=data.get('end_date')
+                    )
+                    if md is not None and len(md) > 0:
+                        all_market_data[(symbol, timeframe)] = md
+                        print(f"✅ {symbol}/{timeframe} 数据加载成功: {len(md)} 条")
+                    else:
+                        print(f"⚠️ {symbol}/{timeframe} 数据为空")
+                except Exception as e:
+                    print(f"⚠️ {symbol}/{timeframe} 数据加载失败: {e}")
+
+                pct = 10 + int((loaded_count / max(total_combos, 1)) * 20)
+                mining_sessions[session_id]['progress'] = pct
+
+        if not all_market_data:
+            raise ValueError("所有交易对/时间框架的数据加载均失败或为空")
+
+        print(f"数据加载完成，共 {len(all_market_data)} 个组合")
+
         mining_sessions[session_id]['progress'] = 30
         mining_sessions[session_id]['current_step'] = 'factor_building'
         mining_sessions[session_id]['message'] = '正在构建因子...'
-        
-        # 构建因子
+
         from factor_miner.core.factor_builder import FactorBuilder
         factor_builder = FactorBuilder()
-        
-        result = factor_builder.build_all_factors(
-            data=market_data,
-            selected_algorithms=data['selected_algorithms'],
-            save_to_storage=True
-        )
-        
-        if not result['success']:
-            raise ValueError("因子构建失败")
-        
-        print(f"因子构建成功，共生成 {result['total_factors']} 个因子")
-        
-        # 更新进度
+
+        all_factors = {}
+        all_factors_df_parts = []
+        all_algorithms_used = set()
+        combo_list = list(all_market_data.items())
+        total_factors_count = 0
+
+        for idx, ((symbol, timeframe), market_data) in enumerate(combo_list):
+            mining_sessions[session_id]['message'] = f'正在构建因子 ({idx+1}/{len(combo_list)}): {symbol} {timeframe}...'
+            try:
+                result = factor_builder.build_all_factors(
+                    data=market_data,
+                    selected_algorithms=data['selected_algorithms'],
+                    save_to_storage=True
+                )
+                if result.get('success'):
+                    for fname, fseries in result.get('factors', {}).items():
+                        qualified_name = f"{symbol}_{timeframe}_{fname}" if len(combo_list) > 1 else fname
+                        all_factors[qualified_name] = fseries
+                    if result.get('factors_df') is not None:
+                        df_part = result['factors_df'].copy()
+                        if len(combo_list) > 1:
+                            df_part.columns = [f"{symbol}_{timeframe}_{c}" for c in df_part.columns]
+                        all_factors_df_parts.append(df_part)
+                    all_algorithms_used.update(result.get('algorithms_used', []))
+                    total_factors_count += result.get('total_factors', 0)
+                    print(f"✅ {symbol}/{timeframe} 因子构建成功: {result.get('total_factors', 0)} 个因子")
+                else:
+                    print(f"⚠️ {symbol}/{timeframe} 因子构建失败")
+            except Exception as e:
+                print(f"⚠️ {symbol}/{timeframe} 因子构建异常: {e}")
+
+            pct = 30 + int(((idx + 1) / len(combo_list)) * 30)
+            mining_sessions[session_id]['progress'] = pct
+
+        if not all_factors:
+            raise ValueError("因子构建失败：未生成任何因子")
+
+        import pandas as pd
+        combined_factors_df = pd.concat(all_factors_df_parts, axis=1) if all_factors_df_parts else pd.DataFrame()
+
+        print(f"因子构建完成，共生成 {len(all_factors)} 个因子")
+
         mining_sessions[session_id]['progress'] = 60
         mining_sessions[session_id]['current_step'] = 'evaluation'
         mining_sessions[session_id]['message'] = '正在评估因子...'
-        
-        # 评估因子
+
         from factor_miner.core.factor_evaluator import FactorEvaluator
         evaluator = FactorEvaluator()
-        
+
         evaluation_results = {}
-        for factor_name, factor_series in result['factors'].items():
+        first_market_data = list(all_market_data.values())[0]
+        eval_target = first_market_data['close'].pct_change().shift(-1)
+
+        for factor_name, factor_series in all_factors.items():
             try:
-                eval_result = evaluator.evaluate_factor(
-                    factor_series, 
-                    market_data['close'].pct_change().shift(-1)
-                )
+                eval_result = evaluator.evaluate_factor(factor_series, eval_target)
                 evaluation_results[factor_name] = eval_result
             except Exception as e:
                 print(f"评估因子 {factor_name} 失败: {e}")
                 continue
-        
+
         print(f"因子评估完成，共评估 {len(evaluation_results)} 个因子")
-        
-        # 更新进度
+
         mining_sessions[session_id]['progress'] = 80
         mining_sessions[session_id]['current_step'] = 'optimization'
         mining_sessions[session_id]['message'] = '正在优化因子...'
-        
-        # 因子优化
+
         from factor_miner.core.factor_optimizer import FactorOptimizer
         optimizer = FactorOptimizer()
-        
-        optimization_result = optimizer.optimize_factors(
-            result['factors_df'],
-            market_data['close'].pct_change().shift(-1)
-        )
-        
-        print(f"因子优化完成，选择了 {len(optimization_result.get('selected_factors', []))} 个因子")
-        
-        # 保存结果
+
+        optimization_result = {}
+        if not combined_factors_df.empty:
+            optimization_result = optimizer.optimize_factors(
+                combined_factors_df, eval_target
+            )
+
+        selected_count = len(optimization_result.get('selected_factors', []))
+        print(f"因子优化完成，选择了 {selected_count} 个因子")
+
         mining_sessions[session_id]['progress'] = 90
         mining_sessions[session_id]['current_step'] = 'saving'
         mining_sessions[session_id]['message'] = '正在保存结果...'
-        
-        # 构建最终结果
+
+        factors_for_storage = {}
+        for factor_name, eval_data in evaluation_results.items():
+            if isinstance(eval_data, dict):
+                factors_for_storage[factor_name] = {
+                    'name': factor_name,
+                    'ic_pearson': eval_data.get('ic_pearson'),
+                    'ic_spearman': eval_data.get('ic_spearman'),
+                    'sharpe_ratio': eval_data.get('sharpe_ratio'),
+                    'win_rate': eval_data.get('win_rate'),
+                    'long_short_return': eval_data.get('long_short_return'),
+                }
+
         final_result = {
-            'factors': result['factors'],
-            'factors_df': result['factors_df'].to_dict('records'),
-            'total_factors': result['total_factors'],
-            'algorithms_used': result['algorithms_used'],
+            'mode': 'standard',
+            'factors': factors_for_storage,
+            'total_factors': len(all_factors),
+            'algorithms_used': list(all_algorithms_used),
             'evaluation': evaluation_results,
-            'optimization': optimization_result
+            'optimization': optimization_result,
         }
-        
-        # 保存到文件
-        from factor_miner.core.factor_storage import get_global_storage
-        storage = get_global_storage()
-        storage.save_mining_history(session_id, {
+
+        save_mining_result_to_file(session_id, {
             'session_id': session_id,
             'config': mining_config,
             'results': final_result,
             'status': 'completed',
             'completed_time': datetime.now().isoformat()
         })
-        
-        # 更新会话状态
+
         mining_sessions[session_id]['status'] = 'completed'
         mining_sessions[session_id]['progress'] = 100
         mining_sessions[session_id]['current_step'] = 'completed'
         mining_sessions[session_id]['message'] = '挖掘任务完成'
         mining_sessions[session_id]['completed_time'] = datetime.now().isoformat()
-        
+        mining_sessions[session_id]['results'] = final_result
+
         print(f"挖掘任务完成: {session_id}")
-        
+
     except Exception as e:
         print(f"挖掘任务失败: {e}")
         import traceback
         traceback.print_exc()
-        
-        # 更新会话状态为失败
+
         mining_sessions[session_id]['status'] = 'failed'
         mining_sessions[session_id]['progress'] = 0
         mining_sessions[session_id]['current_step'] = 'failed'
         mining_sessions[session_id]['message'] = f'挖掘失败: {str(e)}'
         mining_sessions[session_id]['error'] = str(e)
+
+@bp.route('/stop/<session_id>', methods=['POST'])
+def stop_mining(session_id):
+    """停止标准挖掘任务"""
+    if session_id not in mining_sessions:
+        return jsonify({'success': False, 'error': '会话不存在'}), 404
+
+    session = mining_sessions[session_id]
+    if session['status'] != 'running':
+        return jsonify({'success': False, 'error': '任务不在运行中'})
+
+    session['status'] = 'stopped'
+    session['message'] = '挖掘任务已停止'
+    session['current_step'] = 'stopped'
+    session['completed_time'] = datetime.now().isoformat()
+
+    if session.get('results'):
+        save_mining_result_to_file(session_id, {
+            'session_id': session_id,
+            'config': session.get('config', {}),
+            'results': session.get('results', {}),
+            'status': 'stopped',
+            'completed_time': session['completed_time']
+        })
+
+    return jsonify({'success': True, 'message': '挖掘任务已停止'})
 
 @bp.route('/status/<session_id>', methods=['GET'])
 def get_mining_status(session_id):
@@ -262,7 +345,7 @@ def get_mining_progress(session_id):
             
             yield f"data: {json.dumps(progress_data)}\n\n"
             
-            if session['status'] in ['completed', 'failed']:
+            if session['status'] in ['completed', 'failed', 'stopped']:
                 break
             
             import time
@@ -303,40 +386,79 @@ def get_mining_history():
         sessions = load_completed_mining_sessions()
         history = []
 
+        def _append_session_row(session_id_key, session_data):
+            if not isinstance(session_data, dict):
+                return
+            results = session_data.get('results', {}) if isinstance(session_data.get('results'), dict) else {}
+            sid = session_data.get('session_id') or session_id_key
+            if not sid or str(sid).lower() in ('metadata',):
+                return
+            completed = (
+                session_data.get('completed_time')
+                or session_data.get('timestamp')
+            )
+            config = session_data.get('config', {}) if isinstance(session_data.get('config'), dict) else {}
+            mode_guess = results.get('mode', config.get('mode', 'unknown'))
+            if mode_guess == 'unknown' and config.get('selected_algorithms'):
+                mode_guess = 'standard'
+            history.append({
+                'session_id': sid,
+                'config': config,
+                'mode': mode_guess,
+                'total_factors': results.get('total_factors', 0),
+                'algorithms_used': results.get('algorithms_used', []),
+                'completed_time': completed,
+                'timestamp': completed,
+                'status': session_data.get('status', 'unknown')
+            })
+
         if isinstance(sessions, dict):
             if 'mining_sessions' in sessions and isinstance(sessions['mining_sessions'], list):
                 for session_data in sessions['mining_sessions']:
-                    history.append({
-                        'session_id': session_data.get('session_id', ''),
-                        'config': session_data.get('config', {}),
-                        'total_factors': session_data.get('results', {}).get('total_factors', 0) if isinstance(session_data.get('results'), dict) else 0,
-                        'algorithms_used': session_data.get('results', {}).get('algorithms_used', []) if isinstance(session_data.get('results'), dict) else [],
-                        'completed_time': session_data.get('completed_time') or session_data.get('timestamp'),
-                        'status': session_data.get('status', 'unknown')
-                    })
-            else:
-                for session_id, session_data in sessions.items():
-                    history.append({
-                        'session_id': session_id,
-                        'config': session_data.get('config', {}),
-                        'total_factors': session_data.get('results', {}).get('total_factors', 0),
-                        'algorithms_used': session_data.get('results', {}).get('algorithms_used', []),
-                        'completed_time': session_data.get('completed_time'),
-                        'status': session_data.get('status', 'unknown')
-                    })
+                    _append_session_row(session_data.get('session_id', ''), session_data)
+            for session_id, session_data in sessions.items():
+                if session_id in ('mining_sessions', 'metadata'):
+                    continue
+                if isinstance(session_data, dict):
+                    _append_session_row(session_id, session_data)
         elif isinstance(sessions, list):
             for session_data in sessions:
+                is_dict = isinstance(session_data, dict)
+                if not is_dict:
+                    continue
+                results = session_data.get('results', {}) if isinstance(session_data.get('results'), dict) else {}
+                ct = session_data.get('completed_time') or session_data.get('timestamp')
+                sid = session_data.get('session_id', '')
+                if not sid or str(sid).lower() in ('metadata',):
+                    continue
+                config = session_data.get('config', {}) if isinstance(session_data.get('config'), dict) else {}
+                mode_guess = results.get('mode', config.get('mode', 'unknown'))
+                if mode_guess == 'unknown' and config.get('selected_algorithms'):
+                    mode_guess = 'standard'
                 history.append({
-                    'session_id': session_data.get('session_id', '') if isinstance(session_data, dict) else '',
-                    'config': session_data.get('config', {}) if isinstance(session_data, dict) else {},
-                    'total_factors': session_data.get('results', {}).get('total_factors', 0) if isinstance(session_data, dict) and isinstance(session_data.get('results'), dict) else 0,
-                    'algorithms_used': session_data.get('results', {}).get('algorithms_used', []) if isinstance(session_data, dict) and isinstance(session_data.get('results'), dict) else [],
-                    'completed_time': session_data.get('completed_time') or session_data.get('timestamp') if isinstance(session_data, dict) else '',
-                    'status': session_data.get('status', 'unknown') if isinstance(session_data, dict) else 'unknown'
+                    'session_id': sid,
+                    'config': config,
+                    'mode': mode_guess,
+                    'total_factors': results.get('total_factors', 0),
+                    'algorithms_used': results.get('algorithms_used', []),
+                    'completed_time': ct,
+                    'timestamp': ct,
+                    'status': session_data.get('status', 'unknown')
                 })
 
+        # 按 session_id 去重（同一任务可能同时出现在 mining_sessions 与顶层键）
+        dedup = {}
+        for row in history:
+            sid = row.get('session_id') or ''
+            if not sid:
+                continue
+            prev = dedup.get(sid)
+            if prev is None or str((row or {}).get('completed_time') or '') >= str((prev or {}).get('completed_time') or ''):
+                dedup[sid] = row
+        history = list(dedup.values())
+
         # 按完成时间倒序排列
-        history.sort(key=lambda x: x.get('completed_time', ''), reverse=True)
+        history.sort(key=lambda x: str((x or {}).get('completed_time') or ''), reverse=True)
 
         return jsonify({'success': True, 'history': history})
     except Exception as e:
@@ -348,7 +470,7 @@ def load_completed_mining_sessions():
     """加载已完成的挖掘会话"""
     try:
         # 优先从mining_sessions.json读取
-        sessions_file = Path(__file__).parent.parent.parent / "factorlib" / "minactors" / "mining_history" / "mining_sessions.json"
+        sessions_file = Path(__file__).parent.parent.parent / "factorlib" / "basic_kline" / "mining_history" / "mining_sessions.json"
         
         if sessions_file.exists():
             with open(sessions_file, 'r', encoding='utf-8') as f:
@@ -363,6 +485,116 @@ def load_completed_mining_sessions():
         print(f"加载挖掘会话失败: {e}")
         return {}
 
+def _get_history_dir():
+    return Path(__file__).parent.parent.parent / "factorlib" / "basic_kline" / "mining_history"
+
+def _get_sessions_file():
+    return _get_history_dir() / "mining_sessions.json"
+
+def _save_sessions_file(sessions):
+    sessions_file = _get_sessions_file()
+    _get_history_dir().mkdir(parents=True, exist_ok=True)
+    with open(sessions_file, 'w', encoding='utf-8') as f:
+        json.dump(sessions, f, ensure_ascii=False, indent=2)
+
+@bp.route('/history/delete/<session_id>', methods=['POST'])
+def delete_mining_history(session_id):
+    """删除指定挖掘历史（同时删除结果文件）"""
+    try:
+        if not session_id:
+            return jsonify({'success': False, 'error': '缺少session_id'}), 400
+
+        sessions = load_completed_mining_sessions()
+        changed = False
+
+        if isinstance(sessions, dict):
+            if session_id in sessions:
+                sessions.pop(session_id, None)
+                changed = True
+            arr = sessions.get('mining_sessions')
+            if isinstance(arr, list):
+                new_arr = [x for x in arr if not (isinstance(x, dict) and x.get('session_id') == session_id)]
+                if len(new_arr) != len(arr):
+                    sessions['mining_sessions'] = new_arr
+                    changed = True
+
+        if changed and isinstance(sessions, dict):
+            _save_sessions_file(sessions)
+
+        history_dir = _get_history_dir()
+        result_file = history_dir / f"mining_results_{session_id}.json"
+        if result_file.exists():
+            try:
+                result_file.unlink()
+            except Exception as e:
+                print(f"删除结果文件失败: {e}")
+
+        if session_id in mining_sessions:
+            mining_sessions.pop(session_id, None)
+
+        return jsonify({'success': True, 'deleted': True})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@bp.route('/history/clear', methods=['POST'])
+def clear_mining_history():
+    """清空全部挖掘历史（同时删除结果文件）"""
+    try:
+        sessions = load_completed_mining_sessions()
+        deleted_ids = set()
+
+        if isinstance(sessions, dict):
+            for k, v in list(sessions.items()):
+                if k == 'mining_sessions':
+                    continue
+                if isinstance(v, dict):
+                    sid = v.get('session_id') or k
+                    if sid:
+                        deleted_ids.add(str(sid))
+            arr = sessions.get('mining_sessions')
+            if isinstance(arr, list):
+                for item in arr:
+                    if isinstance(item, dict) and item.get('session_id'):
+                        deleted_ids.add(str(item.get('session_id')))
+            sessions = {}
+            _save_sessions_file(sessions)
+
+        history_dir = _get_history_dir()
+        deleted_files = 0
+        for sid in deleted_ids:
+            fp = history_dir / f"mining_results_{sid}.json"
+            if fp.exists():
+                try:
+                    fp.unlink()
+                    deleted_files += 1
+                except Exception as e:
+                    print(f"删除结果文件失败: {e}")
+
+        mining_sessions.clear()
+        mining_progress.clear()
+
+        return jsonify({'success': True, 'deleted_count': len(deleted_ids), 'deleted_files': deleted_files})
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+def _find_session_in_file_storage(sessions, session_id):
+    """从 mining_sessions.json 中解析会话：支持顶层 uuid 键或 mining_sessions 数组旧结构。"""
+    if not isinstance(sessions, dict) or not session_id:
+        return None
+    if session_id in sessions and session_id != 'mining_sessions':
+        sd = sessions[session_id]
+        return sd if isinstance(sd, dict) else None
+    arr = sessions.get('mining_sessions')
+    if isinstance(arr, list):
+        for item in arr:
+            if isinstance(item, dict) and item.get('session_id') == session_id:
+                return item
+    return None
+
 @bp.route('/result/<session_id>', methods=['GET'])
 def get_mining_result(session_id):
     """获取挖掘结果"""
@@ -370,7 +602,7 @@ def get_mining_result(session_id):
         # 先从内存中查找
         if session_id in mining_sessions:
             session = mining_sessions[session_id]
-            if session['status'] == 'completed':
+            if session.get('status') in ('completed', 'stopped'):
                 return jsonify({
                     'success': True,
                     'session_id': session_id,
@@ -381,8 +613,8 @@ def get_mining_result(session_id):
         
         # 从文件中加载
         sessions = load_completed_mining_sessions()
-        if session_id in sessions:
-            session_data = sessions[session_id]
+        session_data = _find_session_in_file_storage(sessions, session_id)
+        if session_data:
             return jsonify({
                 'success': True,
                 'session_id': session_id,
@@ -400,7 +632,7 @@ def save_mining_result_to_file(session_id, session_data):
     """保存挖掘结果到文件"""
     try:
         # 确保目录存在
-        history_dir = Path(__file__).parent.parent.parent / "factorlib" / "minactors" / "mining_history"
+        history_dir = Path(__file__).parent.parent.parent / "factorlib" / "basic_kline" / "mining_history"
         history_dir.mkdir(parents=True, exist_ok=True)
         
         # 保存到mining_sessions.json
@@ -482,29 +714,137 @@ def save_selected_factors():
             return jsonify({'success': False, 'message': '没有选择要保存的因子'})
         
         # 从挖掘结果中获取因子定义
-        session_data = load_completed_mining_sessions().get(session_id)
+        session_data = None
+        if session_id in mining_sessions:
+            session_data = mining_sessions[session_id]
+        if not session_data:
+            session_data = _find_session_in_file_storage(load_completed_mining_sessions(), session_id)
         if not session_data:
             return jsonify({'success': False, 'message': '挖掘会话不存在'})
         
         results = session_data.get('results', {})
         factors = results.get('factors', {})
-        
+        mode = results.get('mode', session_data.get('config', {}).get('mode', 'standard'))
+
+        from factor_miner.core.factor_storage import get_global_storage
+        storage = get_global_storage()
+
+        algo_name = 'standard_mining'
+        if mode == 'cross_sectional':
+            algo_name = 'gp_cross_sectional'
+        elif mode == 'cross_sectional_rl':
+            algo_name = 'rl_cross_sectional'
+
         saved_count = 0
-        for factor_id in factor_ids:
-            if factor_id in factors:
-                # 因子已经通过factor_builder保存到存储系统
-                # 这里只需要确认保存成功
+        saved_factor_ids = []
+        timestamp_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        for idx, factor_id in enumerate(factor_ids, start=1):
+            factor_info = factors.get(factor_id)
+            if not factor_info:
+                continue
+
+            new_factor_id = f"mined_{mode}_{timestamp_tag}_{idx}"
+            expression = factor_info.get('expression', '')
+            performance_metrics = dict(factor_info)
+            performance_metrics['expression'] = expression
+            performance_metrics['source_session_id'] = session_id
+            performance_metrics['source_factor_id'] = factor_id
+
+            ok = storage.save_minactor_factor(
+                factor_id=new_factor_id,
+                name=f"Mined_{mode}_{idx}",
+                algorithm_name=algo_name,
+                description=f"来源:{mode} 表达式:{expression[:200]}",
+                category='mined_factor',
+                performance_metrics=performance_metrics,
+            )
+            if ok:
                 saved_count += 1
+                saved_factor_ids.append(new_factor_id)
         
         return jsonify({
             'success': True, 
             'saved_count': saved_count,
-            'message': f'成功保存 {saved_count} 个因子'
+            'saved_factor_ids': saved_factor_ids,
+            'message': f'成功保存 {saved_count} 个因子到“挖掘因子”分类'
         })
         
     except Exception as e:
         print(f"❌ 保存选中因子失败: {e}")
         return jsonify({'success': False, 'message': f'保存失败: {str(e)}'})
+
+
+@bp.route('/diff/<session_id>', methods=['GET'])
+def get_mining_diff(session_id):
+    """获取挖掘结果与已有因子库的对比报告"""
+    try:
+        sessions = load_completed_mining_sessions()
+        session_data = _find_session_in_file_storage(sessions, session_id)
+
+        if not session_data:
+            if session_id in mining_sessions:
+                session_data = mining_sessions[session_id]
+            else:
+                return jsonify({'success': False, 'error': '会话不存在'})
+
+        results = session_data.get('results', {}) if isinstance(session_data, dict) else {}
+        mined_factors = results.get('factors', {})
+
+        if not mined_factors:
+            return jsonify({
+                'success': True,
+                'diff_report': {
+                    'summary': {'total_mined': 0, 'new': 0, 'identical': 0, 'different': 0, 'missing_artifact': 0},
+                    'items': []
+                }
+            })
+
+        try:
+            from factor_miner.core.factor_storage import get_global_storage
+            storage = get_global_storage()
+            existing_factors = storage.list_factors() if hasattr(storage, 'list_factors') else {}
+        except Exception:
+            existing_factors = {}
+
+        existing_ids = set()
+        if isinstance(existing_factors, dict):
+            existing_ids = set(existing_factors.keys())
+        elif isinstance(existing_factors, list):
+            existing_ids = {f.get('factor_id', f.get('id', '')) for f in existing_factors if isinstance(f, dict)}
+
+        items = []
+        summary = {'total_mined': len(mined_factors), 'new': 0, 'identical': 0, 'different': 0, 'missing_artifact': 0}
+
+        for factor_id, factor_info in mined_factors.items():
+            if not isinstance(factor_info, dict):
+                continue
+            item = {
+                'factor_id': factor_id,
+                'status': 'new',
+                'existing': None,
+                'new': {
+                    'model_meta': {'signature': factor_info.get('expression', factor_info.get('name', ''))},
+                }
+            }
+            if factor_id in existing_ids:
+                item['status'] = 'identical'
+                summary['identical'] += 1
+            else:
+                summary['new'] += 1
+            items.append(item)
+
+        return jsonify({
+            'success': True,
+            'diff_report': {
+                'summary': summary,
+                'items': items
+            }
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'success': False, 'error': str(e)})
 
 
 # ==================== 截面因子挖掘 API ====================
@@ -538,6 +878,7 @@ def start_cross_sectional_mining():
             'mutation_rate': float(data.get('mutation_rate', 0.2)),
             'min_ic': float(data.get('min_ic', 0.02)),
             'min_ir': float(data.get('min_ir', 0.1)),
+            'min_coverage': float(data.get('min_coverage', 0.2)),
             'max_factors': int(data.get('max_factors', 15)),
             'max_correlation': float(data.get('max_correlation', 0.7)),
         }
@@ -599,7 +940,8 @@ def _run_cross_sectional_mining_background(session_id, symbols, timeframe,
 
         data_dict = {}
         failed_symbols = []
-        for i, symbol in enumerate(symbols):
+
+        def _fetch_symbol_data(symbol):
             try:
                 market_data = loader.get_data(
                     symbol=symbol,
@@ -609,18 +951,26 @@ def _run_cross_sectional_mining_background(session_id, symbols, timeframe,
                     interval=timeframe
                 )
                 if market_data is not None and not market_data.empty and len(market_data) >= 50:
+                    return symbol, market_data, None
+                return symbol, None, "数据不足或为空"
+            except Exception as e:
+                return symbol, None, str(e)
+
+        max_workers = max(4, min(16, len(symbols)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_symbol_data, symbol): symbol for symbol in symbols}
+            for i, future in enumerate(as_completed(futures)):
+                symbol, market_data, error = future.result()
+                if market_data is not None:
                     data_dict[symbol] = market_data
                     print(f"✅ {symbol} 数据加载成功: {len(market_data)} 条")
                 else:
                     failed_symbols.append(symbol)
-                    print(f"⚠️ {symbol} 数据不足或为空")
-            except Exception as e:
-                failed_symbols.append(symbol)
-                print(f"❌ {symbol} 数据加载失败: {e}")
+                    print(f"⚠️ {symbol} 数据加载失败: {error}")
 
-            load_pct = 5 + int((i + 1) / len(symbols) * 20)
-            mining_sessions[session_id]['progress'] = load_pct
-            mining_sessions[session_id]['message'] = f'数据加载中... ({i+1}/{len(symbols)})'
+                load_pct = 5 + int((i + 1) / len(symbols) * 20)
+                mining_sessions[session_id]['progress'] = load_pct
+                mining_sessions[session_id]['message'] = f'数据加载中... ({i+1}/{len(symbols)})'
 
         if len(data_dict) < 3:
             raise ValueError(
@@ -666,34 +1016,15 @@ def _run_cross_sectional_mining_background(session_id, symbols, timeframe,
                 'long_short_return': factor_info['long_short_return'],
                 'n_symbols': factor_info['n_symbols'],
                 'n_periods': factor_info['n_periods'],
+                'total_periods': factor_info.get('total_periods', 0),
+                'coverage_rate': factor_info.get('coverage_rate', 0.0),
                 'fitness': factor_info['fitness'],
                 'depth': factor_info['depth'],
                 'size': factor_info['size'],
             }
 
-        from factor_miner.core.factor_storage import get_global_storage
-        storage = get_global_storage()
-
-        for factor_info in result['factors']:
-            try:
-                storage.save_minactor_factor(
-                    factor_id=factor_info['factor_id'],
-                    name=factor_info['name'],
-                    algorithm_name='gp_cross_sectional',
-                    description=f"GP截面因子: {factor_info['expression'][:200]}",
-                    category='gp_cs',
-                    performance_metrics={
-                        'ic_mean': factor_info['ic_mean'],
-                        'icir': factor_info['icir'],
-                        'rank_ic_mean': factor_info['rank_ic_mean'],
-                        'rank_icir': factor_info['rank_icir'],
-                        'long_short_return': factor_info['long_short_return'],
-                        'n_symbols': factor_info['n_symbols'],
-                        'n_periods': factor_info['n_periods'],
-                    }
-                )
-            except Exception as e:
-                print(f"保存因子 {factor_info['factor_id']} 失败: {e}")
+        # 不再自动保存到因子库：仅保留在本次挖掘结果中，
+        # 由用户在前端勾选并点击“保存”后再落库。
 
         final_result = {
             'mode': 'cross_sectional',
@@ -705,22 +1036,30 @@ def _run_cross_sectional_mining_background(session_id, symbols, timeframe,
             'gp_config': result.get('config', gp_config),
         }
 
+        was_stopped = result.get('stopped', False)
+        final_status = 'stopped' if was_stopped else 'completed'
+        status_msg = (
+            f'截面挖掘已停止（完成{result.get("actual_generations", "?")}代），发现 {len(result["factors"])} 个因子'
+            if was_stopped
+            else f'截面挖掘完成！发现 {len(result["factors"])} 个有效因子'
+        )
+
         save_mining_result_to_file(session_id, {
             'session_id': session_id,
             'config': mining_sessions[session_id]['config'],
             'results': final_result,
-            'status': 'completed',
+            'status': final_status,
             'completed_time': datetime.now().isoformat()
         })
 
-        mining_sessions[session_id]['status'] = 'completed'
+        mining_sessions[session_id]['status'] = final_status
         mining_sessions[session_id]['progress'] = 100
         mining_sessions[session_id]['current_step'] = 'completed'
-        mining_sessions[session_id]['message'] = f'截面挖掘完成！发现 {len(result["factors"])} 个有效因子'
+        mining_sessions[session_id]['message'] = status_msg
         mining_sessions[session_id]['completed_time'] = datetime.now().isoformat()
         mining_sessions[session_id]['results'] = final_result
 
-        print(f"截面挖掘任务完成: {session_id}, 发现 {len(result['factors'])} 个因子")
+        print(f"截面挖掘任务完成: {session_id}, 发现 {len(result['factors'])} 个因子, 停止={was_stopped}")
 
     except Exception as e:
         print(f"截面挖掘任务失败: {e}")
@@ -806,7 +1145,7 @@ def start_rl_cross_sectional_mining():
 
         rl_config = {
             'device': data.get('device', 'auto'),
-            'batch_size': int(data.get('batch_size', 512)),
+            'batch_size': int(data.get('batch_size', 4096)),
             'train_steps': int(data.get('train_steps', 500)),
             'max_formula_len': int(data.get('max_formula_len', 16)),
             'lr': float(data.get('lr', 1e-3)),
@@ -819,6 +1158,7 @@ def start_rl_cross_sectional_mining():
             'num_loops': int(data.get('num_loops', 3)),
             'max_factors': int(data.get('max_factors', 15)),
             'max_correlation': float(data.get('max_correlation', 0.7)),
+            'min_coverage': float(data.get('min_coverage', 0.2)),
             'trade_size': float(data.get('trade_size', 10000.0)),
             'base_fee': float(data.get('base_fee', 0.001)),
         }
@@ -880,7 +1220,8 @@ def _run_rl_cross_sectional_mining_background(session_id, symbols, timeframe,
 
         data_dict = {}
         failed_symbols = []
-        for i, symbol in enumerate(symbols):
+
+        def _fetch_symbol_data(symbol):
             try:
                 market_data = loader.get_data(
                     symbol=symbol,
@@ -890,18 +1231,26 @@ def _run_rl_cross_sectional_mining_background(session_id, symbols, timeframe,
                     interval=timeframe
                 )
                 if market_data is not None and not market_data.empty and len(market_data) >= 50:
+                    return symbol, market_data, None
+                return symbol, None, "数据不足或为空"
+            except Exception as e:
+                return symbol, None, str(e)
+
+        max_workers = max(4, min(16, len(symbols)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_fetch_symbol_data, symbol): symbol for symbol in symbols}
+            for i, future in enumerate(as_completed(futures)):
+                symbol, market_data, error = future.result()
+                if market_data is not None:
                     data_dict[symbol] = market_data
                     print(f"✅ {symbol} 数据加载成功: {len(market_data)} 条")
                 else:
                     failed_symbols.append(symbol)
-                    print(f"⚠️ {symbol} 数据不足或为空")
-            except Exception as e:
-                failed_symbols.append(symbol)
-                print(f"❌ {symbol} 数据加载失败: {e}")
+                    print(f"⚠️ {symbol} 数据加载失败: {error}")
 
-            load_pct = 5 + int((i + 1) / len(symbols) * 15)
-            mining_sessions[session_id]['progress'] = load_pct
-            mining_sessions[session_id]['message'] = f'数据加载中... ({i+1}/{len(symbols)})'
+                load_pct = 5 + int((i + 1) / len(symbols) * 15)
+                mining_sessions[session_id]['progress'] = load_pct
+                mining_sessions[session_id]['message'] = f'数据加载中... ({i+1}/{len(symbols)})'
 
         if len(data_dict) < 3:
             raise ValueError(
@@ -945,26 +1294,19 @@ def _run_rl_cross_sectional_mining_background(session_id, symbols, timeframe,
                 'expression': factor_info['expression'],
                 'score': factor_info['score'],
                 'avg_return': factor_info['avg_return'],
+                'ic_mean': factor_info.get('ic_mean', None),
+                'icir': factor_info.get('icir', None),
+                'rank_ic_mean': factor_info.get('rank_ic_mean', None),
+                'rank_icir': factor_info.get('rank_icir', None),
+                'long_short_return': factor_info.get('long_short_return', None),
+                'n_symbols': factor_info.get('n_symbols', result.get('n_symbols', 0)),
+                'n_periods': factor_info.get('n_periods', result.get('n_periods', 0)),
+                'total_periods': factor_info.get('total_periods', result.get('n_periods', 0)),
+                'coverage_rate': factor_info.get('coverage_rate', 0.0),
             }
 
-        from factor_miner.core.factor_storage import get_global_storage
-        storage = get_global_storage()
-
-        for factor_info in result['factors']:
-            try:
-                storage.save_minactor_factor(
-                    factor_id=factor_info['factor_id'],
-                    name=factor_info['name'],
-                    algorithm_name='rl_cross_sectional',
-                    description=f"RL截面因子: {factor_info['expression'][:200]}",
-                    category='rl_cs',
-                    performance_metrics={
-                        'score': factor_info['score'],
-                        'avg_return': factor_info['avg_return'],
-                    }
-                )
-            except Exception as e:
-                print(f"保存因子 {factor_info['factor_id']} 失败: {e}")
+        # 不再自动保存到因子库：仅保留在本次挖掘结果中，
+        # 由用户在前端勾选并点击“保存”后再落库。
 
         final_result = {
             'mode': 'cross_sectional_rl',

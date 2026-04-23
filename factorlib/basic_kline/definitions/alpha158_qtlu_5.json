@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_qtlu_5",
+  "name": "qlib158-QTLU_5",
+  "description": "qlib Alpha158 — rolling quantile(0.8) on high / close  (window=5)",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_qtlu_5.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ts_quantile(data['high'], 5, 0.8) / (data['close'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "a811e60c",
+    "created_at": "2026-04-23T11:17:23.382893",
+    "is_window": true,
+    "min_warmup_bars": 5,
+    "source_family": "qlib158"
+  }
+}

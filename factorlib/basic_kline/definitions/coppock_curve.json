@@ -1,0 +1,21 @@
+{
+  "factor_id": "coppock_curve",
+  "name": "科波克曲线",
+  "description": "Coppock Curve - 基于两段ROC的加权移动平均",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/coppock_curve.py",
+    "entry_point": "calculate",
+    "imports": []
+  },
+  "parameters": {
+    "roc_long": 14,
+    "roc_short": 11,
+    "wma_period": 10
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {}
+}

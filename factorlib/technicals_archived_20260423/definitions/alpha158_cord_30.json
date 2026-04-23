@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_cord_30",
+  "name": "qlib158-CORD_30",
+  "description": "qlib Alpha158 — ts_corr(close/ref(close,1), log(volume/ref(volume,1)+1), w)  (window=30)",
+  "category": "qlib158",
+  "subcategory": "rolling",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha158_cord_30.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ts_corr(data['close'] / (ref(data['close'], 1) + EPS), np.log(data['volume'] / (ref(data['volume'], 1) + EPS) + 1.0), 30)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "695ea442",
+    "created_at": "2026-04-23T11:17:23.421547",
+    "is_window": true,
+    "min_warmup_bars": 30,
+    "source_family": "qlib158"
+  }
+}

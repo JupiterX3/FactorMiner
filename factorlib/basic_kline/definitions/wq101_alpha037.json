@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha037",
+  "name": "WQ101-Alpha037",
+  "description": "WorldQuant Alpha#037。原始公式：rank(correlation(delay(open-close,1), close, 200)) + rank(open-close)。 语义折衷：去掉 rank；200 → 60 以缩短冷启动。",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/wq101_alpha037.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return ts_corr(ref(open_ - close, 1), close, 60) + (open_ - close)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "d19206b9",
+    "created_at": "2026-04-23T11:18:59.640146",
+    "is_window": true,
+    "min_warmup_bars": 61,
+    "source_family": "wq101"
+  }
+}

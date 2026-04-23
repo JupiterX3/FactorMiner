@@ -1,0 +1,29 @@
+{
+  "factor_id": "funding_rate_zscore",
+  "name": "资金费率 z-score",
+  "description": "funding_rate 在 window 上的 z-score，识别异常拥挤仓位。",
+  "category": "funding",
+  "subcategory": "funding_carry",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "funding/functions/funding_rate_zscore.py",
+    "function_code": "def calculate(data, window=240, **kwargs):\n    if 'funding_rate' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    x = data['funding_rate']\n    return (x - x.rolling(window).mean()) / x.rolling(window).std()",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 240
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.226037",
+    "source_family": "funding",
+    "requires_extras": [
+      "funding"
+    ]
+  }
+}

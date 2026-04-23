@@ -1,0 +1,29 @@
+{
+  "factor_id": "lsr_top_position_zscore",
+  "name": "大户持仓比 z-score",
+  "description": "topLongShortPositionRatio 的 window 滚动 z-score，捕捉大户多空极端配置。正向高值=大户显著偏多。",
+  "category": "derivatives",
+  "subcategory": "long_short_ratio",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/lsr_top_position_zscore.py",
+    "function_code": "def calculate(data, window=96, **kwargs):\n    if 'lsr_top_position' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    x = data['lsr_top_position']\n    return (x - x.rolling(window).mean()) / x.rolling(window).std()",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 96
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.216270",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha054",
+  "name": "WQ101-Alpha054",
+  "description": "WorldQuant Alpha#054。原始公式：-1 * ((low-close) * (open^5)) / ((low-high) * (close^5))。 语义折衷：原式无 rank。",
+  "category": "wq101",
+  "subcategory": "alpha054",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha054.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return -1 * ((low - close) * open_**5) / ((low - high) * close**5 + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "9fa55fdc",
+    "created_at": "2026-04-23T11:18:59.646761",
+    "is_window": false,
+    "min_warmup_bars": 1,
+    "source_family": "wq101"
+  }
+}

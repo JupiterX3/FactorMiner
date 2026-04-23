@@ -1,0 +1,29 @@
+{
+  "factor_id": "funding_rate_sign_balance",
+  "name": "资金费率符号占比差",
+  "description": "近 window 根 K 线内正 funding 占比减去负占比，接近 +1 = 持续升水拥挤，接近 -1 = 持续贴水拥挤。",
+  "category": "funding",
+  "subcategory": "funding_arbitrage",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "funding/functions/funding_rate_sign_balance.py",
+    "function_code": "def calculate(data, window=168, **kwargs):\n    if 'funding_rate' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    sign = np.sign(data['funding_rate']).fillna(0)\n    return sign.rolling(window).mean()",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 168
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.227120",
+    "source_family": "funding",
+    "requires_extras": [
+      "funding"
+    ]
+  }
+}

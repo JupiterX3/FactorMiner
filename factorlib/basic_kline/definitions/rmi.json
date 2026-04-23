@@ -1,0 +1,20 @@
+{
+  "factor_id": "rmi",
+  "name": "RMI 动量指数",
+  "description": "Relative Momentum Index - 以动量为基础的RSI变体",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/rmi.py",
+    "entry_point": "calculate",
+    "imports": []
+  },
+  "parameters": {
+    "period": 20,
+    "momentum": 5
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {}
+}

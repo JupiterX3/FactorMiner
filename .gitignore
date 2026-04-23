@@ -51,6 +51,7 @@ logs/
 # Data files (optional - remove if you want to include sample data)
 # data/binance/*.feather
 data/binance/*/*.feather
+data/symbol_cache/
 
 # User config (contains sensitive information)
 config/user_config/

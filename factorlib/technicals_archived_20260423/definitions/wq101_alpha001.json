@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha001",
+  "name": "WQ101-Alpha001",
+  "description": "WorldQuant Alpha#001。原始公式：rank(Ts_ArgMax(SignedPower((returns<0?stddev(returns,20):close), 2.), 5)) - 0.5。 语义折衷：去掉最外层 rank；返回 Ts_ArgMax/5 居中（保留原公式的[-0.5,0.5] 区间语义）。",
+  "category": "wq101",
+  "subcategory": "alpha001",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha001.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return ts_argmax(signed_power(where(ret < 0, ts_std(ret, 20), close), 2.0), 5) / 5.0 - 0.5\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "9eddf37c",
+    "created_at": "2026-04-23T11:18:59.622852",
+    "is_window": true,
+    "min_warmup_bars": 25,
+    "source_family": "wq101"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_vma_10",
+  "name": "qlib158-VMA_10",
+  "description": "qlib Alpha158 — ts_mean(volume, w) / volume  (window=10)",
+  "category": "qlib158",
+  "subcategory": "rolling",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha158_vma_10.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ts_mean(data['volume'], 10) / (data['volume'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "6238b65a",
+    "created_at": "2026-04-23T11:17:23.449742",
+    "is_window": true,
+    "min_warmup_bars": 10,
+    "source_family": "qlib158"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "factor_id": "dpo",
+  "name": "去趋势价格振荡器",
+  "description": "Detrended Price Oscillator - 去趋势振荡",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/dpo.py",
+    "entry_point": "calculate",
+    "imports": []
+  },
+  "parameters": {
+    "period": 20
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {}
+}

@@ -96,6 +96,79 @@ class DataDownloader:
             self.logger.error(f"创建交易所实例失败: {e}")
             return None
 
+    # ------------------------------------------------------------------
+    # K 线原始端点封装：保留 taker_buy_base / taker_buy_quote 两列（期货）
+    # ------------------------------------------------------------------
+    def _fetch_klines_with_taker(self, exchange, symbol: str, timeframe: str,
+                                  since_ms: int, limit: int = 1000) -> list:
+        """
+        直接调用币安 klines raw 端点，保留 taker_buy_base/taker_buy_quote。
+
+        返回: List[[ts, o, h, l, c, v, taker_buy_base, taker_buy_quote]]
+
+        仅对期货口径启用；现货或其它交易所回退到 ccxt 的 fetch_ohlcv。
+        """
+        try:
+            is_futures = getattr(self, 'trade_type', None) in (
+                'futures', 'perpetual', 'delivery'
+            )
+            if not is_futures or getattr(exchange, 'id', '') != 'binance':
+                raw = exchange.fetch_ohlcv(
+                    symbol, timeframe, since_ms, limit=limit
+                )
+                # 兼容 6 列结构
+                return [list(r) + [None, None] for r in (raw or [])]
+
+            market = exchange.market(symbol)
+            market_id = market['id']
+            params = {
+                'symbol': market_id,
+                'interval': timeframe,
+                'startTime': int(since_ms),
+                'limit': int(limit),
+            }
+            method = None
+            for name in ('fapiPublicGetKlines', 'fapiPublic_get_klines'):
+                if hasattr(exchange, name):
+                    method = getattr(exchange, name)
+                    break
+            if method is None:
+                raw = exchange.fetch_ohlcv(
+                    symbol, timeframe, since_ms, limit=limit
+                )
+                return [list(r) + [None, None] for r in (raw or [])]
+
+            resp = method(params)
+            # 币安返回每条 12 列：
+            # [openTime, open, high, low, close, volume, closeTime,
+            #  quoteAssetVolume, trades, takerBuyBase, takerBuyQuote, ignore]
+            out = []
+            for row in (resp or []):
+                try:
+                    out.append([
+                        int(row[0]),
+                        float(row[1]),
+                        float(row[2]),
+                        float(row[3]),
+                        float(row[4]),
+                        float(row[5]),
+                        float(row[9]) if row[9] is not None else None,
+                        float(row[10]) if row[10] is not None else None,
+                    ])
+                except (IndexError, ValueError, TypeError):
+                    continue
+            return out
+        except Exception as e:
+            self.logger.warning(f"_fetch_klines_with_taker 失败回退到 fetch_ohlcv: {e}")
+            try:
+                raw = exchange.fetch_ohlcv(
+                    symbol, timeframe, since_ms, limit=limit
+                )
+                return [list(r) + [None, None] for r in (raw or [])]
+            except Exception as e2:
+                self.logger.error(f"fetch_ohlcv 回退也失败: {e2}")
+                return []
+
     def download_ohlcv(self, config_id: int = None, symbol: str = None, timeframe: str = None,
                       start_date: str = None, end_date: str = None, trade_type: str = None, progress_callback=None) -> Dict:
         """
@@ -222,12 +295,13 @@ class DataDownloader:
                     # 计算本次下载的结束时间
                     batch_end = min(current_dt + timedelta(days=30), end_dt)
 
-                    # 下载数据
-                    ohlcv = exchange.fetch_ohlcv(
+                    # 下载数据（期货口径保留 taker_buy_base/quote）
+                    ohlcv = self._fetch_klines_with_taker(
+                        exchange,
                         symbol,
                         timeframe,
                         int(current_dt.timestamp() * 1000),
-                        limit=1000
+                        limit=1000,
                     )
 
                     if ohlcv:
@@ -252,7 +326,15 @@ class DataDownloader:
                 return {'success': False, 'error': '没有下载到数据'}
 
             # 转换为DataFrame - 直接命名为 date，避免后续复杂操作
-            df = pd.DataFrame(all_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            # 期货口径下 all_data 每行 8 列（含 taker_buy_base/quote）
+            # 现货回退路径下为 8 列（taker 两列为 None，兼容旧逻辑）
+            df = pd.DataFrame(
+                all_data,
+                columns=[
+                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                    'taker_buy_base', 'taker_buy_quote',
+                ],
+            )
             df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('date', inplace=True)  # 设置 date 为索引
             df.drop('timestamp', axis=1, inplace=True)
@@ -733,11 +815,12 @@ class DataDownloader:
                         dynamic_limit = min(remaining_candles, 1000)
                         #print(f"dynamic_limit: {dynamic_limit}")
 
-                        ohlcv = exchange.fetch_ohlcv(
+                        ohlcv = self._fetch_klines_with_taker(
+                            exchange,
                             symbol,
                             timeframe,
                             current_ts,
-                            limit=dynamic_limit
+                            limit=dynamic_limit,
                         )
 
                         if not ohlcv:
@@ -767,8 +850,14 @@ class DataDownloader:
                         time.sleep(exchange.rateLimit / 1000)
 
                     if missing_data:
-                        # 转换为DataFrame
-                        missing_df = pd.DataFrame(missing_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                        # 转换为DataFrame（8 列：含 taker_buy_base/quote）
+                        missing_df = pd.DataFrame(
+                            missing_data,
+                            columns=[
+                                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                                'taker_buy_base', 'taker_buy_quote',
+                            ],
+                        )
                         missing_df['date'] = pd.to_datetime(missing_df['timestamp'], unit='ms')
                         missing_df = missing_df.set_index('date').drop('timestamp', axis=1)
 

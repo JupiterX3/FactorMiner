@@ -1,16 +1,25 @@
-﻿"""
-透明因子保存系统 v3.0
-完全透明的因子计算逻辑存储
+"""
+透明因子保存系统 v4.0
+因子分类采用「一级=数据来源，二级=用途」的两层结构。
 
-支持的因子类型：
-- function: 函数类型因子，保存在 functions/ 目录
-- ml_model: 机器学习模型因子，保存在 models/ 目录
+一级分类（对应物理目录，动态扫描 factorlib/ 下带 definitions/ 子目录的文件夹）：
+- basic_kline/   仅依赖 OHLCV（最大的一档）
+- derivatives/   依赖衍生品微观结构（OI/LSR/taker_buy/basis 等）
+- funding/       依赖资金费率
 
-目录结构：
-- definitions/  - 因子定义 (JSON格式)
-- functions/    - 因子函数代码 (Python文件)
-- models/       - 机器学习模型文件 (.pkl文件，仅用于需要量化模型的因子)
-- temp/         - 临时缓存
+二级分类（写进 JSON 的 subcategory 字段）：
+- technical / mined / event / statistical / microstructure / funding_carry 等
+
+因子类型（computation_type）：
+- function  函数类型：保存在 {root}/functions/
+- formula   纯公式类型：保存在 {root}/formulas/ 或直接嵌在 JSON 里
+
+不再支持 ml_model（v4 已移除，仅保留兼容 function/formula）。
+每个一级目录的结构统一为：
+    <root>/definitions/     因子定义 JSON
+    <root>/functions/       因子函数源码
+    <root>/evaluations/     评估结果
+    <root>/mining_history/  （可选）挖掘历史，仅 basic_kline 下有 minactors 历史
 """
 
 import json
@@ -21,30 +30,36 @@ from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
 from datetime import datetime
 import importlib.util
-import pandas as pd
-import numpy as np
+import pandas as pd  # noqa: F401 - 历史接口签名保留
 
 logger = logging.getLogger(__name__)
 
 
+# -----------------------------------------------------------------------------
+# 一级分类枚举（仅做校验与 fallback 用；物理上是动态扫描）
+# -----------------------------------------------------------------------------
+KNOWN_SOURCE_GROUPS = ("basic_kline", "derivatives", "funding")
+
+
 @dataclass
 class FactorDefinition:
-    """完整的因子定义 - 包含所有计算信息"""
-    factor_id: str              # 唯一标识符
-    name: str                   # 因子名称  
-    description: str            # 因子描述
-    category: str               # 因子类别
-    subcategory: str = ""       # 子类别
-    
-    # 计算信息 - 核心扩展
-    computation_type: str = "function"  # function, ml_model
-    computation_data: Dict = None      # 具体的计算数据
-    
-    parameters: Dict = None     # 默认参数
-    dependencies: List = None   # 依赖的其他因子/数据
-    output_type: str = "series" # 输出类型
-    metadata: Dict = None       # 其他元数据
-    
+    """完整的因子定义 - 包含所有计算信息。"""
+
+    factor_id: str
+    name: str
+    description: str
+    category: str  # 一级分类，对应目录名（basic_kline / derivatives / funding / ...）
+    subcategory: str = ""  # 二级分类：technical / mined / event / statistical / ...
+
+    # v4：只保留 function / formula，ml_model 已移除
+    computation_type: str = "function"
+    computation_data: Dict = None
+
+    parameters: Dict = None
+    dependencies: List = None
+    output_type: str = "series"
+    metadata: Dict = None
+
     def __post_init__(self):
         if self.parameters is None:
             self.parameters = {}
@@ -54,595 +69,381 @@ class FactorDefinition:
             self.metadata = {}
         if self.computation_data is None:
             self.computation_data = {}
-            
-        # 自动生成校验和
+
+        # v4：computation_type="ml_model" 保留作为「算法代理」语义
+        # （由 user_algo/ 下的 `calculate_single_factor` 函数承担实际计算，
+        # 典型用途是 GP 截面因子 `gp_cross_sectional`）。
+        # 真正的 ML 预训练因子（依赖 pkl 模型推理）已在 v4 中全部移除。
+
         self.metadata['checksum'] = self._calculate_checksum()
-        self.metadata['created_at'] = datetime.now().isoformat()
-    
+        self.metadata.setdefault('created_at', datetime.now().isoformat())
+
     def _calculate_checksum(self) -> str:
-        """计算因子定义的校验和"""
         content = f"{self.factor_id}_{self.name}_{str(self.computation_data)}"
         return hashlib.md5(content.encode()).hexdigest()[:8]
-    
+
     def to_dict(self) -> Dict:
-        """转换为字典，用于JSON序列化"""
         return asdict(self)
 
 
 class TransparentFactorStorage:
     """
-    完全透明的因子存储管理器
-    
-    透明因子保存机制只支持两种因子类型：
-    1. function - 函数类型因子：将因子计算逻辑保存为Python函数文件
-    2. ml_model - 机器学习模型因子：将训练好的模型保存为.pkl文件
-    
-    目录结构：
-    - definitions/  - 因子定义 (JSON格式)
-    - functions/    - 因子函数代码 (Python文件)  
-    - models/       - 机器学习模型文件 (.pkl文件，仅用于需要量化模型的因子)
-    - temp/         - 临时缓存
+    完全透明的因子存储管理器（v4：按数据来源做一级分类）。
+
+    定义 / 函数 / 评估都存储在每个「数据来源一级目录」下，目录结构统一。
+    本类不硬编码任何一级目录名，而是通过扫描发现——任何子目录只要
+    含有 definitions/ 子目录就会被识别为一级分类。
     """
-    
+
+    # 仅作为首次部署时的种子目录（不存在时自动创建）
+    DEFAULT_SOURCE_GROUPS = KNOWN_SOURCE_GROUPS
+
     def __init__(self, storage_dir: str = None):
         if storage_dir is None:
-            # V4 重新组织：使用新的文件夹结构
             storage_dir = Path(__file__).parent.parent.parent / "factorlib"
-        
         self.storage_dir = Path(storage_dir)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
-        
-        # 新的目录结构
-        # technicals/ - 传统技术指标
-        self.technicals_definitions_dir = self.storage_dir / "technicals" / "definitions"
-        self.technicals_functions_dir = self.storage_dir / "technicals" / "functions"
-        self.technicals_evaluations_dir = self.storage_dir / "technicals" / "evaluations"
-        
-        # minactors/ - 挖掘因子
-        self.minactors_definitions_dir = self.storage_dir / "minactors" / "definitions"
-        self.minactors_models_dir = self.storage_dir / "minactors" / "models"
-        self.minactors_evaluations_dir = self.storage_dir / "minactors" / "evaluations"
-        self.minactors_mining_history_dir = self.storage_dir / "minactors" / "mining_history"
-        
-        # 其他目录
+
+        # 种子：保证默认一级分类目录存在
+        for group in self.DEFAULT_SOURCE_GROUPS:
+            for sub in ("definitions", "functions", "evaluations"):
+                (self.storage_dir / group / sub).mkdir(parents=True, exist_ok=True)
+
+        # 其它目录
         self.temp_dir = self.storage_dir / "temp"
-        
-        # 创建所有目录
-        for dir_path in [
-            self.technicals_definitions_dir, self.technicals_functions_dir, self.technicals_evaluations_dir,
-            self.minactors_definitions_dir, self.minactors_models_dir, self.minactors_evaluations_dir, 
-            self.minactors_mining_history_dir, self.temp_dir
-        ]:
-            dir_path.mkdir(parents=True, exist_ok=True)
-    
-    def save_function_factor(self, factor_id: str, name: str, 
-                            function_code: str, entry_point: str = "calculate",
-                            description: str = "", category: str = "custom",
-                            parameters: Dict = None, imports: List[str] = None) -> bool:
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # 兼容期：挖掘历史仍写到 basic_kline/mining_history
+        self.mining_history_dir = self.storage_dir / "basic_kline" / "mining_history"
+        self.mining_history_dir.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # 目录扫描
+    # ------------------------------------------------------------------
+    # 目录名中包含这些关键字的被视为备份/归档，不参与因子扫描
+    _EXCLUDED_NAME_TOKENS = ("_archived_", "_deprecated", "_backup")
+
+    def list_source_groups(self) -> List[str]:
         """
-        保存函数类因子（已废弃，请使用 save_technical_factor）
+        返回所有一级分类目录（含 definitions/ 子目录，且名字不是归档备份）。
         """
-        return self.save_technical_factor(
-            factor_id=factor_id,
-            name=name,
-            function_code=function_code,
-            entry_point=entry_point,
-            description=description,
-            category=category,
-            parameters=parameters,
-            imports=imports
-        )
-    
-    def compute_factor(self, factor_id: str, data: pd.DataFrame, **kwargs) -> Optional[pd.Series]:
-        """动态计算因子"""
+        groups: List[str] = []
+        if not self.storage_dir.exists():
+            return groups
+        for child in self.storage_dir.iterdir():
+            if not child.is_dir():
+                continue
+            if child.name.startswith((".", "_")):
+                continue
+            if any(tok in child.name for tok in self._EXCLUDED_NAME_TOKENS):
+                continue
+            if (child / "definitions").is_dir():
+                groups.append(child.name)
+        # 稳定顺序：DEFAULT_SOURCE_GROUPS 在前，其余字母序
+        front = [g for g in self.DEFAULT_SOURCE_GROUPS if g in groups]
+        rest = sorted(g for g in groups if g not in self.DEFAULT_SOURCE_GROUPS)
+        return front + rest
+
+    def _definitions_dirs(self) -> List[Path]:
+        return [self.storage_dir / g / "definitions" for g in self.list_source_groups()]
+
+    def _functions_dirs(self) -> List[Path]:
+        return [self.storage_dir / g / "functions" for g in self.list_source_groups()]
+
+    def _evaluations_dirs(self) -> List[Path]:
+        return [self.storage_dir / g / "evaluations" for g in self.list_source_groups()]
+
+    def _group_for_category(self, category: str) -> str:
+        """根据 category（一级分类）定位目录名；未知分类回退到 basic_kline。"""
+        cat = (category or "").strip().lower()
+        if cat in self.list_source_groups():
+            return cat
+        # 兼容老数据：历史上的 technical/ml/pattern/mined_factor 等 → basic_kline
+        return "basic_kline"
+
+    # ------------------------------------------------------------------
+    # 计算入口
+    # ------------------------------------------------------------------
+    def compute_factor(self, factor_id: str, data: 'pd.DataFrame', **kwargs) -> Optional['pd.Series']:
         factor_def = self.load_factor_definition(factor_id)
         if not factor_def:
             raise ValueError(f"因子不存在: {factor_id}")
-        
-        # 合并参数
+
         params = factor_def.parameters.copy()
         params.update(kwargs)
-        
+
         try:
             if factor_def.computation_type == "function":
                 return self._compute_function_factor(factor_def, data, params)
-            elif factor_def.computation_type == "ml_model":
-                return self._compute_ml_model_factor(factor_def, data, params)
+            elif factor_def.computation_type in ("formula", "ml_model"):
+                # formula 与 ml_model（算法代理）统一由 factor_engine 处理
+                raise NotImplementedError(
+                    f"computation_type={factor_def.computation_type} "
+                    f"由 factor_engine 处理，不应在 storage 层计算"
+                )
             else:
-                raise ValueError(f"不支持的计算类型: {factor_def.computation_type}。透明因子保存机制只支持 function 和 ml_model 类型")
-                
+                raise ValueError(
+                    f"不支持的计算类型: {factor_def.computation_type}；"
+                    f"v4 支持 function / formula / ml_model(算法代理)"
+                )
         except Exception as e:
             logger.error(f"计算因子失败 {factor_id}: {e}")
             return None
-    
-    def _compute_function_factor(self, factor_def: FactorDefinition,
-                                data: pd.DataFrame, params: Dict) -> pd.Series:
-        """计算函数类因子"""
+
+    def _compute_function_factor(
+        self, factor_def: FactorDefinition, data: 'pd.DataFrame', params: Dict
+    ) -> 'pd.Series':
         comp_data = factor_def.computation_data
-        func_file = self.storage_dir / comp_data["function_file"]
-        entry_point = comp_data["entry_point"]
-        
-        # 动态导入模块
+        func_rel = comp_data.get("function_file")
+        if not func_rel:
+            raise ValueError(f"因子 {factor_def.factor_id} 缺少 function_file")
+
+        # 允许绝对路径或相对 storage_dir；找不到时遍历所有一级目录 functions/
+        func_file = self.storage_dir / func_rel
+        if not func_file.exists():
+            fname = Path(func_rel).name
+            for fdir in self._functions_dirs():
+                candidate = fdir / fname
+                if candidate.exists():
+                    func_file = candidate
+                    break
+        if not func_file.exists():
+            raise FileNotFoundError(f"找不到因子函数文件: {func_rel}")
+
+        entry_point = comp_data.get("entry_point", "calculate")
         spec = importlib.util.spec_from_file_location(
             f"factor_{factor_def.factor_id}", func_file
         )
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        
-        # 获取入口函数
-        if hasattr(module, entry_point):
-            func = getattr(module, entry_point)
-            return func(data, **params)
-        else:
+
+        if not hasattr(module, entry_point):
             raise ValueError(f"函数中未找到入口点: {entry_point}")
-    
+        func = getattr(module, entry_point)
+        return func(data, **params)
 
-    def _compute_ml_model_factor(self, factor_def: FactorDefinition,
-                                 data: pd.DataFrame, params: Dict) -> pd.Series:
-        """基于已训练的.pkl模型进行推理的因子计算"""
-        import pickle
-        from .feature_pipeline import build_ml_features
-        import pandas as pd
-
-        comp_data = factor_def.computation_data
-        
-        artifact_relpath = comp_data.get("artifact_path") or comp_data.get("model_file")
-        
-        if not artifact_relpath:
-            algorithm_name = comp_data.get("algorithm_name")
-            if algorithm_name:
-                logger.info(f"ml_model 因子无模型文件，尝试使用算法模块: {algorithm_name}")
-                return self._compute_via_algorithm(algorithm_name, factor_def.name, data, params)
-            
-            raise ValueError("ml_model 定义缺少 artifact_path 或 model_file")
-
-        artifact_file = self.storage_dir / artifact_relpath
-        if not artifact_file.exists():
-            candidate = self.models_dir / Path(artifact_relpath).name
-            if candidate.exists():
-                artifact_file = candidate
-            else:
-                algorithm_name = comp_data.get("algorithm_name")
-                if algorithm_name:
-                    logger.info(f"模型文件不存在，尝试使用算法模块: {algorithm_name}")
-                    return self._compute_via_algorithm(algorithm_name, factor_def.name, data, params)
-                raise FileNotFoundError(f"找不到模型文件: {artifact_file}")
-
-        with open(artifact_file, "rb") as f:
-            artifact = pickle.load(f)
-
-        model = artifact.get("model")
-        feature_columns = artifact.get("feature_columns") or []
-        scaler = artifact.get("scaler")
-
-        features = build_ml_features(data)
-
-        missing = [c for c in feature_columns if c not in features.columns]
-        if missing:
-            for c in missing:
-                features[c] = np.nan
-        X = features[feature_columns]
-
-        X = X.replace([np.inf, -np.inf], np.nan)
-        X = X.ffill().bfill()
-        if scaler is not None:
-            X_scaled = scaler.transform(X)
-        else:
-            X_scaled = X.values
-
-        y_pred = model.predict(X_scaled)
-        return pd.Series(y_pred, index=data.index)
-    
-    def _compute_via_algorithm(self, algorithm_name: str, factor_name: str, 
-                               data: pd.DataFrame, params: Dict) -> pd.Series:
-        """通过算法模块计算因子"""
-        import importlib.util
-        import sys
-        
-        algo_dir = Path(__file__).parent.parent.parent / "user_algo"
-        if str(algo_dir) not in sys.path:
-            sys.path.insert(0, str(algo_dir))
-        
-        algo_file = algo_dir / f"{algorithm_name}.py"
-        if not algo_file.exists():
-            raise FileNotFoundError(f"算法文件不存在: {algo_file}")
-        
-        spec = importlib.util.spec_from_file_location(algorithm_name, algo_file)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        
-        if hasattr(module, 'calculate_single_factor'):
-            return module.calculate_single_factor(data, factor_name, **params)
-        else:
-            raise ValueError(f"算法模块 {algorithm_name} 缺少 calculate_single_factor 函数")
-
-    def save_ml_model_factor(self, factor_id: str, name: str,
-                             artifact_filename: str,
-                             description: str = "",
-                             category: str = "ml",
-                             parameters: Dict = None,
-                             feature_set: str = "basic_v1") -> bool:
-        """
-        保存基于已训练模型的因子定义（ml_model），artifact 文件应放置在 factorlib/models/ 下
-        """
-        try:
-            # 仅保存定义，不复制artifact
-            artifact_rel = str(Path("models") / Path(artifact_filename).name)
-            factor_def = FactorDefinition(
-                factor_id=factor_id,
-                name=name,
-                description=description,
-                category=category,
-                computation_type="ml_model",
-                computation_data={
-                    "artifact_path": artifact_rel,
-                    "feature_set": feature_set
-                },
-                parameters=parameters or {}
-            )
-            return self._save_factor_definition(factor_def)
-        except Exception as e:
-            logger.error(f"保存ML模型因子失败: {e}")
-            return False
-    
-    def save_ml_factor(self, factor_id: str, name: str, algorithm_name: str,
-                      description: str = "", category: str = "ml",
-                      model_file: str = "", performance_metrics: Dict = None) -> bool:
-        """
-        保存ML因子定义（简化版）
-        """
-        try:
-            factor_def = FactorDefinition(
-                factor_id=factor_id,
-                name=name,
-                description=description,
-                category=category,
-                computation_type="ml_model",
-                computation_data={
-                    "algorithm_name": algorithm_name,
-                    "model_file": model_file,
-                    "performance_metrics": performance_metrics or {}
-                },
-                parameters={}
-            )
-            return self._save_factor_definition(factor_def)
-        except Exception as e:
-            logger.error(f"保存ML因子失败: {e}")
-            return False
-    
+    # ------------------------------------------------------------------
+    # 定义读写
+    # ------------------------------------------------------------------
     def load_factor_definition(self, factor_id: str) -> Optional[FactorDefinition]:
-        """加载因子定义"""
         try:
-            # 先在minactors中查找
-            def_file = self.minactors_definitions_dir / f"{factor_id}.json"
-            if not def_file.exists():
-                # 再在technicals中查找
-                def_file = self.technicals_definitions_dir / f"{factor_id}.json"
-                if not def_file.exists():
-                    return None
-            
-            with open(def_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            return FactorDefinition(**data)
-            
+            for d in self._definitions_dirs():
+                def_file = d / f"{factor_id}.json"
+                if def_file.exists():
+                    with open(def_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    return FactorDefinition(**data)
+            return None
         except Exception as e:
             logger.error(f"加载因子定义失败: {e}")
             return None
-    
+
     def list_factors(self) -> List[str]:
-        """列出所有因子ID"""
+        ids: List[str] = []
         try:
-            # 合并两个目录的因子
-            technicals_files = self.technicals_definitions_dir.glob("*.json")
-            minactors_files = self.minactors_definitions_dir.glob("*.json")
-            
-            factor_ids = []
-            factor_ids.extend([f.stem for f in technicals_files])
-            factor_ids.extend([f.stem for f in minactors_files])
-            
-            return factor_ids
+            for d in self._definitions_dirs():
+                if d.exists():
+                    ids.extend(f.stem for f in d.glob("*.json"))
+            # 去重但保留顺序
+            seen = set()
+            ordered = []
+            for i in ids:
+                if i in seen:
+                    continue
+                seen.add(i)
+                ordered.append(i)
+            return ordered
         except Exception as e:
             logger.error(f"列出因子失败: {e}")
             return []
-    
+
     def get_factors_by_category(self, category: str) -> List[str]:
-        """按分类获取因子"""
-        factors = []
+        factors: List[str] = []
         for factor_id in self.list_factors():
             factor_def = self.load_factor_definition(factor_id)
             if factor_def and factor_def.category == category:
                 factors.append(factor_id)
         return factors
-    
+
     def delete_factor(self, factor_id: str) -> bool:
-        """删除因子"""
         try:
-            # 删除定义文件（先尝试minactors，再尝试technicals）
-            def_file = self.minactors_definitions_dir / f"{factor_id}.json"
-            if not def_file.exists():
-                def_file = self.technicals_definitions_dir / f"{factor_id}.json"
-            if def_file.exists():
-                def_file.unlink()
-            
-            # 删除相关文件
-            function_file = self.technicals_functions_dir / f"{factor_id}.py"
-            if function_file.exists():
-                function_file.unlink()
-            
-            return True
-            
+            removed = False
+            for d in self._definitions_dirs():
+                def_file = d / f"{factor_id}.json"
+                if def_file.exists():
+                    def_file.unlink()
+                    removed = True
+            for d in self._functions_dirs():
+                fn_file = d / f"{factor_id}.py"
+                if fn_file.exists():
+                    fn_file.unlink()
+                    removed = True
+            return removed
         except Exception as e:
             logger.error(f"删除因子失败: {e}")
             return False
-    
-    # 删除重复的save_evaluation_record方法，直接复用因子评估网页的存储方法
-    
+
     def _save_factor_definition(self, factor_def: FactorDefinition) -> bool:
-        """保存因子定义到JSON"""
         try:
-            # 根据因子类型选择目录
-            if factor_def.computation_type == "ml_model" or factor_def.category == "ml":
-                def_file = self.minactors_definitions_dir / f"{factor_def.factor_id}.json"
-            else:
-                def_file = self.technicals_definitions_dir / f"{factor_def.factor_id}.json"
-            
+            group = self._group_for_category(factor_def.category)
+            def_dir = self.storage_dir / group / "definitions"
+            def_dir.mkdir(parents=True, exist_ok=True)
+            def_file = def_dir / f"{factor_def.factor_id}.json"
             with open(def_file, 'w', encoding='utf-8') as f:
                 json.dump(factor_def.to_dict(), f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"因子定义已保存: {factor_def.factor_id}")
+            logger.info(f"因子定义已保存: {factor_def.factor_id} → {group}")
             return True
-            
         except Exception as e:
             logger.error(f"保存因子定义失败: {e}")
             return False
 
-    # ==================== 新的简洁API接口 ====================
-    
-    def save_technical_factor(self, factor_id: str, name: str, function_code: str, 
-                            description: str = "", category: str = "technical",
-                            entry_point: str = "calculate", imports: List[str] = None) -> bool:
+    # ------------------------------------------------------------------
+    # 便捷 API
+    # ------------------------------------------------------------------
+    def save_function_factor(
+        self,
+        factor_id: str,
+        name: str,
+        function_code: str,
+        description: str = "",
+        category: str = "basic_kline",
+        subcategory: str = "technical",
+        entry_point: str = "calculate",
+        imports: List[str] = None,
+        parameters: Dict = None,
+    ) -> bool:
         """
-        保存技术指标因子到 technicals/ 目录
-        
-        Args:
-            factor_id: 因子唯一标识
-            name: 因子名称
-            function_code: Python函数代码
-            description: 因子描述
-            category: 因子分类
-            entry_point: 入口函数名
-            imports: 导入语句列表
-            
-        Returns:
-            bool: 保存是否成功
+        保存函数类因子；category 应为一级分类目录名（basic_kline/derivatives/funding）。
         """
         try:
-            # 保存函数代码
-            func_file = self.technicals_functions_dir / f"{factor_id}.py"
+            group = self._group_for_category(category)
+            functions_dir = self.storage_dir / group / "functions"
+            functions_dir.mkdir(parents=True, exist_ok=True)
+
+            func_file = functions_dir / f"{factor_id}.py"
             with open(func_file, 'w', encoding='utf-8') as f:
                 if imports:
                     for imp in imports:
                         f.write(f"{imp}\n")
                     f.write("\n")
                 f.write(function_code)
-            
-            # 保存因子定义
+
             factor_def = FactorDefinition(
                 factor_id=factor_id,
                 name=name,
                 description=description,
-                category=category,
+                category=group,
+                subcategory=subcategory,
                 computation_type="function",
                 computation_data={
                     "function_file": str(func_file.relative_to(self.storage_dir)),
                     "function_code": function_code,
                     "entry_point": entry_point,
-                    "imports": imports or []
+                    "imports": imports or [],
                 },
-                parameters={}
+                parameters=parameters or {},
             )
-            
-            def_file = self.technicals_definitions_dir / f"{factor_id}.json"
-            with open(def_file, 'w', encoding='utf-8') as f:
-                json.dump(factor_def.to_dict(), f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"技术指标因子已保存: {factor_id}")
-            return True
-            
+            return self._save_factor_definition(factor_def)
         except Exception as e:
-            logger.error(f"保存技术指标因子失败: {e}")
+            logger.error(f"保存因子失败: {e}")
             return False
-    
-    def save_minactor_factor(self, factor_id: str, name: str, algorithm_name: str,
-                           model_file: str = "", description: str = "", 
-                           category: str = "ml", performance_metrics: Dict = None) -> bool:
+
+    # 兼容老名字：save_technical_factor 现在就是 save_function_factor
+    def save_technical_factor(self, *args, **kwargs) -> bool:
+        kwargs.setdefault("category", "basic_kline")
+        kwargs.setdefault("subcategory", "technical")
+        return self.save_function_factor(*args, **kwargs)
+
+    # 兼容老名字：挖掘因子
+    def save_minactor_factor(
+        self, factor_id: str, name: str,
+        function_code: str,
+        description: str = "",
+        subcategory: str = "mined",
+        entry_point: str = "calculate",
+        imports: List[str] = None,
+        parameters: Dict = None,
+    ) -> bool:
+        return self.save_function_factor(
+            factor_id=factor_id,
+            name=name,
+            function_code=function_code,
+            description=description,
+            category="basic_kline",
+            subcategory=subcategory,
+            entry_point=entry_point,
+            imports=imports,
+            parameters=parameters,
+        )
+
+    # ------------------------------------------------------------------
+    # 评估与挖掘历史
+    # ------------------------------------------------------------------
+    def save_evaluation(
+        self, factor_id: str, evaluation_data: Dict, source: str = None
+    ) -> bool:
         """
-        保存挖掘因子到 minactors/ 目录
-        
-        Args:
-            factor_id: 因子唯一标识
-            name: 因子名称
-            algorithm_name: 算法名称
-            model_file: 模型文件名
-            description: 因子描述
-            category: 因子分类
-            performance_metrics: 性能指标
-            
-        Returns:
-            bool: 保存是否成功
+        保存评估结果到因子所在一级分类的 evaluations/ 目录。
+
+        `source` 参数兼容旧实现（historically: 'technicals'/'minactors'），
+        但现在以 factor 的实际分类目录为准。
         """
         try:
-            # 保存因子定义
-            factor_def = FactorDefinition(
-                factor_id=factor_id,
-                name=name,
-                description=description,
-                category=category,
-                computation_type="ml_model",
-                computation_data={
-                    "algorithm_name": algorithm_name,
-                    "model_file": model_file,
-                    "performance_metrics": performance_metrics or {}
-                },
-                parameters={}
+            factor_def = self.load_factor_definition(factor_id)
+            group = self._group_for_category(
+                factor_def.category if factor_def else ""
             )
-            
-            def_file = self.minactors_definitions_dir / f"{factor_id}.json"
-            with open(def_file, 'w', encoding='utf-8') as f:
-                json.dump(factor_def.to_dict(), f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"挖掘因子已保存: {factor_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"保存挖掘因子失败: {e}")
-            return False
-    
-    def save_model(self, factor_id: str, model_data: bytes, model_type: str = "pkl") -> bool:
-        """
-        保存模型文件到 minactors/models/ 目录
-        
-        Args:
-            factor_id: 因子标识
-            model_data: 模型数据（字节）
-            model_type: 模型类型（pkl, joblib等）
-            
-        Returns:
-            bool: 保存是否成功
-        """
-        try:
-            model_file = self.minactors_models_dir / f"{factor_id}.{model_type}"
-            with open(model_file, 'wb') as f:
-                f.write(model_data)
-            
-            logger.info(f"模型文件已保存: {factor_id}.{model_type}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"保存模型文件失败: {e}")
-            return False
-    
-    def load_model(self, factor_id: str, model_type: str = "pkl") -> Optional[bytes]:
-        """
-        加载模型文件从 minactors/models/ 目录
-        
-        Args:
-            factor_id: 因子标识
-            model_type: 模型类型（pkl, joblib等）
-            
-        Returns:
-            bytes: 模型数据，如果文件不存在则返回None
-        """
-        try:
-            model_file = self.minactors_models_dir / f"{factor_id}.{model_type}"
-            if not model_file.exists():
-                return None
-            
-            with open(model_file, 'rb') as f:
-                model_data = f.read()
-            
-            logger.info(f"模型文件已加载: {factor_id}.{model_type}")
-            return model_data
-            
-        except Exception as e:
-            logger.error(f"加载模型文件失败: {e}")
-            return None
-    
-    def save_evaluation(self, factor_id: str, evaluation_data: Dict, 
-                       source: str = "minactors") -> bool:
-        """
-        保存评估结果
-        
-        Args:
-            factor_id: 因子标识
-            evaluation_data: 评估数据
-            source: 来源（technicals 或 minactors）
-            
-        Returns:
-            bool: 保存是否成功
-        """
-        try:
-            if source == "technicals":
-                eval_dir = self.technicals_evaluations_dir
-            else:
-                eval_dir = self.minactors_evaluations_dir
-            
+            eval_dir = self.storage_dir / group / "evaluations"
+            eval_dir.mkdir(parents=True, exist_ok=True)
             eval_file = eval_dir / f"{factor_id}.json"
-            
-            # 加载现有评估数据
-            existing_data = {}
+
+            existing = {}
             if eval_file.exists():
                 with open(eval_file, 'r', encoding='utf-8') as f:
-                    existing_data = json.load(f)
-            
-            # 添加新评估
-            evaluations = existing_data.get('evaluations', [])
-            evaluations.append({
-                'evaluated_at': datetime.now().isoformat(),
-                'results': evaluation_data
-            })
-            existing_data['evaluations'] = evaluations
-            
-            # 保存
+                    existing = json.load(f)
+            evaluations = existing.get('evaluations', [])
+            evaluations.append(
+                {
+                    'evaluated_at': datetime.now().isoformat(),
+                    'results': evaluation_data,
+                }
+            )
+            existing['evaluations'] = evaluations
+
             with open(eval_file, 'w', encoding='utf-8') as f:
-                json.dump(existing_data, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"评估结果已保存: {factor_id}")
+                json.dump(existing, f, ensure_ascii=False, indent=2)
             return True
-            
         except Exception as e:
-            logger.error(f"保存评估结果失败: {e}")
+            logger.error(f"保存评估失败: {e}")
             return False
-    
+
     def save_mining_history(self, session_id: str, session_data: Dict) -> bool:
-        """
-        保存挖掘历史到 minactors/mining_history/ 目录
-        
-        Args:
-            session_id: 会话ID
-            session_data: 会话数据
-            
-        Returns:
-            bool: 保存是否成功
-        """
         try:
-            # 保存到mining_sessions.json
-            sessions_file = self.minactors_mining_history_dir / "mining_sessions.json"
-            
-            # 加载现有会话
-            sessions = {}
+            self.mining_history_dir.mkdir(parents=True, exist_ok=True)
+            sessions_file = self.mining_history_dir / "mining_sessions.json"
+            sessions: Dict = {}
             if sessions_file.exists():
                 with open(sessions_file, 'r', encoding='utf-8') as f:
                     content = f.read().strip()
                     if content:
                         sessions = json.loads(content)
-            
-            # 添加新会话
             sessions[session_id] = session_data
-            
-            # 保存
             with open(sessions_file, 'w', encoding='utf-8') as f:
                 json.dump(sessions, f, ensure_ascii=False, indent=2)
-            
-            # 保存详细结果
-            result_file = self.minactors_mining_history_dir / f"mining_results_{session_id}.json"
+
+            result_file = self.mining_history_dir / f"mining_results_{session_id}.json"
             with open(result_file, 'w', encoding='utf-8') as f:
                 json.dump(session_data, f, ensure_ascii=False, indent=2)
-            
-            logger.info(f"挖掘历史已保存: {session_id}")
             return True
-            
         except Exception as e:
             logger.error(f"保存挖掘历史失败: {e}")
             return False
 
 
-# 全局实例
-_global_storage = None
+_global_storage: Optional[TransparentFactorStorage] = None
+
 
 def get_global_storage() -> TransparentFactorStorage:
-    """获取全局存储实例"""
     global _global_storage
     if _global_storage is None:
         _global_storage = TransparentFactorStorage()

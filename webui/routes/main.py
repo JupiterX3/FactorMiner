@@ -34,6 +34,12 @@ def data_viewer():
     config = current_app.config['FRONTEND_CONFIG']
     return render_template('data_viewer.html', config=config)
 
+@bp.route('/extra-data-download')
+def extra_data_download():
+    """额外数据下载页面（OI / LSR / Funding / Mark-Index）。"""
+    config = current_app.config['FRONTEND_CONFIG']
+    return render_template('extra_data_download.html', config=config)
+
 @bp.route('/factor-library')
 def factor_library():
     """因子库页面"""
@@ -53,6 +59,12 @@ def cross_sectional_evaluation():
     """截面因子评估页面"""
     config = current_app.config['FRONTEND_CONFIG']
     return render_template('cross_sectional_evaluation.html', config=config)
+
+@bp.route('/method-comparison')
+def method_comparison():
+    """方法对比页面：walk-forward 对照实验（equal_weight / ic_weight / max_icir_weight）"""
+    config = current_app.config['FRONTEND_CONFIG']
+    return render_template('method_comparison.html', config=config)
 
 @bp.route('/factor-mining')
 def factor_mining():

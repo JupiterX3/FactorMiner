@@ -44,7 +44,7 @@
                     </div>
                     <div class="col-md-2">
                         <label class="form-label">&nbsp;</label>
-                        <button class="btn btn-outline-primary w-100" onclick="refreshData()">
+                        <button class="btn btn-outline-primary w-100" id="refreshDataBtn" onclick="refreshData()">
                             🔄 刷新
                         </button>
                     </div>
@@ -373,9 +373,10 @@ const DataViewer = {
         container.insertBefore(alertDiv, container.firstChild);
     },
     
-    async loadLocalData() {
+    async loadLocalData(forceRefresh = false) {
         try {
-            const response = await fetch('/api/data/local-data');
+            const url = forceRefresh ? '/api/data/local-data?force=1' : '/api/data/local-data';
+            const response = await fetch(url);
             const result = await response.json();
             
             if (result.success) {
@@ -613,8 +614,23 @@ function updateSelectedFactorsUI() {
     });
 }
 
-function refreshData() {
-    DataViewer.loadLocalData();
+async function refreshData() {
+    const btn = document.getElementById('refreshDataBtn');
+    const originalText = btn ? btn.innerHTML : '🔄 刷新';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 刷新中...';
+    }
+    
+    await DataViewer.loadLocalData(true);
+    
+    if (btn) {
+        btn.innerHTML = '✅ 已刷新';
+        setTimeout(() => {
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }, 1500);
+    }
 }
 
 function viewData(filePath) {

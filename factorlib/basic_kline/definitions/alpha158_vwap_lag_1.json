@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_vwap_lag_1",
+  "name": "qlib158-VWAP_lag1",
+  "description": "qlib Alpha158 — vwap.shift(1) / close",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_vwap_lag_1.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ref(vwap_proxy(data), 1) / (data['close'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "195f9c4e",
+    "created_at": "2026-04-23T11:17:23.344615",
+    "is_window": false,
+    "min_warmup_bars": 2,
+    "source_family": "qlib158"
+  }
+}

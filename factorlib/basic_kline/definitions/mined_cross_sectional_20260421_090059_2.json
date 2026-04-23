@@ -1,0 +1,37 @@
+{
+  "factor_id": "mined_cross_sectional_20260421_090059_2",
+  "name": "Mined_cross_sectional_2",
+  "description": "来源:cross_sectional 表达式:sign(ts_corr(w=60)(ts_zscore(volatility), close_open_diff))",
+  "category": "basic_kline",
+  "subcategory": "event",
+  "computation_type": "ml_model",
+  "computation_data": {
+    "algorithm_name": "gp_cross_sectional",
+    "model_file": "",
+    "performance_metrics": {
+      "name": "GP截面因子_2",
+      "expression": "sign(ts_corr(w=60)(ts_zscore(volatility), close_open_diff))",
+      "ic_mean": -0.007800787030203333,
+      "icir": -0.042308984651443705,
+      "rank_ic_mean": -0.007918757622824285,
+      "rank_icir": -0.04899387354712771,
+      "long_short_return": -3.650481894994642e-05,
+      "n_symbols": 50,
+      "n_periods": 4359,
+      "total_periods": 4393,
+      "coverage_rate": 0.9922604142954701,
+      "fitness": 0.05700714671558202,
+      "depth": 4,
+      "size": 5,
+      "source_session_id": "3bc74929-1e86-4368-9c1b-da10f8da493d",
+      "source_factor_id": "gp_cs_2"
+    }
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "7f29857b",
+    "created_at": "2026-04-21T09:00:59.181164"
+  }
+}

@@ -1,0 +1,716 @@
+{% extends "base.html" %}
+
+{% block title %}额外数据下载 - {{ config.title }}{% endblock %}
+
+{% block content %}
+<div class="row mb-2">
+    <div class="col-12">
+        <h2>📊 额外数据下载</h2>
+        <p class="text-muted">
+            下载 U 本位合约的衍生品/资金面数据，供
+            <code>factorlib/derivatives/</code> 与 <code>factorlib/funding/</code>
+            下的因子使用。仅支持 Binance Futures，与主 K 线数据独立落盘。
+        </p>
+    </div>
+</div>
+
+<div class="row">
+    <!-- 左侧：单 symbol 下载 / 批量下载 / 数据类型 -->
+    <div class="col-md-5">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">🎯 数据类型选择（所有任务共用）</h6>
+                <div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                            onclick="extraSelectAllTypes()">全选</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                            onclick="extraClearAllTypes()">清空</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="extraTypesContainer" class="d-flex flex-column gap-2">
+                    <!-- 数据类型复选框动态渲染 -->
+                    <div class="text-muted">加载中...</div>
+                </div>
+                <div class="alert alert-info small mt-3 mb-0">
+                    <i class="fas fa-info-circle"></i>
+                    勾选 <strong>Mark</strong> + <strong>Index</strong> 后，
+                    因子可直接使用 <code>basis = (close - index_close) / index_close</code>；
+                    <strong>Funding</strong> 是事件级（8h/部分 4h），忽略时间框架选择。
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">⚙️ 时间范围与时间框架</h6>
+            </div>
+            <div class="card-body">
+                <div class="row mb-2">
+                    <div class="col-6">
+                        <label class="form-label small mb-1">开始日期</label>
+                        <input type="date" class="form-control form-control-sm"
+                               id="extraStartDate">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label small mb-1">结束日期</label>
+                        <input type="date" class="form-control form-control-sm"
+                               id="extraEndDate">
+                    </div>
+                </div>
+                <div class="alert alert-info py-2 small mb-2">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>数据源说明：</strong>
+                    优先从
+                    <a href="https://data.binance.vision/?prefix=data/futures/um/" target="_blank"
+                       rel="noopener">data.binance.vision</a>
+                    的每日/每月归档并发拉取（<b>覆盖自 2020 年起全量历史，T+1/2 延迟</b>），
+                    归档未覆盖的最近 1–2 天再用实时 API 补齐。默认回溯 180 天，可自行调整。
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small mb-1">
+                        时间框架（mark / index 使用；metrics 固定 5m；funding 事件级）
+                    </label>
+                    <select class="form-select form-select-sm" id="extraTimeframe">
+                        <option value="5m">5m</option>
+                        <option value="15m">15m</option>
+                        <option value="30m">30m</option>
+                        <option value="1h" selected>1h</option>
+                        <option value="2h">2h</option>
+                        <option value="4h">4h</option>
+                        <option value="6h">6h</option>
+                        <option value="12h">12h</option>
+                        <option value="1d">1d</option>
+                    </select>
+                    <small class="form-text text-muted">
+                        Metrics 归档固定 5m 粒度落盘，取用时由 DataLoader 按需 resample；
+                        Funding 是事件级别（8h/4h）；
+                        Mark / Index K 线按所选周期存档。
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">🚀 单 symbol 下载</h6>
+            </div>
+            <div class="card-body">
+                <div class="mb-2">
+                    <label class="form-label small mb-1">交易对</label>
+                    <div class="d-flex align-items-center mb-1">
+                        <div class="input-group input-group-sm flex-grow-1">
+                            <input type="text" class="form-control form-control-sm"
+                                   id="extraSymbolQuickInput"
+                                   placeholder="例如 BTC_USDT 或 BTCUSDT，回车自动选中">
+                            <button class="btn btn-outline-primary" type="button"
+                                    onclick="extraQuickPickSymbol()">
+                                <i class="fas fa-crosshairs"></i>
+                            </button>
+                        </div>
+                        <button class="btn btn-outline-secondary btn-sm ms-1" type="button"
+                                id="extraRefreshSymbolsBtn"
+                                onclick="extraForceRefreshSymbols()"
+                                title="重新拉取 Binance Futures 交易对列表">
+                            <i class="fas fa-sync-alt"></i>
+                        </button>
+                    </div>
+                    <select class="form-select form-select-sm" id="extraSymbol">
+                        <option value="">加载中...</option>
+                    </select>
+                </div>
+                <button class="btn btn-primary btn-sm w-100" id="extraStartSingleBtn"
+                        onclick="extraStartSingleDownload()">
+                    🚀 开始下载
+                </button>
+            </div>
+        </div>
+
+        <div class="card mb-3">
+            <div class="card-header">
+                <h6 class="mb-0">📦 批量下载（按 symbol 多选）</h6>
+            </div>
+            <div class="card-body">
+                <div class="mb-2">
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control form-control-sm"
+                               id="extraBatchSymbolInput"
+                               placeholder="批量导入: [BTC_USDT,ETH_USDT] 或 BTC_USDT,ETH_USDT">
+                        <button class="btn btn-outline-primary" type="button"
+                                onclick="extraImportBatchSymbols()">
+                            <i class="fas fa-upload"></i> 导入
+                        </button>
+                    </div>
+                    <div class="form-text small mt-1" id="extraBatchImportResult"></div>
+                </div>
+                <select class="form-select" id="extraBatchSymbols" multiple
+                        size="10" style="min-height: 220px;">
+                    <option value="">加载中...</option>
+                </select>
+                <div class="d-flex justify-content-between align-items-center mt-2">
+                    <small class="form-text text-muted">Ctrl/Cmd 多选</small>
+                    <div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                onclick="extraSelectAllBatchSymbols()">全选</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm"
+                                onclick="extraClearBatchSymbols()">清空</button>
+                    </div>
+                </div>
+                <div class="alert alert-secondary small mt-3 mb-2" id="extraBatchStats">
+                    未选择
+                </div>
+                <button class="btn btn-warning btn-sm w-100" id="extraStartBatchBtn"
+                        onclick="extraStartBatchDownload()">
+                    🚀 开始批量下载
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 右侧：进度 + 清单 -->
+    <div class="col-md-7">
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">📈 下载任务</h6>
+                <button class="btn btn-outline-secondary btn-sm"
+                        onclick="extraRefreshTasks()">
+                    <i class="fas fa-sync-alt"></i> 刷新
+                </button>
+            </div>
+            <div class="card-body" style="max-height: 520px; overflow-y: auto;">
+                <div id="extraTaskList" class="d-flex flex-column gap-2">
+                    <div class="text-muted small">暂无任务</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0">🗂 本地已下载清单</h6>
+                <button class="btn btn-outline-secondary btn-sm"
+                        onclick="extraRefreshInventory()">
+                    <i class="fas fa-sync-alt"></i> 刷新
+                </button>
+            </div>
+            <div class="card-body" style="max-height: 380px; overflow-y: auto;">
+                <div id="extraInventory">
+                    <div class="text-muted small">加载中...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div style="margin-bottom: 50px;"></div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const EXTRA_EXCHANGE = 'binance';
+const EXTRA_TRADE_TYPE = 'futures';
+let EXTRA_POLL_TIMER = null;
+const EXTRA_ACTIVE_TASKS = new Set();
+let EXTRA_TASKS_WERE_RUNNING = false;
+
+document.addEventListener('DOMContentLoaded', () => {
+    initExtraPage();
+});
+
+async function initExtraPage() {
+    initDefaultDates();
+    await Promise.all([
+        loadExtraTypes(),
+        loadExtraSymbols(false),
+    ]);
+    await extraRefreshInventory();
+    ensureExtraPolling();
+}
+
+function initDefaultDates() {
+    const today = new Date();
+    const d180 = new Date(today.getTime() - 180 * 24 * 3600 * 1000);
+    const fmt = d => d.toISOString().slice(0, 10);
+    document.getElementById('extraStartDate').value = fmt(d180);
+    document.getElementById('extraEndDate').value = fmt(today);
+}
+
+async function loadExtraTypes() {
+    const container = document.getElementById('extraTypesContainer');
+    try {
+        const r = await fetch('/api/data/extra/supported-types');
+        const j = await r.json();
+        if (!j.success) throw new Error(j.error || '加载失败');
+        container.innerHTML = '';
+        j.data.forEach(t => {
+            const id = `extraType_${t.id}`;
+            const div = document.createElement('div');
+            div.className = 'form-check';
+            div.innerHTML = `
+                <input class="form-check-input extra-type-checkbox" type="checkbox"
+                       value="${t.id}" id="${id}" checked>
+                <label class="form-check-label" for="${id}">
+                    <code>${t.id}</code> · ${t.label}
+                </label>
+            `;
+            container.appendChild(div);
+        });
+    } catch (e) {
+        container.innerHTML = `<div class="text-danger small">加载数据类型失败: ${e.message}</div>`;
+    }
+}
+
+function getSelectedExtraTypes() {
+    return Array.from(document.querySelectorAll('.extra-type-checkbox'))
+        .filter(c => c.checked)
+        .map(c => c.value);
+}
+
+function extraSelectAllTypes() {
+    document.querySelectorAll('.extra-type-checkbox').forEach(c => c.checked = true);
+}
+function extraClearAllTypes() {
+    document.querySelectorAll('.extra-type-checkbox').forEach(c => c.checked = false);
+}
+
+async function loadExtraSymbols(forceRefresh) {
+    const selSingle = document.getElementById('extraSymbol');
+    const selBatch = document.getElementById('extraBatchSymbols');
+    selSingle.innerHTML = '<option value="">加载中...</option>';
+    selBatch.innerHTML = '<option value="">加载中...</option>';
+    try {
+        const url = `/api/data/symbols/${EXTRA_EXCHANGE}${forceRefresh ? '?force=1' : ''}`;
+        const r = await fetch(url);
+        const j = await r.json();
+        if (!j.success || !j.data || !j.data[EXTRA_TRADE_TYPE]) {
+            throw new Error(j.error || '无可用交易对');
+        }
+        const markets = j.data[EXTRA_TRADE_TYPE] || [];
+        fillSymbolSelect(selSingle, markets, '请选择交易对', false);
+        fillSymbolSelect(selBatch, markets, '请选择交易对（可多选）', true);
+    } catch (e) {
+        selSingle.innerHTML = `<option value="">加载失败: ${e.message}</option>`;
+        selBatch.innerHTML = `<option value="">加载失败: ${e.message}</option>`;
+    }
+}
+
+function fillSymbolSelect(selectEl, markets, placeholder, multiple) {
+    selectEl.innerHTML = '';
+    if (!multiple) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = placeholder;
+        selectEl.appendChild(opt);
+    }
+    markets.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.symbol;
+        opt.textContent = `${m.symbol} (${m.name})`;
+        selectEl.appendChild(opt);
+    });
+}
+
+async function extraForceRefreshSymbols() {
+    const btn = document.getElementById('extraRefreshSymbolsBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i>';
+    }
+    try {
+        await loadExtraSymbols(true);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-sync-alt"></i>';
+        }
+    }
+}
+
+function extraQuickPickSymbol() {
+    const input = document.getElementById('extraSymbolQuickInput').value.trim().toUpperCase();
+    if (!input) return;
+    const select = document.getElementById('extraSymbol');
+    for (const opt of select.options) {
+        if (opt.value.replace(/[_/:]/g, '').startsWith(input.replace(/[_/:]/g, ''))) {
+            select.value = opt.value;
+            return;
+        }
+    }
+    alert(`未匹配到交易对: ${input}`);
+}
+
+function extraNormalizeSymbolForMatch(rawSymbol) {
+    const raw = String(rawSymbol || '').trim().toUpperCase();
+    if (!raw) return '';
+    return raw.replace(/[\s_\-\/:]/g, '');
+}
+
+function extraBuildSymbolAliasMap(symbolList) {
+    const aliasMap = new Map();
+    (symbolList || []).forEach(original => {
+        const orig = String(original || '').trim();
+        if (!orig) return;
+        const upper = orig.toUpperCase();
+        const normalized = extraNormalizeSymbolForMatch(upper);
+        if (!aliasMap.has(upper)) aliasMap.set(upper, orig);
+        if (normalized && !aliasMap.has(normalized)) aliasMap.set(normalized, orig);
+    });
+    return aliasMap;
+}
+
+function extraParseSymbolListInput(input) {
+    const raw = String(input || '').trim();
+    if (!raw) return [];
+
+    let tokens = [];
+    if (raw.startsWith('[') && raw.endsWith(']')) {
+        const inner = raw.slice(1, -1).trim();
+        if (!inner) return [];
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                tokens = parsed.map(x => String(x).trim());
+            }
+        } catch (e) {
+            tokens = inner.split(/[,\s\n]+/).map(t =>
+                String(t).trim().replace(/^['"]|['"]$/g, '')
+            );
+        }
+    } else {
+        tokens = raw.split(/[,\s\n]+/).map(t => String(t).trim());
+    }
+
+    return tokens.filter(Boolean).map(s => s.toUpperCase());
+}
+
+function extraImportBatchSymbols() {
+    const raw = document.getElementById('extraBatchSymbolInput').value.trim();
+    const resultEl = document.getElementById('extraBatchImportResult');
+    if (!raw) {
+        resultEl.textContent = '请输入交易对列表';
+        return;
+    }
+    const select = document.getElementById('extraBatchSymbols');
+    let matched = 0;
+    const loadedSymbols = Array.from(select.options).map(o => o.value).filter(Boolean);
+    if (loadedSymbols.length === 0) {
+        resultEl.textContent = '请先加载交易对数据';
+        return;
+    }
+
+    const wanted = extraParseSymbolListInput(raw);
+    if (wanted.length === 0) {
+        resultEl.textContent = '未解析到任何交易对';
+        return;
+    }
+
+    const aliasMap = extraBuildSymbolAliasMap(loadedSymbols);
+    const matchedSet = new Set();
+    wanted.forEach(token => {
+        const upper = String(token || '').trim().toUpperCase();
+        if (!upper) return;
+        const normalizedInput = extraNormalizeSymbolForMatch(upper);
+        const m = aliasMap.get(upper) || aliasMap.get(normalizedInput);
+        if (m) matchedSet.add(m);
+    });
+
+    for (const opt of select.options) {
+        const ok = opt.value && matchedSet.has(opt.value);
+        opt.selected = !!ok;
+        if (ok) matched++;
+    }
+
+    resultEl.textContent = `匹配到 ${matched}/${wanted.length} 个交易对`;
+    extraUpdateBatchStats();
+}
+
+function extraSelectAllBatchSymbols() {
+    const select = document.getElementById('extraBatchSymbols');
+    for (const opt of select.options) opt.selected = !!opt.value;
+    extraUpdateBatchStats();
+}
+function extraClearBatchSymbols() {
+    const select = document.getElementById('extraBatchSymbols');
+    for (const opt of select.options) opt.selected = false;
+    extraUpdateBatchStats();
+}
+
+function extraUpdateBatchStats() {
+    const select = document.getElementById('extraBatchSymbols');
+    const n = Array.from(select.selectedOptions).filter(o => o.value).length;
+    const types = getSelectedExtraTypes().length;
+    document.getElementById('extraBatchStats').textContent =
+        n === 0 ? '未选择' :
+        `已选 ${n} 个 symbol × ${types} 种数据类型 = ${n * types} 个子任务`;
+}
+
+document.addEventListener('change', (e) => {
+    if (e.target.classList?.contains('extra-type-checkbox')) extraUpdateBatchStats();
+    if (e.target.id === 'extraBatchSymbols') extraUpdateBatchStats();
+});
+
+async function extraStartSingleDownload() {
+    const symbol = document.getElementById('extraSymbol').value;
+    if (!symbol) { alert('请选择交易对'); return; }
+    const payload = buildExtraPayload([symbol]);
+    if (!payload) return;
+    
+    const btn = document.getElementById('extraStartSingleBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 启动中...';
+    }
+
+    try {
+        const r = await fetch('/api/data/extra/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol,
+                timeframe: payload.timeframe,
+                start_date: payload.start_date,
+                end_date: payload.end_date,
+                data_types: payload.data_types,
+            }),
+        });
+        const j = await r.json();
+        if (!j.success) throw new Error(j.error);
+        EXTRA_ACTIVE_TASKS.add(j.data.id);
+        await extraRefreshTasks();
+        ensureExtraPolling();
+        
+        if (btn) {
+            btn.innerHTML = '✅ 已启动';
+            setTimeout(() => {
+                btn.innerHTML = '🚀 开始下载';
+                btn.disabled = false;
+            }, 2000);
+        }
+    } catch (e) {
+        alert('启动失败: ' + e.message);
+        if (btn) {
+            btn.innerHTML = '🚀 开始下载';
+            btn.disabled = false;
+        }
+    }
+}
+
+async function extraStartBatchDownload() {
+    const select = document.getElementById('extraBatchSymbols');
+    const symbols = Array.from(select.selectedOptions)
+        .map(o => o.value).filter(Boolean);
+    if (symbols.length === 0) { alert('请至少选择一个交易对'); return; }
+    const payload = buildExtraPayload(symbols);
+    if (!payload) return;
+    
+    const btn = document.getElementById('extraStartBatchBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 启动中...';
+    }
+
+    try {
+        const r = await fetch('/api/data/extra/batch-download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbols,
+                timeframe: payload.timeframe,
+                start_date: payload.start_date,
+                end_date: payload.end_date,
+                data_types: payload.data_types,
+            }),
+        });
+        const j = await r.json();
+        if (!j.success) throw new Error(j.error);
+        (j.data.task_ids || []).forEach(id => EXTRA_ACTIVE_TASKS.add(id));
+        await extraRefreshTasks();
+        ensureExtraPolling();
+        
+        if (btn) {
+            btn.innerHTML = '✅ 批量下载已启动';
+            setTimeout(() => {
+                btn.innerHTML = '🚀 开始批量下载';
+                btn.disabled = false;
+            }, 2000);
+        }
+    } catch (e) {
+        alert('启动失败: ' + e.message);
+        if (btn) {
+            btn.innerHTML = '🚀 开始批量下载';
+            btn.disabled = false;
+        }
+    }
+}
+
+function buildExtraPayload(symbols) {
+    const start_date = document.getElementById('extraStartDate').value;
+    const end_date = document.getElementById('extraEndDate').value;
+    const timeframe = document.getElementById('extraTimeframe').value;
+    const data_types = getSelectedExtraTypes();
+    if (!start_date || !end_date) { alert('请填写日期范围'); return null; }
+    if (data_types.length === 0) { alert('请至少勾选一种数据类型'); return null; }
+    return { start_date, end_date, timeframe, data_types };
+}
+
+async function extraRefreshTasks() {
+    const list = document.getElementById('extraTaskList');
+    try {
+        const r = await fetch('/api/data/extra/downloads');
+        const j = await r.json();
+        if (!j.success) throw new Error(j.error);
+        const items = j.data || [];
+        if (items.length === 0) {
+            list.innerHTML = '<div class="text-muted small">暂无任务</div>';
+            return;
+        }
+        list.innerHTML = items.map(renderExtraTaskCard).join('');
+    } catch (e) {
+        list.innerHTML = `<div class="text-danger small">刷新失败: ${e.message}</div>`;
+    }
+}
+
+function renderExtraTaskCard(task) {
+    const statusMap = {
+        starting: { text: '启动中', cls: 'secondary' },
+        downloading: { text: '下载中', cls: 'primary' },
+        completed: { text: '完成', cls: 'success' },
+        partial_failed: { text: '部分失败', cls: 'warning' },
+        failed: { text: '失败', cls: 'danger' },
+    };
+    const st = statusMap[task.status] || { text: task.status, cls: 'secondary' };
+    const subtasks = task.subtasks || {};
+    const subHtml = Object.keys(subtasks).map(dt => {
+        const s = subtasks[dt];
+        const ss = statusMap[s.status] || { text: s.status, cls: 'secondary' };
+        return `
+            <div class="d-flex justify-content-between align-items-center small border-top pt-1 mt-1">
+                <div>
+                    <span class="badge bg-${ss.cls}">${ss.text}</span>
+                    <code class="ms-1">${dt}</code>
+                </div>
+                <div class="text-muted text-truncate" style="max-width: 60%;" title="${s.message || ''}">
+                    ${s.progress || 0}% · ${s.message || ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+    const kindBadge = task.kind === 'batch-child'
+        ? '<span class="badge bg-info ms-1">batch</span>' : '';
+    return `
+        <div class="border rounded p-2">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <strong>${task.symbol}</strong>
+                    <small class="text-muted ms-1">${task.timeframe || ''}</small>
+                    ${kindBadge}
+                </div>
+                <span class="badge bg-${st.cls}">${st.text} ${task.progress || 0}%</span>
+            </div>
+            <div class="small text-muted">${task.start_date} → ${task.end_date}</div>
+            ${subHtml}
+        </div>
+    `;
+}
+
+function ensureExtraPolling() {
+    if (EXTRA_POLL_TIMER) return;
+    EXTRA_POLL_TIMER = setInterval(async () => {
+        try {
+            const r = await fetch('/api/data/extra/downloads');
+            const j = await r.json();
+            if (!j.success) return;
+            const items = j.data || [];
+            const stillRunning = items.some(it =>
+                ['starting', 'downloading'].includes(it.status));
+            document.getElementById('extraTaskList').innerHTML =
+                items.length === 0
+                    ? '<div class="text-muted small">暂无任务</div>'
+                    : items.map(renderExtraTaskCard).join('');
+            if (stillRunning) {
+                EXTRA_TASKS_WERE_RUNNING = true;
+            } else {
+                clearInterval(EXTRA_POLL_TIMER);
+                EXTRA_POLL_TIMER = null;
+                extraRefreshInventory();
+                
+                if (EXTRA_TASKS_WERE_RUNNING) {
+                    EXTRA_TASKS_WERE_RUNNING = false;
+                    
+                    // Count successes and failures for better context
+                    const failedCount = items.filter(it => ['failed', 'partial_failed'].includes(it.status)).length;
+                    const successCount = items.filter(it => it.status === 'completed').length;
+                    
+                    if (failedCount > 0) {
+                        alert(`任务执行结束：${successCount} 个成功，${failedCount} 个失败/部分失败。请检查右侧任务列表详情。`);
+                    } else {
+                        alert(`🎉 所有下载任务已执行完毕！(${successCount} 个成功)`);
+                    }
+                }
+            }
+        } catch (e) {
+            // 忽略间歇性错误
+        }
+    }, 2000);
+}
+
+async function extraRefreshInventory() {
+    const box = document.getElementById('extraInventory');
+    box.innerHTML = '<div class="text-muted small">加载中...</div>';
+    try {
+        const r = await fetch('/api/data/extra/inventory');
+        const j = await r.json();
+        if (!j.success) throw new Error(j.error);
+        const symbols = j.data.symbols || [];
+        if (symbols.length === 0) {
+            box.innerHTML = '<div class="text-muted small">尚未下载任何额外数据</div>';
+            return;
+        }
+        box.innerHTML = `
+            <div class="table-responsive">
+                <table class="table table-sm align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>metrics</th>
+                            <th>funding</th>
+                            <th>mark</th>
+                            <th>index</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${symbols.map(renderInventoryRow).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } catch (e) {
+        box.innerHTML = `<div class="text-danger small">刷新失败: ${e.message}</div>`;
+    }
+}
+
+function renderInventoryRow(entry) {
+    const slot = { metrics: [], funding: [], mark: [], index: [] };
+    (entry.items || []).forEach(it => {
+        if (slot[it.data_type] === undefined) return;
+        slot[it.data_type].push(it);
+    });
+    const cell = arr => {
+        if (!arr || arr.length === 0) return '<span class="text-muted">—</span>';
+        return arr.map(it => {
+            const tf = it.timeframe ? ` · ${it.timeframe}` : '';
+            const size = it.size_kb != null ? ` · ${it.size_kb} KB` : '';
+            return `<div class="small"><span class="badge bg-success-subtle text-success">有</span>${tf}${size}</div>`;
+        }).join('');
+    };
+    return `
+        <tr>
+            <td><code>${entry.symbol}</code></td>
+            <td>${cell(slot.metrics)}</td>
+            <td>${cell(slot.funding)}</td>
+            <td>${cell(slot.mark)}</td>
+            <td>${cell(slot.index)}</td>
+        </tr>
+    `;
+}
+</script>
+{% endblock %}

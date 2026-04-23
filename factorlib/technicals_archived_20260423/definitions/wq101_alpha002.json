@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha002",
+  "name": "WQ101-Alpha002",
+  "description": "WorldQuant Alpha#002。原始公式：-1 * correlation(rank(delta(log(volume),2)), rank((close-open)/open), 6)。 语义折衷：去掉两个内层 rank（Spearman→Pearson）。",
+  "category": "wq101",
+  "subcategory": "alpha002",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha002.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return -1 * ts_corr(delta(log(volume), 2), (close - open_) / (open_ + EPS), 6)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "0abcafe6",
+    "created_at": "2026-04-23T11:18:59.623710",
+    "is_window": true,
+    "min_warmup_bars": 8,
+    "source_family": "wq101"
+  }
+}

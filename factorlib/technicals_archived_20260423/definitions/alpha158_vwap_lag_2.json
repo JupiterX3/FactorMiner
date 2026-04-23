@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_vwap_lag_2",
+  "name": "qlib158-VWAP_lag2",
+  "description": "qlib Alpha158 — vwap.shift(2) / close",
+  "category": "qlib158",
+  "subcategory": "price",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha158_vwap_lag_2.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ref(vwap_proxy(data), 2) / (data['close'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "ea942ce0",
+    "created_at": "2026-04-23T11:17:23.345239",
+    "is_window": false,
+    "min_warmup_bars": 3,
+    "source_family": "qlib158"
+  }
+}

@@ -1,0 +1,30 @@
+{
+  "factor_id": "oi_change_zscore",
+  "name": "持仓变化 z-score",
+  "description": "持仓量变化率相对 window 滚动均值/标准差的 z-score。",
+  "category": "derivatives",
+  "subcategory": "open_interest",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/oi_change_zscore.py",
+    "function_code": "def calculate(data, period=12, window=96, **kwargs):\n    if 'open_interest' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    chg = data['open_interest'].pct_change(period)\n    mu = chg.rolling(window).mean()\n    sd = chg.rolling(window).std()\n    return (chg - mu) / sd",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "period": 12,
+    "window": 96
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.214154",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

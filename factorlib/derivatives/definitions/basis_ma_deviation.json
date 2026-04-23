@@ -1,0 +1,29 @@
+{
+  "factor_id": "basis_ma_deviation",
+  "name": "基差对均值的偏离",
+  "description": "basis 减去其 window 滚动均值。低频 mean-reversion 信号。",
+  "category": "derivatives",
+  "subcategory": "basis",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/basis_ma_deviation.py",
+    "function_code": "def calculate(data, window=48, **kwargs):\n    if 'basis' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    return data['basis'] - data['basis'].rolling(window).mean()",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 48
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.222960",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

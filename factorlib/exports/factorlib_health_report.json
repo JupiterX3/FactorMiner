@@ -1,0 +1,2558 @@
+{
+  "sample_file": "D:\\PythonProject\\FactorMiner\\data\\binance\\futures\\BTC_USDT_USDT-1h-futures.feather",
+  "results": [
+    {
+      "factor_id": "accumulation_distribution",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 67,
+      "error": null
+    },
+    {
+      "factor_id": "adaptive_rsi",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20080,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "adx",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20057,
+      "elapsed_ms": 10,
+      "error": null
+    },
+    {
+      "factor_id": "adx_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20045,
+      "elapsed_ms": 9,
+      "error": null
+    },
+    {
+      "factor_id": "adx_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19985,
+      "elapsed_ms": 9,
+      "error": null
+    },
+    {
+      "factor_id": "aroon_down",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 17279,
+      "elapsed_ms": 859,
+      "error": null
+    },
+    {
+      "factor_id": "aroon_oscillator",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19972,
+      "elapsed_ms": 1115,
+      "error": null
+    },
+    {
+      "factor_id": "aroon_up",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 17666,
+      "elapsed_ms": 628,
+      "error": null
+    },
+    {
+      "factor_id": "atr",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20070,
+      "elapsed_ms": 13,
+      "error": null
+    },
+    {
+      "factor_id": "atr_21",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 9,
+      "error": null
+    },
+    {
+      "factor_id": "atr_ratio_14",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20070,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "atr_ratio_21",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "awesome_oscillator",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20050,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "balance_of_power",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20080,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "bb_lower",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "bb_percent",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "bb_position",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 5,
+      "error": null
+    },
+    {
+      "factor_id": "bb_upper",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "bb_width",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 7,
+      "error": null
+    },
+    {
+      "factor_id": "breakout_strength",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 18048,
+      "elapsed_ms": 6,
+      "error": null
+    },
+    {
+      "factor_id": "cci",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20045,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "chaikin_money_flow",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "chaikin_oscillator",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "chande_momentum",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "coppock_curve",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20060,
+      "elapsed_ms": 74,
+      "error": null
+    },
+    {
+      "factor_id": "correlation",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20045,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "custom_momentum",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20071,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "cv_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "cv_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "cv_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "cv_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "cv_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "cv_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "dema",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "di_minus_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20062,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "di_minus_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 5,
+      "error": null
+    },
+    {
+      "factor_id": "di_plus_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "di_plus_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 5,
+      "error": null
+    },
+    {
+      "factor_id": "doji",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 17,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "donchian_lower",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "donchian_middle",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "donchian_upper",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "dpo",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ease_of_movement",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20070,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "elder_ray_bear",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "elder_ray_bull",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "ema",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "engulfing_bearish",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1930,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "engulfing_bullish",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1897,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "evening_star",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 691,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "force_index",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "fractal_down",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2801,
+      "elapsed_ms": 2133,
+      "error": null
+    },
+    {
+      "factor_id": "fractal_up",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2849,
+      "elapsed_ms": 2054,
+      "error": null
+    },
+    {
+      "factor_id": "gap_down",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 4628,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "gap_fill",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 15124,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "gap_up",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 5266,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "guppy_mma",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "hammer",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1063,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-market_sentiment_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 3763,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-momentum_strength",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20075,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-price_acceleration",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20081,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-price_breakdown_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1957,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-price_breakout_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2164,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-price_position_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20054,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-price_reversal",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 5239,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-raw_close",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-raw_high",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-raw_low",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-raw_open",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-raw_volume",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-short_price_change_1",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-trend_consistency_3",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2263,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-trend_strength_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20072,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-volatility_change",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20073,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-volume_acceleration",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20077,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-volume_breakout_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1212,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-volume_momentum_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20078,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-volume_price_divergence",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 10423,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-volume_price_ratio",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "heikin_ashi_close",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "ichimoku_chikou",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20057,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "ichimoku_kijun",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20058,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "ichimoku_senkou_a",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20032,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "ichimoku_senkou_b",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20006,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "ichimoku_tenkan",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20075,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "kama",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20073,
+      "elapsed_ms": 940,
+      "error": null
+    },
+    {
+      "factor_id": "keltner_lower",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 518,
+      "error": null
+    },
+    {
+      "factor_id": "keltner_upper",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 531,
+      "error": null
+    },
+    {
+      "factor_id": "klinger_oscillator",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20081,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "kst",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20039,
+      "elapsed_ms": 5,
+      "error": null
+    },
+    {
+      "factor_id": "kurtosis_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 10395,
+      "error": null
+    },
+    {
+      "factor_id": "kurtosis_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 9792,
+      "error": null
+    },
+    {
+      "factor_id": "kurtosis_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 9261,
+      "error": null
+    },
+    {
+      "factor_id": "kurtosis_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 9239,
+      "error": null
+    },
+    {
+      "factor_id": "kurtosis_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 9255,
+      "error": null
+    },
+    {
+      "factor_id": "kurtosis_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 9646,
+      "error": null
+    },
+    {
+      "factor_id": "macd",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "macd_cross",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1540,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "macd_diff",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "macd_histogram",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "macd_signal",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "market_structure",
+      "status": "ok",
+      "length": 9129,
+      "non_zero": 52,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "mayer_multiple",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_cross_10_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1169,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_cross_10_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 545,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_cross_20_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 473,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_cross_5_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2320,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_cross_5_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1323,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_cross_5_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 715,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_distance_10_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_distance_10_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_distance_20_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_distance_5_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20072,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_distance_5_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ma_distance_5_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "mfi",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20069,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "momentum",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20072,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "momentum_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20062,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "momentum_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20075,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "momentum_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "morning_star",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 648,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "multi_timeframe_trend",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "network_value",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "obv",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "obv_change",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "obv_ma",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "parabolic_sar",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 1690,
+      "error": null
+    },
+    {
+      "factor_id": "percentile_rank",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 2301,
+      "error": null
+    },
+    {
+      "factor_id": "ppo",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "price_autocorr_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 4117,
+      "error": null
+    },
+    {
+      "factor_id": "price_autocorr_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 3952,
+      "error": null
+    },
+    {
+      "factor_id": "price_autocorr_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 4207,
+      "error": null
+    },
+    {
+      "factor_id": "price_deviation_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "price_momentum_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19982,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "price_position_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19243,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "price_position_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 18048,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "price_position_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 18893,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "price_range",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "price_rank_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "price_rank_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "price_reversal_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "price_reversal_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "price_reversal_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "price_volume_corr_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19983,
+      "elapsed_ms": 5,
+      "error": null
+    },
+    {
+      "factor_id": "price_volume_corr_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 6,
+      "error": null
+    },
+    {
+      "factor_id": "price_volume_corr_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 5,
+      "error": null
+    },
+    {
+      "factor_id": "price_zscore_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "q25_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "q25_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 11,
+      "error": null
+    },
+    {
+      "factor_id": "q25_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 7,
+      "error": null
+    },
+    {
+      "factor_id": "q25_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 9,
+      "error": null
+    },
+    {
+      "factor_id": "q25_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 7,
+      "error": null
+    },
+    {
+      "factor_id": "q25_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "q75_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "q75_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 10,
+      "error": null
+    },
+    {
+      "factor_id": "q75_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 11,
+      "error": null
+    },
+    {
+      "factor_id": "q75_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 10,
+      "error": null
+    },
+    {
+      "factor_id": "q75_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "q75_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 11,
+      "error": null
+    },
+    {
+      "factor_id": "q90_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 10,
+      "error": null
+    },
+    {
+      "factor_id": "q90_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 12,
+      "error": null
+    },
+    {
+      "factor_id": "q90_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 10,
+      "error": null
+    },
+    {
+      "factor_id": "q90_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 13,
+      "error": null
+    },
+    {
+      "factor_id": "q90_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 9,
+      "error": null
+    },
+    {
+      "factor_id": "q90_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 12,
+      "error": null
+    },
+    {
+      "factor_id": "resistance_distance",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20031,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "resistance_level",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "returns_kurt_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19983,
+      "elapsed_ms": 10026,
+      "error": null
+    },
+    {
+      "factor_id": "returns_kurt_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 9798,
+      "error": null
+    },
+    {
+      "factor_id": "returns_kurt_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 8883,
+      "error": null
+    },
+    {
+      "factor_id": "returns_momentum_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20073,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "returns_momentum_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "returns_momentum_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20078,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "returns_momentum_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "returns_skew_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19983,
+      "elapsed_ms": 8161,
+      "error": null
+    },
+    {
+      "factor_id": "returns_skew_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 9496,
+      "error": null
+    },
+    {
+      "factor_id": "returns_skew_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 19966,
+      "error": null
+    },
+    {
+      "factor_id": "returns_zscore_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 6,
+      "error": null
+    },
+    {
+      "factor_id": "returns_zscore_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 7,
+      "error": null
+    },
+    {
+      "factor_id": "rmi",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19920,
+      "elapsed_ms": 14,
+      "error": null
+    },
+    {
+      "factor_id": "roc",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20071,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_mean_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_mean_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_mean_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_mean_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_mean_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_std_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_std_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_std_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_std_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_std_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 5,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_std_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "rsi",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20070,
+      "elapsed_ms": 10,
+      "error": null
+    },
+    {
+      "factor_id": "rsi_21",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 10,
+      "error": null
+    },
+    {
+      "factor_id": "rsi_overbought_14",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2681,
+      "elapsed_ms": 8,
+      "error": null
+    },
+    {
+      "factor_id": "rsi_overbought_21",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1794,
+      "elapsed_ms": 11,
+      "error": null
+    },
+    {
+      "factor_id": "rsi_oversold_14",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2213,
+      "elapsed_ms": 11,
+      "error": null
+    },
+    {
+      "factor_id": "rsi_oversold_21",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 1403,
+      "elapsed_ms": 11,
+      "error": null
+    },
+    {
+      "factor_id": "rvi",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20070,
+      "elapsed_ms": 5,
+      "error": null
+    },
+    {
+      "factor_id": "schaff_trend_cycle",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 14043,
+      "elapsed_ms": 7,
+      "error": null
+    },
+    {
+      "factor_id": "shooting_star",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 310,
+      "elapsed_ms": 1042,
+      "error": null
+    },
+    {
+      "factor_id": "skewness_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 18690,
+      "error": null
+    },
+    {
+      "factor_id": "skewness_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 18983,
+      "error": null
+    },
+    {
+      "factor_id": "skewness_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 7719,
+      "error": null
+    },
+    {
+      "factor_id": "skewness_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 7427,
+      "error": null
+    },
+    {
+      "factor_id": "skewness_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 7442,
+      "error": null
+    },
+    {
+      "factor_id": "skewness_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 7897,
+      "error": null
+    },
+    {
+      "factor_id": "sma",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "stoch_d",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20068,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "stoch_k",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20055,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "stoch_overbought",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 4059,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "stoch_oversold",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 3152,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "stoch_rsi",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19435,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "supertrend",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 2177,
+      "error": null
+    },
+    {
+      "factor_id": "supertrend_direction",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 2460,
+      "error": null
+    },
+    {
+      "factor_id": "support_distance",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 18048,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "support_level",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "tema",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "trend_consistency_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "trend_consistency_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "triangle_pattern",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 3062,
+      "error": null
+    },
+    {
+      "factor_id": "trix",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "tsi",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ulcer_index",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20057,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "ultimate_oscillator",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20056,
+      "elapsed_ms": 478,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20073,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20078,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_adjusted_return",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20062,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_change_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_change_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20043,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_change_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20073,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_change_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19983,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_ratio_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_ratio_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20044,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_ratio_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_state_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 7885,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_state_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 8344,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_state_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 7430,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volatility_state_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 8001,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volume_autocorr_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 3387,
+      "error": null
+    },
+    {
+      "factor_id": "volume_autocorr_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 3496,
+      "error": null
+    },
+    {
+      "factor_id": "volume_autocorr_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 3411,
+      "error": null
+    },
+    {
+      "factor_id": "volume_ma_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volume_ma_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volume_rank_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 6,
+      "error": null
+    },
+    {
+      "factor_id": "volume_rank_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 7,
+      "error": null
+    },
+    {
+      "factor_id": "volume_ratio",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volume_ratio_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "volume_ratio_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 1,
+      "error": null
+    },
+
+    {
+      "factor_id": "vol_change_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "vol_price_corr_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "vol_price_corr_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "vol_ratio_10_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20073,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "vol_ratio_20_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "vol_ratio_50_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20033,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "vortex_oscillator",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20069,
+      "elapsed_ms": 332,
+      "error": null
+    },
+    {
+      "factor_id": "vwap",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "vwap_distance",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "williams_r",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20059,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "wma",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 77,
+      "error": null
+    },
+    {
+      "factor_id": "zscore_100",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19984,
+      "elapsed_ms": 4,
+      "error": null
+    },
+    {
+      "factor_id": "zscore_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "zscore_200",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19884,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "zscore_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20078,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "zscore_50",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20034,
+      "elapsed_ms": 3,
+      "error": null
+    },
+    {
+      "factor_id": "z_score",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "adaptive_ml_factor",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 274,
+      "error": null
+    },
+    {
+      "factor_id": "ensemble_gradient_boosting",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 110,
+      "error": null
+    },
+    {
+      "factor_id": "ensemble_lasso",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 71,
+      "error": null
+    },
+    {
+      "factor_id": "ensemble_random_forest",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 64,
+      "error": null
+    },
+    {
+      "factor_id": "ensemble_ridge",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 40,
+      "error": null
+    },
+    {
+      "factor_id": "feature_selection_f_regression_mean",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 64,
+      "error": null
+    },
+    {
+      "factor_id": "feature_selection_f_regression_weighted",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 35,
+      "error": null
+    },
+    {
+      "factor_id": "feature_selection_mutual_info_mean",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 50,
+      "error": null
+    },
+    {
+      "factor_id": "feature_selection_mutual_info_weighted",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 40,
+      "error": null
+    },
+    {
+      "factor_id": "Hazel-technical_score",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 16,
+      "error": null
+    },
+    {
+      "factor_id": "ml_gradient_boosting",
+      "status": "empty",
+      "length": null,
+      "non_zero": null,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "ml_pca_component_1",
+      "status": "empty",
+      "length": null,
+      "non_zero": null,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "ml_pca_component_2",
+      "status": "empty",
+      "length": null,
+      "non_zero": null,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "ml_pca_component_3",
+      "status": "empty",
+      "length": null,
+      "non_zero": null,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "ml_selected_feature_1",
+      "status": "empty",
+      "length": null,
+      "non_zero": null,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "ml_selected_feature_2",
+      "status": "empty",
+      "length": null,
+      "non_zero": null,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "ml_selected_feature_3",
+      "status": "empty",
+      "length": null,
+      "non_zero": null,
+      "elapsed_ms": 21,
+      "error": null
+    },
+    {
+      "factor_id": "ml_selected_feature_4",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 20,
+      "error": null
+    },
+    {
+      "factor_id": "ml_selected_feature_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_1",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 60,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 43,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_2",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 66,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_3",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 42,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_4",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 63,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 42,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_6",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 40,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_7",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 51,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_8",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 37,
+      "error": null
+    },
+    {
+      "factor_id": "pca_component_9",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 0,
+      "elapsed_ms": 38,
+      "error": null
+    },
+    {
+      "factor_id": "rolling_ml_factor",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20083,
+      "elapsed_ms": 88,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_bb_position_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_bb_upper_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_bb_upper_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_bb_width_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_doji_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2078,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_long_lower_shadow_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 2128,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_momentum_zscore_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20078,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_price_position_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 16970,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_resistance_level_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_rsi_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20064,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_stoch_d_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20072,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_support_level_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_support_level_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_trend_strength_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 19678,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_volume_ma_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20074,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_volume_ma_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20079,
+      "elapsed_ms": 0,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_volume_momentum_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20073,
+      "elapsed_ms": 2,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_volume_momentum_20",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20063,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_volume_volatility_10",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20073,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_volume_volatility_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20078,
+      "elapsed_ms": 1,
+      "error": null
+    },
+    {
+      "factor_id": "technical_mining_vpt_5",
+      "status": "ok",
+      "length": 20083,
+      "non_zero": 20082,
+      "elapsed_ms": 1,
+      "error": null
+    }
+  ]
+}

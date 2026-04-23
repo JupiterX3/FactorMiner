@@ -1,0 +1,3190 @@
+{
+  "migrated": [
+    {
+      "factor_id": "accumulation_distribution",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "adaptive_rsi",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "adx",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "adx_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "adx_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_beta_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_beta_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_beta_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_beta_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_beta_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntd_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntd_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntd_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntd_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntd_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntn_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntn_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntn_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntn_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntn_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntp_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntp_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntp_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntp_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cntp_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cord_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cord_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cord_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cord_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_cord_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_corr_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_corr_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_corr_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_corr_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_corr_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_high_lag_0",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_high_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_high_lag_2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_high_lag_3",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_high_lag_4",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imax_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imax_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imax_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imax_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imax_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imin_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imin_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imin_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imin_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imin_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imxd_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imxd_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imxd_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imxd_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_imxd_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_klen",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_klow",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_klow2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_kmid",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_kmid2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_ksft",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_ksft2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_kup",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_kup2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_low_lag_0",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_low_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_low_lag_2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_low_lag_3",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_low_lag_4",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_ma_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_ma_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_ma_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_ma_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_ma_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_max_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_max_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_max_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_max_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_max_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_min_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_min_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_min_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_min_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_min_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_open_lag_0",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_open_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_open_lag_2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_open_lag_3",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_open_lag_4",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtld_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtld_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtld_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtld_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtld_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtlu_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtlu_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtlu_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtlu_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_qtlu_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rank_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rank_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rank_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rank_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rank_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_resi_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_resi_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_resi_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_resi_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_resi_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsqr_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsqr_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsqr_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsqr_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsqr_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsv_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsv_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsv_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsv_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_rsv_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_std_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_std_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_std_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_std_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_std_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumd_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumd_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumd_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumd_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumn_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumn_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumn_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumn_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sumn_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sump_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sump_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sump_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sump_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_sump_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vma_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vma_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vma_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vma_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vma_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vol_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vol_lag_2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vol_lag_3",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vol_lag_4",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vstd_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vstd_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vstd_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vstd_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vstd_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vwap_lag_0",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vwap_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vwap_lag_2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vwap_lag_3",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vwap_lag_4",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_vwma_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_wvma_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_wvma_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_wvma_30",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_wvma_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha158_wvma_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_13",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_2",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_3",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_34",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_55",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_8",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_lag_89",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_ratio_1_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_close_ratio_5_60",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_high_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_high_lag_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_high_lag_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_hl_range_lag_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_low_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_low_lag_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_low_lag_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_ohlc_avg_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_open_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_open_lag_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_open_lag_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_volume_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_volume_lag_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_volume_lag_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_volume_ratio_1_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_vwap_lag_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_vwap_lag_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "alpha360_vwap_lag_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "aroon_down",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "aroon_oscillator",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "aroon_up",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "atr",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "atr_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "atr_ratio_14",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "atr_ratio_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "awesome_oscillator",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "balance_of_power",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "bb_lower",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "bb_upper",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "breakout_strength",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "cci",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "chaikin_money_flow",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "chaikin_oscillator",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "chande_momentum",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "coppock_curve",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "correlation",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "cv_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "cv_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "cv_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "cv_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "cv_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "cv_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "dema",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "di_minus_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "di_minus_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "di_plus_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "di_plus_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "doji",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "donchian_lower",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "donchian_middle",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "donchian_upper",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "dpo",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ease_of_movement",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "elder_ray_bear",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "elder_ray_bull",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ema",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "engulfing_bearish",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "engulfing_bullish",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "evening_star",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "force_index",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "fractal_down",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "fractal_up",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "gap_down",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "gap_fill",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "gap_up",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "guppy_mma",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "hammer",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "Hazel-market_sentiment_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-momentum_strength",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-price_acceleration",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-price_breakdown_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "Hazel-price_breakout_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "Hazel-price_position_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-price_reversal",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-raw_close",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-raw_high",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-raw_low",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-raw_open",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-raw_volume",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-short_price_change_1",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-trend_consistency_3",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-trend_strength_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-volatility_change",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-volume_acceleration",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-volume_breakout_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "Hazel-volume_momentum_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-volume_price_divergence",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "Hazel-volume_price_ratio",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "heikin_ashi_close",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ichimoku_chikou",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ichimoku_kijun",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ichimoku_senkou_a",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ichimoku_senkou_b",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ichimoku_tenkan",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "kama",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "keltner_lower",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "keltner_upper",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "klinger_oscillator",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "kst",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "kurtosis_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "kurtosis_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "kurtosis_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "kurtosis_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "kurtosis_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "kurtosis_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ma_cross_10_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "ma_cross_10_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "ma_cross_20_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "ma_cross_5_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "ma_cross_5_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "ma_cross_5_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "ma_distance_10_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ma_distance_10_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ma_distance_20_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ma_distance_5_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ma_distance_5_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ma_distance_5_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "macd",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "macd_cross",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "macd_diff",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "macd_histogram",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "macd_signal",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "market_structure",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mayer_multiple",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "mfi",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "momentum",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "momentum_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "momentum_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "momentum_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "morning_star",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "multi_timeframe_trend",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "network_value",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "obv",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "obv_change",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "obv_ma",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "parabolic_sar",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "percentile_rank",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ppo",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_autocorr_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_autocorr_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_autocorr_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_momentum_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_position_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_position_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_position_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_range",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_rank_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_reversal_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_reversal_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_reversal_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_volume_corr_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_volume_corr_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "price_volume_corr_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q25_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q25_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q25_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q25_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q25_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q25_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q75_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q75_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q75_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q75_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q75_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q75_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q90_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q90_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q90_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q90_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q90_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "q90_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "resistance_distance",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "resistance_level",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "returns_kurt_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_kurt_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_kurt_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_momentum_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_momentum_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_momentum_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_momentum_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_skew_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_skew_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_skew_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_zscore_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "returns_zscore_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rmi",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "roc",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_mean_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_mean_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_mean_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_mean_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_mean_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_std_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_std_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_std_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_std_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_std_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rolling_std_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rsi",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rsi_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rsi_overbought_14",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rsi_overbought_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rsi_oversold_14",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rsi_oversold_21",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "rvi",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "schaff_trend_cycle",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "shooting_star",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "skewness_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "skewness_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "skewness_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "skewness_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "skewness_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "skewness_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "sma",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "stoch_d",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "stoch_k",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "stoch_overbought",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "stoch_oversold",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "stoch_rsi",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "supertrend",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "supertrend_direction",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "support_distance",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "support_level",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "tema",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "trend_consistency_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "trend_consistency_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "triangle_pattern",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "trix",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "tsi",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ulcer_index",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "ultimate_oscillator",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vol_change_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vol_price_corr_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vol_price_corr_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vol_ratio_10_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vol_ratio_20_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vol_ratio_50_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_adjusted_return",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_change_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_change_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_change_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_change_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_ratio_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_ratio_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_ratio_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_state_10",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_state_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_state_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volatility_state_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_autocorr_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_autocorr_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_autocorr_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_ma_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_ma_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_rank_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_rank_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_ratio",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_ratio_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "volume_ratio_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vortex_oscillator",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vwap",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "vwap_distance",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wma",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha001",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha002",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha003",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha004",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha005",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha006",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha007",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha008",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha009",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha010",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha012",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha013",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha014",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha015",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha016",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha018",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha019",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha020",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha021",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha022",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha028",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha034",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha035",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha037",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha038",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha040",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha043",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha046",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha049",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha050",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha051",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha053",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha054",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha055",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha083",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha084",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha099",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "wq101_alpha101",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "zscore_100",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "zscore_20",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "zscore_200",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "zscore_5",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "zscore_50",
+      "from": "technicals",
+      "to": "basic_kline",
+      "subcategory": "technical"
+    },
+    {
+      "factor_id": "Hazel-technical_score",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260421_090059_1",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260421_090059_2",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260421_150629_1",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260421_150629_2",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260421_150629_3",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260421_150636_1",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260421_150636_2",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260421_150636_3",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_1",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_2",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_3",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_4",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_6",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_7",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_8",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_cross_sectional_20260422_090328_9",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "mined_manual_20260420_112327",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_bb_position_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_bb_upper_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_bb_upper_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_bb_width_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_doji_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "event"
+    },
+    {
+      "factor_id": "technical_mining_long_lower_shadow_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_momentum_zscore_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_price_position_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_resistance_level_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_rsi_20",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_stoch_d_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_support_level_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_support_level_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_trend_strength_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_volume_ma_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_volume_ma_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_volume_momentum_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_volume_momentum_20",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_volume_volatility_10",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_volume_volatility_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    },
+    {
+      "factor_id": "technical_mining_vpt_5",
+      "from": "minactors",
+      "to": "basic_kline",
+      "subcategory": "mined"
+    }
+  ],
+  "drop": [
+    "adaptive_ml_factor",
+    "ensemble_gradient_boosting",
+    "ensemble_lasso",
+    "ensemble_random_forest",
+    "ensemble_ridge",
+    "feature_selection_f_regression_mean",
+    "feature_selection_f_regression_weighted",
+    "feature_selection_mutual_info_mean",
+    "feature_selection_mutual_info_weighted",
+    "ml_gradient_boosting",
+    "ml_pca_component_1",
+    "ml_pca_component_2",
+    "ml_pca_component_3",
+    "ml_selected_feature_1",
+    "ml_selected_feature_2",
+    "ml_selected_feature_3",
+    "ml_selected_feature_4",
+    "ml_selected_feature_5",
+    "pca_component_1",
+    "pca_component_10",
+    "pca_component_2",
+    "pca_component_3",
+    "pca_component_4",
+    "pca_component_5",
+    "pca_component_6",
+    "pca_component_7",
+    "pca_component_8",
+    "pca_component_9",
+    "rolling_ml_factor"
+  ],
+  "errors": [],
+  "archived_dirs": [
+    "D:\\PythonProject\\FactorMiner\\factorlib\\technicals → D:\\PythonProject\\FactorMiner\\factorlib\\technicals_archived_20260423",
+    "D:\\PythonProject\\FactorMiner\\factorlib\\minactors → D:\\PythonProject\\FactorMiner\\factorlib\\minactors_archived_20260423"
+  ]
+}

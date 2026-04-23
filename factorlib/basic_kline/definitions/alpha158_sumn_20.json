@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_sumn_20",
+  "name": "qlib158-SUMN_20",
+  "description": "qlib Alpha158 — 1 - sump  (window=20)",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_sumn_20.py",
+    "function_code": "def calculate(data, **kwargs):\n    return 1.0 - ts_sum(delta(data['close'], 1).clip(lower=0), 20) / (ts_sum(delta(data['close'], 1).abs(), 20) + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "2b97e3b5",
+    "created_at": "2026-04-23T11:17:23.445397",
+    "is_window": true,
+    "min_warmup_bars": 20,
+    "source_family": "qlib158"
+  }
+}

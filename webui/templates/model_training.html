@@ -58,7 +58,6 @@
                 </div>
                 <div class="mb-3">
                     <label class="form-label">数据时间范围</label>
-                    <div id="rangeSlider" style="display:none;"></div>
                     <div id="dateRangeFallback">
                         <div class="row">
                             <div class="col-6">
@@ -145,7 +144,7 @@
                     </div>
                     <div class="col-md-6 mb-3">
                         <label class="form-label">预测步长</label>
-                        <input type="number" class="form-control" id="predictStep" value="1" min="1" max="100">
+                        <input type="number" class="form-control" id="predictStep" value="1" min="1" max="100" step="1">
                         <small class="text-muted">预测未来N个时间步</small>
                     </div>
                 </div>
@@ -161,6 +160,7 @@
                             <option value="log_loss">对数损失(分类)</option>
                         </select>
                         <small class="text-muted">说明: 自定义损失当前用于评估与early stopping监控</small>
+                        <small id="lossFunctionHint" class="text-warning ms-1" style="display:none;"></small>
                     </div>
                     <div class="col-md-6 mb-3" id="lossParamsContainer" style="display:none;">
                         <label class="form-label">损失函数参数</label>
@@ -177,21 +177,22 @@
                         <input type="number" class="form-control" id="trainRatio" value="0.8" min="0.1" max="0.95" step="0.05" onchange="onSplitChange()">
                     </div>
                     <div class="col-md-4 mb-3">
-                        <label class="form-label">测试集比例 (最终评估)</label>
-                        <input type="number" class="form-control" id="testRatio" value="0.1" min="0.05" max="0.5" step="0.05" onchange="onSplitChange()">
-                    </div>
-                    <div class="col-md-4 mb-3">
                         <label class="form-label">验证集比例 (early stopping)</label>
                         <input type="number" class="form-control" id="valRatio" value="0.1" min="0.05" max="0.5" step="0.05" onchange="onSplitChange()">
                     </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">测试集比例 (最终评估)</label>
+                        <input type="number" class="form-control" id="testRatio" value="0.1" min="0.05" max="0.5" step="0.05" onchange="onSplitChange()">
+                    </div>
                 </div>
                 <div class="mb-3">
-                    <div class="progress" style="height: 24px;">
+                    <div class="progress" style="height: 24px;" title="按时间顺序 train → val → test">
                         <div class="progress-bar bg-primary" id="trainBar" style="width:80%">训练 80%</div>
-                        <div class="progress-bar bg-warning text-dark" id="testBar" style="width:10%">测试 10%</div>
                         <div class="progress-bar bg-success" id="valBar" style="width:10%">验证 10%</div>
+                        <div class="progress-bar bg-warning text-dark" id="testBar" style="width:10%">测试 10%</div>
                     </div>
-                    <small class="text-muted" id="splitWarning"></small>
+                    <small class="text-muted">时间顺序: <strong>训练 → 验证 → 测试</strong>（验证集用于 early stopping，测试集用于最终评估）</small>
+                    <small class="text-muted d-block" id="splitWarning"></small>
                 </div>
 
                 <hr>
@@ -222,8 +223,11 @@
                 </div>
 
                 <div class="text-center mt-3">
-                    <button type="button" class="btn btn-primary btn-lg px-5" id="startTrainingBtn" onclick="startTraining()">
+                    <button type="button" class="btn btn-primary btn-lg px-5 me-2" id="startTrainingBtn" onclick="startTraining()">
                         <i class="fas fa-play me-2"></i>开始训练
+                    </button>
+                    <button type="button" class="btn btn-outline-danger btn-lg px-4" id="cancelTrainingBtn" onclick="cancelTraining()" style="display:none;">
+                        <i class="fas fa-stop me-2"></i>取消训练
                     </button>
                 </div>
             </div>
@@ -253,6 +257,13 @@
                 <div id="stepInfo" class="text-muted">
                     <i class="fas fa-info-circle me-1"></i>
                     <span id="stepMessage">准备中...</span>
+                </div>
+                <div id="failedFactorsAlert" class="alert alert-warning mt-3 py-2 mb-0" style="display:none;">
+                    <small>
+                        <i class="fas fa-exclamation-triangle me-1"></i>
+                        <strong>部分因子计算失败：</strong>
+                        <span id="failedFactorsText"></span>
+                    </small>
                 </div>
             </div>
         </div>
@@ -315,6 +326,19 @@
                         </div>
                     </div>
                 </div>
+
+                <div id="trainingCurveSection" class="row mb-4" style="display: none;">
+                    <div class="col-12">
+                        <div class="card">
+                            <div class="card-header"><small class="text-muted">训练</small> 评估曲线</div>
+                            <div class="card-body">
+                                <div style="height: 300px;">
+                                    <canvas id="trainingCurveChart"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -323,8 +347,17 @@
 <div class="row mt-4">
     <div class="col-12">
         <div class="card">
-            <div class="card-header">
-                <h5 class="mb-0"><i class="fas fa-history me-2"></i>训练历史</h5>
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h5 class="mb-0"><i class="fas fa-history me-2"></i>训练历史 <small class="text-muted" id="historyTotalBadge"></small></h5>
+                <div class="d-flex align-items-center">
+                    <div class="input-group input-group-sm me-2" style="width: 220px;">
+                        <span class="input-group-text"><i class="fas fa-search"></i></span>
+                        <input type="text" class="form-control form-control-sm" id="historySearch" placeholder="搜索 ID / 模型 / 标签 / 损失">
+                    </div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="loadTrainingHistory()" title="刷新">
+                        <i class="fas fa-sync-alt"></i>
+                    </button>
+                </div>
             </div>
             <div class="card-body">
                 <div class="table-responsive">
@@ -346,6 +379,99 @@
                         </tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="detailModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-info-circle me-2"></i>模型详情</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body" id="detailModalBody">
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="predictModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-chart-line me-2"></i>模型预测</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="predictModelId">
+                <ul class="nav nav-tabs mb-3" role="tablist">
+                    <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#predictPickTab" type="button">从本地数据选择</button></li>
+                    <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#predictPathTab" type="button">手动输入路径</button></li>
+                </ul>
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="predictPickTab">
+                        <div class="row">
+                            <div class="col-6 mb-3">
+                                <label class="form-label">交易所</label>
+                                <select class="form-select form-select-sm" id="predictExchangeSelect">
+                                    <option value="binance" selected>Binance</option>
+                                    <option value="okx">OKX</option>
+                                    <option value="bybit">Bybit</option>
+                                </select>
+                            </div>
+                            <div class="col-6 mb-3">
+                                <label class="form-label">交易类型</label>
+                                <select class="form-select form-select-sm" id="predictTradeTypeSelect">
+                                    <option value="futures" selected>期货</option>
+                                    <option value="spot">现货</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="row">
+                            <div class="col-6 mb-3">
+                                <label class="form-label">交易对</label>
+                                <select class="form-select form-select-sm" id="predictSymbolSelect"><option value="">请选择...</option></select>
+                            </div>
+                            <div class="col-6 mb-3">
+                                <label class="form-label">时间框架</label>
+                                <select class="form-select form-select-sm" id="predictTimeframeSelect"><option value="">请选择...</option></select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="tab-pane fade" id="predictPathTab">
+                        <div class="mb-3">
+                            <label class="form-label">数据文件路径 (feather)</label>
+                            <input type="text" class="form-control" id="predictFilePath" placeholder="输入或粘贴数据文件路径">
+                            <small class="text-muted">支持与训练时相同格式的 feather 文件</small>
+                        </div>
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">开始日期 (可选)</label>
+                        <input type="date" class="form-control" id="predictStartDate">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">结束日期 (可选)</label>
+                        <input type="date" class="form-control" id="predictEndDate">
+                    </div>
+                </div>
+                <div id="predictResultSection" style="display: none;">
+                    <hr>
+                    <h6>预测结果</h6>
+                    <div id="predictResultContent"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">关闭</button>
+                <button type="button" class="btn btn-primary" id="runPredictBtn" onclick="runPrediction()">
+                    <i class="fas fa-chart-line me-1"></i>执行预测
+                </button>
             </div>
         </div>
     </div>

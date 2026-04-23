@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha055",
+  "name": "WQ101-Alpha055",
+  "description": "WorldQuant Alpha#055。原始公式：-1 * correlation(rank((close-ts_min(low,12))/(ts_max(high,12)-ts_min(low,12))), rank(volume), 6)。 语义折衷：去掉全部 rank。",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/wq101_alpha055.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return -1 * ts_corr((close - ts_min(low, 12)) / (ts_max(high, 12) - ts_min(low, 12) + EPS), volume, 6)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "0d0e8b93",
+    "created_at": "2026-04-23T11:18:59.647552",
+    "is_window": true,
+    "min_warmup_bars": 18,
+    "source_family": "wq101"
+  }
+}

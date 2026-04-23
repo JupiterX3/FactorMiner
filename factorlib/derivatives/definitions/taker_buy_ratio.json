@@ -1,0 +1,29 @@
+{
+  "factor_id": "taker_buy_ratio",
+  "name": "主动买入成交占比",
+  "description": "taker_buy_base 占总成交量的比重，反映买卖盘压差。来源于每根 K 线的原生字段。",
+  "category": "derivatives",
+  "subcategory": "taker_volume",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/taker_buy_ratio.py",
+    "function_code": "def calculate(data, window=1, **kwargs):\n    if 'taker_buy_base' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    vol = data['volume'].replace(0, np.nan)\n    ratio = data['taker_buy_base'] / vol\n    if window and window > 1:\n        ratio = ratio.rolling(window).mean()\n    return ratio",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 1
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.218774",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

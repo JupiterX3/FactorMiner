@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_std_10",
+  "name": "qlib158-STD_10",
+  "description": "qlib Alpha158 — ts_std(close, w) / close  (window=10)",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_std_10.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ts_std(data['close'], 10) / (data['close'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "23c84b1e",
+    "created_at": "2026-04-23T11:17:23.358018",
+    "is_window": true,
+    "min_warmup_bars": 10,
+    "source_family": "qlib158"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_rsv_10",
+  "name": "qlib158-RSV_10",
+  "description": "qlib Alpha158 — (close - ts_min(low, w)) / (ts_max(high, w) - ts_min(low, w))  (window=10)",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_rsv_10.py",
+    "function_code": "def calculate(data, **kwargs):\n    return (data['close'] - ts_min(data['low'], 10)) / (ts_max(data['high'], 10) - ts_min(data['low'], 10) + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "249537a6",
+    "created_at": "2026-04-23T11:17:23.395881",
+    "is_window": true,
+    "min_warmup_bars": 10,
+    "source_family": "qlib158"
+  }
+}

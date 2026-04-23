@@ -33,6 +33,9 @@ bp = Blueprint('training_api', __name__, url_prefix='/api/training')
 
 logger = logging.getLogger(__name__)
 
+# 注意：training_sessions 为进程内内存存储，**不兼容多 worker 部署**。
+# 若以 gunicorn/uwsgi 多 worker 运行，POST /start 与 GET /status 可能命中
+# 不同进程导致轮询 404；需要时可改为 Redis / 共享文件存储。
 training_sessions = {}
 training_sessions_lock = threading.Lock()
 
@@ -45,13 +48,25 @@ DEFAULT_MAX_CONCURRENT_TRAININGS = 1
 DEFAULT_TRAINING_TIMEOUT_SECONDS = 30 * 60
 
 
+_EXCHANGE_NAMES = frozenset({'binance', 'okx', 'bybit', 'huobi', 'kucoin', 'gate', 'bitget'})
+_TRADE_TYPE_NAMES = frozenset({'futures', 'spot', 'swap', 'margin', 'options'})
+
+
 def _get_allowed_data_root():
-    configured_data_dir = current_app.config.get('DATA_DIR', 'data')
-    configured_data_dir = Path(configured_data_dir)
-    configured_str = str(configured_data_dir).lower()
-    if ('binance' in configured_str or 'okx' in configured_str or 'bybit' in configured_str) and (
-        'futures' in configured_str or 'spot' in configured_str
-    ):
+    """获取允许的训练数据根目录。
+
+    优先级：
+    1. 显式 DATA_ROOT 配置；
+    2. DATA_DIR 若其路径 **末两级** 恰好是 `<exchange>/<trade_type>`，回退到上两级；
+    3. 否则直接返回 DATA_DIR。
+    """
+    explicit_root = current_app.config.get('DATA_ROOT')
+    if explicit_root:
+        return Path(explicit_root).resolve()
+
+    configured_data_dir = Path(current_app.config.get('DATA_DIR', 'data'))
+    parts = [p.lower() for p in configured_data_dir.parts[-2:]]
+    if len(parts) == 2 and parts[0] in _EXCHANGE_NAMES and parts[1] in _TRADE_TYPE_NAMES:
         return configured_data_dir.parent.parent.resolve()
     return configured_data_dir.resolve()
 
@@ -96,6 +111,9 @@ def _safe_pickle_load(file_path):
             'numpy',
             'scipy',
             'sklearn',
+            'pandas',
+            'joblib',
+            'threadpoolctl',
         )
 
         def find_class(self, module, name):
@@ -133,15 +151,25 @@ def _cleanup_training_sessions_locked():
             del training_sessions[sid]
 
 
-def _assert_training_not_timeout(session_id):
+class TrainingCancelled(Exception):
+    """用户主动取消训练时抛出。"""
+
+
+def _assert_training_alive(session_id):
+    """检查训练会话是否超时或被取消，用于迭代回调。"""
     with training_sessions_lock:
         session = training_sessions.get(session_id)
         if not session:
             raise TimeoutError("训练会话不存在")
+        if session.get('cancel_requested'):
+            raise TrainingCancelled("用户已取消训练")
         start_ts = session.get('start_ts')
         timeout_seconds = float(session.get('timeout_seconds') or DEFAULT_TRAINING_TIMEOUT_SECONDS)
     if start_ts and (time.time() - start_ts) > timeout_seconds:
         raise TimeoutError(f"训练超时（>{int(timeout_seconds)}秒）")
+
+
+_assert_training_not_timeout = _assert_training_alive
 
 
 def _load_feather_data(file_path, start_date=None, end_date=None):
@@ -174,23 +202,54 @@ def _load_feather_data(file_path, start_date=None, end_date=None):
         df = df.sort_values('__time__').reset_index(drop=True)
         df.index = df['__time__']
         del df['__time__']
+        if df.index.has_duplicates:
+            logger.warning("数据时间索引存在重复，自动去重(keep=first)")
+            df = df[~df.index.duplicated(keep='first')]
     return df
 
 
+def _sanitize_feature_names(columns):
+    """规范化列名，避免 LightGBM 对特殊字符报错，同时保证唯一性。"""
+    seen = {}
+    mapping = {}
+    sanitized = []
+    for col in columns:
+        safe = re.sub(r'[^A-Za-z0-9_]+', '_', str(col)).strip('_')
+        if not safe:
+            safe = 'feat'
+        idx = seen.get(safe, 0)
+        if idx > 0:
+            unique = f"{safe}_{idx}"
+        else:
+            unique = safe
+        seen[safe] = idx + 1
+        mapping[col] = unique
+        sanitized.append(unique)
+    return sanitized, mapping
+
+
 def _build_features(df, factor_ids, engine):
-    feature_df = pd.DataFrame(index=df.index)
+    series_list = []
+    failed_factors = []
     for fid in factor_ids:
         try:
             series = engine.compute_single_factor(fid, df)
-            if series is not None:
-                if isinstance(series, pd.DataFrame):
-                    series = series.iloc[:, 0]
-                series.name = fid
-                feature_df = feature_df.join(series, how='left')
+            if series is None:
+                failed_factors.append({'factor_id': fid, 'reason': '返回空'})
+                continue
+            if isinstance(series, pd.DataFrame):
+                series = series.iloc[:, 0]
+            series = series.copy()
+            series.name = fid
+            series_list.append(series)
         except Exception as e:
+            failed_factors.append({'factor_id': fid, 'reason': str(e)[:200]})
             logger.warning(f"计算因子 {fid} 失败: {e}")
+    if not series_list:
+        return pd.DataFrame(index=df.index), failed_factors
+    feature_df = pd.concat(series_list, axis=1).reindex(df.index)
     feature_df = feature_df.dropna(how='all')
-    return feature_df
+    return feature_df, failed_factors
 
 
 def _build_label(df, label_type, predict_step=1):
@@ -209,8 +268,9 @@ def _build_label(df, label_type, predict_step=1):
     elif label_type == 'direction':
         future_close = close.shift(-predict_step)
         ret = future_close / close - 1
-        label = (ret > 0).astype(float)
-        label[ret.isna()] = np.nan
+        label = pd.Series(np.nan, index=ret.index, dtype=float)
+        label[ret > 0] = 1.0
+        label[ret < 0] = 0.0
         label.name = f'direction_{predict_step}'
     elif label_type == 'composite':
         future_close = close.shift(-predict_step)
@@ -224,6 +284,11 @@ def _build_label(df, label_type, predict_step=1):
 
 
 def _split_data_chronological(df, train_ratio=0.8, test_ratio=0.1, val_ratio=0.1):
+    """按时间顺序 train → val → test 三段式切分。
+
+    val 段位于中间，供 early stopping 使用；test 段位于最末，供最终评估。
+    返回顺序与时间顺序一致：(train_df, val_df, test_df)。
+    """
     n = len(df)
     train_end = int(n * train_ratio)
     val_end = int(n * (train_ratio + val_ratio))
@@ -232,7 +297,7 @@ def _split_data_chronological(df, train_ratio=0.8, test_ratio=0.1, val_ratio=0.1
     val_df = df.iloc[train_end:val_end]
     test_df = df.iloc[val_end:]
 
-    return train_df, test_df, val_df
+    return train_df, val_df, test_df
 
 
 class DirectionAwareMSELoss:
@@ -411,14 +476,22 @@ def _train_model(session_id, config):
             training_sessions[session_id]['message'] = '正在计算因子特征...'
         _assert_training_not_timeout(session_id)
 
+        failed_factors = []
         if factor_ids:
             from factor_miner.core.factor_engine import get_global_engine
             engine = get_global_engine()
-            feature_df = _build_features(df, factor_ids, engine)
+            feature_df, failed_factors = _build_features(df, factor_ids, engine)
             if feature_df is None or feature_df.empty:
-                raise ValueError(
-                    "选中的因子未生成有效特征（可能因子计算失败或结果全为空），请减少因子数量或改用基础特征重试"
+                reasons = "; ".join(
+                    f"{item['factor_id']}: {item['reason']}" for item in failed_factors[:5]
                 )
+                extra = f"（前5个失败原因: {reasons}）" if reasons else ""
+                raise ValueError(
+                    "选中的因子未生成有效特征（可能因子计算失败或结果全为空），"
+                    "请减少因子数量或改用基础特征重试" + extra
+                )
+            with training_sessions_lock:
+                training_sessions[session_id]['failed_factors'] = failed_factors
         else:
             ohlcv_candidates = {
                 'open': ['open', 'opn', 'o'],
@@ -479,6 +552,9 @@ def _train_model(session_id, config):
             logger.warning("因缺失值过多移除特征列: %s", dropped_feature_cols)
 
         merged_df = merged_df[valid_feature_cols + [label_col]].dropna()
+        sanitized_cols, feature_name_mapping = _sanitize_feature_names(valid_feature_cols)
+        rename_map = dict(zip(valid_feature_cols, sanitized_cols))
+        merged_df = merged_df.rename(columns=rename_map)
         feature_df = merged_df
 
         if len(feature_df) < 50:
@@ -493,7 +569,7 @@ def _train_model(session_id, config):
             training_sessions[session_id]['message'] = '正在划分数据集...'
         _assert_training_not_timeout(session_id)
 
-        train_df, test_df, val_df = _split_data_chronological(
+        train_df, val_df, test_df = _split_data_chronological(
             feature_df, train_ratio, test_ratio, val_ratio
         )
         if len(train_df) == 0 or len(test_df) == 0 or len(val_df) == 0:
@@ -593,22 +669,31 @@ def _train_model(session_id, config):
                     lambda_ = loss_params.get('lambda', 2.0)
                     custom_eval = lambda y_pred, dataset: _custom_eval_metric_magnitude_weighted(y_pred, dataset, lambda_)
 
-            def _lgb_timeout_callback(env):
+            def _lgb_iter_callback(env):
                 _assert_training_not_timeout(session_id)
+                if lgb_train_rounds > 0:
+                    iter_pct = min(1.0, (env.iteration + 1) / lgb_train_rounds)
+                    mapped = 55 + int(iter_pct * 25)
+                    with training_sessions_lock:
+                        if session_id in training_sessions:
+                            training_sessions[session_id]['progress'] = mapped
+                            training_sessions[session_id]['message'] = (
+                                f'LightGBM 训练中 ({env.iteration + 1}/{lgb_train_rounds})'
+                            )
 
             callbacks = [
                 lgb.log_evaluation(0),
                 lgb.record_evaluation(evals_result),
                 lgb.early_stopping(stopping_rounds=lgb_es_rounds, verbose=False),
-                _lgb_timeout_callback,
+                _lgb_iter_callback,
             ]
 
             model = lgb.train(
                 params,
                 train_data,
                 num_boost_round=lgb_train_rounds,
-                valid_sets=[val_data],
-                valid_names=['val'],
+                valid_sets=[train_data, val_data],
+                valid_names=['train', 'val'],
                 feval=custom_eval,
                 callbacks=callbacks,
             )
@@ -623,7 +708,11 @@ def _train_model(session_id, config):
                 'seed': 42,
                 'verbosity': 0,
             }
-            params.update(model_params)
+            xgb_model_params = {
+                k: v for k, v in model_params.items()
+                if k not in ('n_estimators', 'early_stopping_rounds')
+            }
+            params.update(xgb_model_params)
 
             dtrain = xgb.DMatrix(X_train_scaled, label=y_train.values, feature_names=list(X_train.columns))
             dtest = xgb.DMatrix(X_test_scaled, label=y_test.values, feature_names=list(X_train.columns))
@@ -633,32 +722,55 @@ def _train_model(session_id, config):
             if not is_classification:
                 if loss_function == 'direction_aware_mse':
                     lambda_ = loss_params.get('lambda', 2.0)
-                    custom_feval = lambda y_pred, dmat: _custom_eval_metric_direction_aware(y_pred, dmat, lambda_)[:2]
+                    custom_feval = lambda y_pred, dmat: _custom_eval_metric_direction_aware(y_pred, dmat, lambda_)
                 elif loss_function == 'composite':
                     alpha = loss_params.get('alpha', 1.0)
                     beta = loss_params.get('beta', 1.0)
                     k = loss_params.get('k', 5.0)
-                    custom_feval = lambda y_pred, dmat: _custom_eval_metric_composite(y_pred, dmat, alpha, beta, k)[:2]
+                    custom_feval = lambda y_pred, dmat: _custom_eval_metric_composite(y_pred, dmat, alpha, beta, k)
                 elif loss_function == 'magnitude_weighted':
                     lambda_ = loss_params.get('lambda', 2.0)
-                    custom_feval = lambda y_pred, dmat: _custom_eval_metric_magnitude_weighted(y_pred, dmat, lambda_)[:2]
+                    custom_feval = lambda y_pred, dmat: _custom_eval_metric_magnitude_weighted(y_pred, dmat, lambda_)
 
-            class _XgbTimeoutCallback(xgb.callback.TrainingCallback):
+            xgb_num_rounds = int(model_params.get('n_estimators', 200))
+
+            class _XgbProgressCallback(xgb.callback.TrainingCallback):
                 def after_iteration(self, model, epoch, evals_log):
                     _assert_training_not_timeout(session_id)
+                    if xgb_num_rounds > 0:
+                        iter_pct = min(1.0, (epoch + 1) / xgb_num_rounds)
+                        mapped = 55 + int(iter_pct * 25)
+                        with training_sessions_lock:
+                            if session_id in training_sessions:
+                                training_sessions[session_id]['progress'] = mapped
+                                training_sessions[session_id]['message'] = (
+                                    f'XGBoost 训练中 ({epoch + 1}/{xgb_num_rounds})'
+                                )
                     return False
 
-            model = xgb.train(
-                params,
-                dtrain,
-                num_boost_round=model_params.get('n_estimators', 200),
-                evals=[(dval, 'val')],
-                feval=custom_feval,
-                early_stopping_rounds=model_params.get('early_stopping_rounds', 20),
+            xgb_train_kwargs = dict(
+                params=params,
+                dtrain=dtrain,
+                num_boost_round=xgb_num_rounds,
+                evals=[(dtrain, 'train'), (dval, 'val')],
                 verbose_eval=False,
                 evals_result=evals_result,
-                callbacks=[_XgbTimeoutCallback()],
+                callbacks=[_XgbProgressCallback()],
             )
+            # xgboost >=1.6 将 feval / early_stopping_rounds 移至 callback/参数可选项，
+            # 这里做版本兼容（优先使用 kwargs，失败时降级）
+            try:
+                model = xgb.train(
+                    **xgb_train_kwargs,
+                    custom_metric=custom_feval,
+                    early_stopping_rounds=model_params.get('early_stopping_rounds', 20),
+                )
+            except TypeError:
+                model = xgb.train(
+                    **xgb_train_kwargs,
+                    feval=custom_feval,
+                    early_stopping_rounds=model_params.get('early_stopping_rounds', 20),
+                )
 
         elif model_type == 'logistic_regression':
             if is_classification:
@@ -822,7 +934,10 @@ def _train_model(session_id, config):
             training_sessions[session_id]['message'] = '正在保存模型...'
         _assert_training_not_timeout(session_id)
 
-        model_id = f"{model_type}_{label_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        model_id = (
+            f"{model_type}_{label_type}_"
+            f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+        )
         model_dir = MODELS_DIR / model_id
         model_dir.mkdir(parents=True, exist_ok=True)
 
@@ -859,12 +974,14 @@ def _train_model(session_id, config):
             'test_ratio': test_ratio,
             'val_ratio': val_ratio,
             'feature_names': list(X_train.columns),
+            'feature_name_mapping': feature_name_mapping,
             'label_name': label_col,
             'model_params': model_params,
-            'data_file': file_path,
+            'data_file': str(file_path),
             'start_date': start_date,
             'end_date': end_date,
             'factor_ids': factor_ids,
+            'failed_factors': failed_factors,
             'created_at': datetime.now().isoformat(),
             'data_info': training_sessions[session_id].get('data_info', {}),
             'metrics': metrics,
@@ -877,6 +994,13 @@ def _train_model(session_id, config):
                 if (not is_classification and loss_function != 'mse') else ''
             ),
         }
+        if evals_result:
+            serializable_evals = {}
+            for dataset_name, dataset_metrics in evals_result.items():
+                serializable_evals[dataset_name] = {}
+                for metric_name, values in dataset_metrics.items():
+                    serializable_evals[dataset_name][metric_name] = [float(v) for v in values]
+            save_config['evals_result'] = serializable_evals
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(save_config, f, ensure_ascii=False, indent=2, default=str)
 
@@ -910,21 +1034,34 @@ def _train_model(session_id, config):
                 'feature_importance': feature_importance,
                 'data_info': training_sessions[session_id].get('data_info', {}),
                 'model_dir': str(model_dir),
+                'evals_result': save_config.get('evals_result'),
             }
             training_sessions[session_id]['completed_time'] = datetime.now().isoformat()
             training_sessions[session_id]['completed_ts'] = time.time()
 
+    except TrainingCancelled as e:
+        logger.info(f"训练任务已被用户取消: {e}")
+        with training_sessions_lock:
+            if session_id in training_sessions:
+                training_sessions[session_id]['status'] = 'cancelled'
+                training_sessions[session_id]['current_step'] = 'cancelled'
+                training_sessions[session_id]['message'] = '训练已取消'
+                training_sessions[session_id]['error'] = str(e)
+                training_sessions[session_id]['completed_ts'] = time.time()
+                training_sessions[session_id]['completed_time'] = datetime.now().isoformat()
     except Exception as e:
         logger.error(f"训练任务失败: {e}")
         import traceback
         traceback.print_exc()
         with training_sessions_lock:
-            training_sessions[session_id]['status'] = 'failed'
-            training_sessions[session_id]['progress'] = 0
-            training_sessions[session_id]['current_step'] = 'failed'
-            training_sessions[session_id]['message'] = f'训练失败: {str(e)}'
-            training_sessions[session_id]['error'] = str(e)
-            training_sessions[session_id]['completed_ts'] = time.time()
+            if session_id in training_sessions:
+                training_sessions[session_id]['status'] = 'failed'
+                training_sessions[session_id]['progress'] = 0
+                training_sessions[session_id]['current_step'] = 'failed'
+                training_sessions[session_id]['message'] = f'训练失败: {str(e)}'
+                training_sessions[session_id]['error'] = str(e)
+                training_sessions[session_id]['completed_ts'] = time.time()
+                training_sessions[session_id]['completed_time'] = datetime.now().isoformat()
 
 
 @bp.route('/models', methods=['GET'])
@@ -967,9 +1104,14 @@ def start_training():
             return jsonify({'success': False, 'error': str(e)}), 400
 
         session_id = str(uuid.uuid4())
-        timeout_seconds = int(data.get('timeout_seconds') or current_app.config.get(
+        default_timeout = int(current_app.config.get(
             'TRAINING_TIMEOUT_SECONDS', DEFAULT_TRAINING_TIMEOUT_SECONDS
         ))
+        try:
+            timeout_seconds = int(data.get('timeout_seconds') or default_timeout)
+        except (TypeError, ValueError):
+            timeout_seconds = default_timeout
+        timeout_seconds = max(60, min(timeout_seconds, 24 * 3600))
 
         config = {
             'file_path': str(validated_file_path),
@@ -1054,7 +1196,33 @@ def get_training_status(session_id):
         'start_time': session.get('start_time'),
         'completed_time': session.get('completed_time'),
         'data_info': session.get('data_info'),
+        'cancel_requested': bool(session.get('cancel_requested')),
+        'failed_factors': session.get('failed_factors') or [],
     })
+
+
+@bp.route('/cancel/<session_id>', methods=['POST'])
+def cancel_training(session_id):
+    """请求取消指定的训练会话。
+
+    取消是合作式的：依赖 lightgbm/xgboost 的迭代回调在下一轮检测到
+    ``cancel_requested`` 后主动抛出 ``TrainingCancelled``。
+    对已完成/失败/取消的会话调用此接口将返回幂等成功。
+    """
+    with training_sessions_lock:
+        session = training_sessions.get(session_id)
+        if not session:
+            return jsonify({'success': False, 'error': '会话不存在'}), 404
+        current_status = session.get('status')
+        if current_status in ('completed', 'failed', 'cancelled'):
+            return jsonify({
+                'success': True,
+                'message': f'会话已处于终止状态: {current_status}',
+                'status': current_status,
+            })
+        session['cancel_requested'] = True
+        session['message'] = '正在等待训练安全退出...'
+    return jsonify({'success': True, 'message': '已提交取消请求'})
 
 
 @bp.route('/result/<session_id>', methods=['GET'])
@@ -1079,7 +1247,17 @@ def get_training_history():
     try:
         history = []
         if not MODELS_DIR.exists():
-            return jsonify({'success': True, 'history': []})
+            return jsonify({'success': True, 'history': [], 'total': 0})
+
+        search = (request.args.get('search') or '').strip().lower()
+        try:
+            limit = int(request.args.get('limit') or 0)
+        except ValueError:
+            limit = 0
+        try:
+            offset = max(0, int(request.args.get('offset') or 0))
+        except ValueError:
+            offset = 0
 
         for model_dir in MODELS_DIR.iterdir():
             if not model_dir.is_dir():
@@ -1090,7 +1268,7 @@ def get_training_history():
             try:
                 with open(config_file, 'r', encoding='utf-8') as f:
                     cfg = json.load(f)
-                history.append({
+                item = {
                     'model_id': cfg.get('model_id', model_dir.name),
                     'model_type': cfg.get('model_type'),
                     'task_type': cfg.get('task_type'),
@@ -1100,12 +1278,27 @@ def get_training_history():
                     'metrics': cfg.get('metrics', {}),
                     'created_at': cfg.get('created_at'),
                     'data_info': cfg.get('data_info', {}),
-                })
+                }
+                if search:
+                    haystack = ' '.join([
+                        str(item.get('model_id') or ''),
+                        str(item.get('model_type') or ''),
+                        str(item.get('label_type') or ''),
+                        str(item.get('loss_function') or ''),
+                    ]).lower()
+                    if search not in haystack:
+                        continue
+                history.append(item)
             except Exception:
                 continue
 
-        history.sort(key=lambda x: x.get('created_at', ''), reverse=True)
-        return jsonify({'success': True, 'history': history})
+        history.sort(key=lambda x: x.get('created_at') or '', reverse=True)
+        total = len(history)
+        if offset:
+            history = history[offset:]
+        if limit and limit > 0:
+            history = history[:limit]
+        return jsonify({'success': True, 'history': history, 'total': total})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -1156,14 +1349,18 @@ def predict(model_id):
 
         df = _load_feather_data(str(validated_file_path), data.get('start_date'), data.get('end_date'))
         factor_ids = cfg.get('factor_ids', [])
+        feature_name_mapping = cfg.get('feature_name_mapping') or {}
         if factor_ids:
             from factor_miner.core.factor_engine import get_global_engine
             engine = get_global_engine()
-            feature_df = _build_features(df, factor_ids, engine)
+            feature_df, _ = _build_features(df, factor_ids, engine)
         else:
-            feature_cols = cfg.get('feature_names', [])
+            feature_cols = list(feature_name_mapping.keys()) or cfg.get('feature_names', [])
             available_cols = [c for c in feature_cols if c in df.columns]
             feature_df = df[available_cols].select_dtypes(include=[np.number]).copy()
+
+        if feature_name_mapping:
+            feature_df = feature_df.rename(columns={k: v for k, v in feature_name_mapping.items() if k in feature_df.columns})
 
         feature_df = feature_df.dropna()
         if len(feature_df) == 0:
@@ -1217,5 +1414,84 @@ def delete_model(model_id):
             return jsonify({'success': False, 'error': '模型不存在'})
         shutil.rmtree(model_dir)
         return jsonify({'success': True, 'message': f'模型 {model_id} 已删除'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@bp.route('/detail/<model_id>', methods=['GET'])
+def get_model_detail(model_id):
+    try:
+        try:
+            model_dir = _resolve_model_dir(model_id)
+        except ValueError as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+        if not model_dir.exists() or not model_dir.is_dir():
+            return jsonify({'success': False, 'error': '模型不存在'})
+
+        config_file = model_dir / "config.json"
+        if not config_file.exists():
+            return jsonify({'success': False, 'error': '配置文件不存在'})
+
+        with open(config_file, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+
+        return jsonify({
+            'success': True,
+            'detail': {
+                'model_id': cfg.get('model_id'),
+                'model_type': cfg.get('model_type'),
+                'task_type': cfg.get('task_type'),
+                'label_type': cfg.get('label_type'),
+                'predict_step': cfg.get('predict_step'),
+                'loss_function': cfg.get('loss_function'),
+                'loss_params': cfg.get('loss_params', {}),
+                'train_ratio': cfg.get('train_ratio'),
+                'test_ratio': cfg.get('test_ratio'),
+                'val_ratio': cfg.get('val_ratio'),
+                'feature_names': cfg.get('feature_names', []),
+                'label_name': cfg.get('label_name'),
+                'model_params': cfg.get('model_params', {}),
+                'factor_ids': cfg.get('factor_ids', []),
+                'failed_factors': cfg.get('failed_factors', []),
+                'data_file': cfg.get('data_file'),
+                'start_date': cfg.get('start_date'),
+                'end_date': cfg.get('end_date'),
+                'created_at': cfg.get('created_at'),
+                'data_info': cfg.get('data_info', {}),
+                'metrics': cfg.get('metrics', {}),
+                'loss_function_note': cfg.get('loss_function_note', ''),
+                'model_storage': cfg.get('model_storage'),
+            },
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
+
+
+@bp.route('/training-curve/<model_id>', methods=['GET'])
+def get_training_curve(model_id):
+    try:
+        try:
+            model_dir = _resolve_model_dir(model_id)
+        except ValueError as e:
+            return jsonify({'success': False, 'error': str(e)}), 400
+        if not model_dir.exists() or not model_dir.is_dir():
+            return jsonify({'success': False, 'error': '模型不存在'})
+
+        config_file = model_dir / "config.json"
+        if not config_file.exists():
+            return jsonify({'success': False, 'error': '配置文件不存在'})
+
+        with open(config_file, 'r', encoding='utf-8') as f:
+            cfg = json.load(f)
+
+        evals_result = cfg.get('evals_result')
+        if not evals_result:
+            return jsonify({'success': True, 'curve': None, 'message': '该模型无训练曲线数据'})
+
+        return jsonify({
+            'success': True,
+            'curve': evals_result,
+            'model_type': cfg.get('model_type'),
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})

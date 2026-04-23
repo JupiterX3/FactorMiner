@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha360_close_ratio_5_60",
+  "name": "qlib360-CLOSE_ratio_5_60",
+  "description": "qlib Alpha360 辅助 — close.shift(5) / close.shift(60)，长期动量",
+  "category": "qlib360",
+  "subcategory": "ratio",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha360_close_ratio_5_60.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ref(data['close'], 5) / (ref(data['close'], 60) + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "4113a3a9",
+    "created_at": "2026-04-23T11:17:23.503361",
+    "is_window": false,
+    "min_warmup_bars": 61,
+    "source_family": "qlib360"
+  }
+}

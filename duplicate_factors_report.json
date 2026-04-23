@@ -1,0 +1,159 @@
+{
+  "config": {
+    "n_symbols": 20,
+    "n_bars": 300,
+    "warmup": 50,
+    "seed": 42,
+    "spearman_threshold": 0.999,
+    "rank_consistency_threshold": 0.99
+  },
+  "summary": {
+    "total_factors": 239,
+    "duplicate_groups": 7,
+    "duplicate_factors": 16
+  },
+  "duplicate_groups": [
+    {
+      "factors": [
+        "bb_percent",
+        "bb_position",
+        "zscore_20",
+        "z_score"
+      ],
+      "pair_details": [
+        {
+          "factor_a": "bb_percent",
+          "factor_b": "bb_position",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        },
+        {
+          "factor_a": "bb_percent",
+          "factor_b": "zscore_20",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        },
+        {
+          "factor_a": "bb_percent",
+          "factor_b": "z_score",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        },
+        {
+          "factor_a": "bb_position",
+          "factor_b": "zscore_20",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        },
+        {
+          "factor_a": "bb_position",
+          "factor_b": "z_score",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        },
+        {
+          "factor_a": "zscore_20",
+          "factor_b": "z_score",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        }
+      ]
+    },
+    {
+      "factors": [
+        "bb_width",
+        "cv_20"
+      ],
+      "pair_details": [
+        {
+          "factor_a": "bb_width",
+          "factor_b": "cv_20",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        }
+      ]
+    },
+    {
+      "factors": [
+        "custom_momentum",
+        "roc"
+      ],
+      "pair_details": [
+        {
+          "factor_a": "custom_momentum",
+          "factor_b": "roc",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        }
+      ]
+    },
+    {
+      "factors": [
+        "percentile_rank",
+        "price_rank_20"
+      ],
+      "pair_details": [
+        {
+          "factor_a": "percentile_rank",
+          "factor_b": "price_rank_20",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        }
+      ]
+    },
+    {
+      "factors": [
+        "price_deviation_100",
+        "zscore_100"
+      ],
+      "pair_details": [
+        {
+          "factor_a": "price_deviation_100",
+          "factor_b": "zscore_100",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 201
+        }
+      ]
+    },
+    {
+      "factors": [
+        "price_zscore_50",
+        "zscore_50"
+      ],
+      "pair_details": [
+        {
+          "factor_a": "price_zscore_50",
+          "factor_b": "zscore_50",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        }
+      ]
+    },
+    {
+      "factors": [
+        "stoch_k",
+        "williams_r"
+      ],
+      "pair_details": [
+        {
+          "factor_a": "stoch_k",
+          "factor_b": "williams_r",
+          "mean_spearman": 1.0,
+          "rank_consistency": 1.0,
+          "valid_dates": 250
+        }
+      ]
+    }
+  ]
+}

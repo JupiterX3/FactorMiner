@@ -1,4 +1,4 @@
-﻿"""
+"""
 数据获取模块
 支持多种数据源的数据获取和预处理
 """
@@ -60,7 +60,7 @@ class DataLoader:
         elif data_source == 'alpha_vantage':
             return self._get_alpha_vantage_data(symbol, start_date, end_date, **kwargs)
         else:
-            raise ValueError(f"不支持的数据源: {data_source}")
+            return self._get_local_exchange_data(symbol, start_date, end_date, interval, data_source, **kwargs)
     
     def _get_yahoo_data(self, 
                         symbol: str,
@@ -161,6 +161,181 @@ class DataLoader:
             
         except Exception as e:
             print(f"获取币安数据失败: {e}")
+            return pd.DataFrame()
+    
+    # ------------------------------------------------------------------
+    # 额外数据列 join（metrics / funding / mark / index）
+    # ------------------------------------------------------------------
+    def load_with_extras(
+        self,
+        symbol: str,
+        interval: str = '1h',
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        include: Optional[List[str]] = None,
+        trade_type: str = 'futures',
+    ) -> pd.DataFrame:
+        """
+        加载主 OHLCV 并按需 join 额外数据列。
+
+        Args:
+            include: 子集，支持 'metrics'（OI/LSR/taker_ratio）、'funding'、
+                     'mark'（mark 价 → basis 需同时 include 'index'）、'index'。
+                     默认 None 等价于 ['metrics','funding','basis']。
+                     'basis' 是快捷选项：自动包含 'mark'+'index' 并派生
+                     `basis = (close - index_close) / index_close`。
+
+        Returns:
+            带有额外列的 OHLCV DataFrame（date 为索引）。找不到的额外文件
+            不会报错，只是对应列缺失。
+        """
+        include = include if include is not None else ['metrics', 'funding', 'basis']
+
+        base = self._get_binance_data(symbol, start_date, end_date, interval)
+        if base is None or base.empty:
+            return pd.DataFrame()
+
+        safe_symbol = symbol if symbol.endswith('_USDT_USDT') else (
+            f"{symbol}_USDT_USDT" if '_USDT' not in symbol else f"{symbol}_USDT"
+        )
+
+        project_root = Path(__file__).parent.parent.parent
+        base_dir = project_root / "data" / "binance"
+
+        def _left_join_on_date(main_df: pd.DataFrame, extra_df: pd.DataFrame,
+                               how: str = 'left') -> pd.DataFrame:
+            if extra_df is None or extra_df.empty:
+                return main_df
+            extra = extra_df.copy()
+            if 'date' in extra.columns:
+                extra['date'] = pd.to_datetime(extra['date'], errors='coerce')
+                if getattr(extra['date'].dt, 'tz', None) is not None:
+                    extra['date'] = extra['date'].dt.tz_localize(None)
+                extra = extra.set_index('date')
+            if getattr(extra.index, 'tz', None) is not None:
+                extra.index = extra.index.tz_localize(None)
+            # 以 main 索引为左基，精确对齐；缺失位置用向前填充（对 5min→1h 对齐友好）
+            extra = extra[~extra.index.duplicated(keep='last')].sort_index()
+            aligned = extra.reindex(main_df.index, method='ffill')
+            for col in aligned.columns:
+                main_df[col] = aligned[col]
+            return main_df
+
+        # 1. metrics
+        if 'metrics' in include:
+            metrics_path = base_dir / "futures_metrics" / (
+                f"{safe_symbol}-{interval}-metrics.feather"
+            )
+            if metrics_path.exists():
+                try:
+                    base = _left_join_on_date(base, pd.read_feather(metrics_path))
+                except Exception as e:
+                    print(f"join metrics 失败: {e}")
+
+        # 2. funding（事件级，需要 ffill 到 K 线）
+        if 'funding' in include:
+            funding_path = base_dir / "futures_funding" / f"{safe_symbol}-funding.feather"
+            if funding_path.exists():
+                try:
+                    base = _left_join_on_date(base, pd.read_feather(funding_path))
+                except Exception as e:
+                    print(f"join funding 失败: {e}")
+
+        # 3. mark / index / basis
+        want_basis = 'basis' in include
+        need_mark = 'mark' in include or want_basis
+        need_index = 'index' in include or want_basis
+        if need_mark:
+            mark_path = base_dir / "futures_markprice" / (
+                f"{safe_symbol}-{interval}-mark.feather"
+            )
+            if mark_path.exists():
+                try:
+                    base = _left_join_on_date(base, pd.read_feather(mark_path))
+                except Exception as e:
+                    print(f"join mark 失败: {e}")
+        if need_index:
+            index_path = base_dir / "futures_indexprice" / (
+                f"{safe_symbol}-{interval}-index.feather"
+            )
+            if index_path.exists():
+                try:
+                    base = _left_join_on_date(base, pd.read_feather(index_path))
+                except Exception as e:
+                    print(f"join index 失败: {e}")
+        if want_basis and 'index_close' in base.columns and 'close' in base.columns:
+            base['basis'] = (base['close'] - base['index_close']) / base['index_close']
+
+        return base
+
+    def _get_local_exchange_data(self,
+                                  symbol: str,
+                                  start_date: Optional[str] = None,
+                                  end_date: Optional[str] = None,
+                                  interval: str = '1d',
+                                  exchange: str = 'binance',
+                                  **kwargs) -> pd.DataFrame:
+        try:
+            base_dir = Path(__file__).parent.parent.parent / "data"
+
+            search_dirs = [
+                base_dir / exchange / "futures",
+                base_dir / exchange / "spot",
+                base_dir / exchange,
+                base_dir / "binance" / "futures",
+                base_dir / "binance" / "spot",
+                base_dir / "binance",
+            ]
+
+            if symbol.endswith('_USDT'):
+                base_symbol = symbol
+            else:
+                base_symbol = f"{symbol}_USDT"
+
+            for data_dir in search_dirs:
+                if not data_dir.exists():
+                    continue
+
+                patterns = [
+                    f"{base_symbol}_USDT-{interval}-futures.feather",
+                    f"{base_symbol}_USDT-{interval}-spot.feather",
+                    f"{base_symbol}_USDT-{interval}.feather",
+                    f"{base_symbol}-{interval}-futures.feather",
+                    f"{base_symbol}-{interval}-spot.feather",
+                    f"{base_symbol}-{interval}.feather",
+                ]
+
+                for pattern in patterns:
+                    matching_files = list(data_dir.glob(pattern))
+                    if matching_files:
+                        file_path = matching_files[0]
+                        print(f"找到本地数据文件: {file_path}")
+                        data = pd.read_feather(file_path)
+
+                        if 'date' in data.columns:
+                            data.set_index('date', inplace=True)
+                        elif 'time' in data.columns:
+                            data.set_index('time', inplace=True)
+                        elif 'timestamp' in data.columns:
+                            data['date'] = pd.to_datetime(data['timestamp'], unit='ms')
+                            data.set_index('date', inplace=True)
+                            data.drop('timestamp', axis=1, inplace=True)
+
+                        if start_date:
+                            start_dt = pd.to_datetime(start_date)
+                            data = data[data.index >= start_dt]
+                        if end_date:
+                            end_dt = pd.to_datetime(end_date)
+                            data = data[data.index <= end_dt]
+
+                        print(f"成功加载本地数据: {data.shape[0]} 条记录")
+                        return data
+
+            print(f"未找到 {exchange} 交易所 {symbol} 的本地数据文件")
+            return pd.DataFrame()
+
+        except Exception as e:
+            print(f"获取本地交易所数据失败: {e}")
             return pd.DataFrame()
     
     def _get_alpha_vantage_data(self,

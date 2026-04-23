@@ -366,6 +366,11 @@
     }
 }
 
+.evolution-chart-container {
+    max-height: 260px;
+    overflow: auto;
+}
+
 /* 调试信息展示区域样式 */
 .debug-info-container {
     background: #f8f9fa;

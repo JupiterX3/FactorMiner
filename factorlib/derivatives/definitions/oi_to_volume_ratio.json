@@ -1,0 +1,29 @@
+{
+  "factor_id": "oi_to_volume_ratio",
+  "name": "持仓 / 成交量比",
+  "description": "open_interest 与 volume 的比值，衡量持仓相对活跃度。数值越大说明筹码沉淀越多、交易频率越低。",
+  "category": "derivatives",
+  "subcategory": "open_interest",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/oi_to_volume_ratio.py",
+    "function_code": "def calculate(data, window=20, **kwargs):\n    if 'open_interest' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    vol = data['volume'].rolling(window).mean().replace(0, np.nan)\n    return data['open_interest'] / vol",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "window": 20
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.215536",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

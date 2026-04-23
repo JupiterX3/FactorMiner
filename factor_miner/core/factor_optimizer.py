@@ -422,11 +422,15 @@ class FactorOptimizer:
         min_periods=20,
         use_ledoit_wolf=True,
         enforce_non_negative=False,
-        ridge=1e-6
+        ridge=1e-6,
+        return_weights=False
     ):
         """
         最大化 ICIR 的因子组合：
         ICIR(w) = (mu^T w) / sqrt(w^T Sigma w), 约束 ||w||_1 = 1。
+
+        当 return_weights=True 时，额外返回每个因子对应的权重字典 {factor_id: weight}，
+        未参与求解的因子（例如 IC 矩阵里被剔除的列）权重为 0。
         """
         ic_matrix, factors_aligned = self._build_ic_matrix(
             factors_df,
@@ -434,6 +438,10 @@ class FactorOptimizer:
             min_periods=min_periods
         )
         if ic_matrix is None or factors_aligned is None or ic_matrix.empty:
+            if return_weights:
+                n = max(len(factors_df.columns), 1)
+                fallback_w = {c: 1.0 / n for c in factors_df.columns}
+                return factors_df.mean(axis=1), fallback_w
             return factors_df.mean(axis=1)
 
         mu = ic_matrix.mean(axis=0).to_numpy(dtype=float)
@@ -450,6 +458,10 @@ class FactorOptimizer:
             cov = np.cov(x, rowvar=False)
         cov = np.asarray(cov, dtype=float)
         if cov.ndim != 2 or cov.shape[0] != cov.shape[1]:
+            if return_weights:
+                n = max(len(factors_df.columns), 1)
+                fallback_w = {c: 1.0 / n for c in factors_df.columns}
+                return factors_df.mean(axis=1), fallback_w
             return factors_df.mean(axis=1)
         cov = cov + np.eye(k, dtype=float) * float(ridge)
 
@@ -464,6 +476,12 @@ class FactorOptimizer:
         for i, col in enumerate(active_cols):
             if col in factors_df.columns:
                 weighted_factor = weighted_factor.add(factors_df[col] * w[i], fill_value=0.0)
+
+        if return_weights:
+            weights_map = {col: 0.0 for col in factors_df.columns}
+            for i, col in enumerate(active_cols):
+                weights_map[col] = float(w[i])
+            return weighted_factor, weights_map
         return weighted_factor
     
     def _create_ml_weighted_factor(self, factors_df):

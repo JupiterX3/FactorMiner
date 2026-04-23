@@ -1,0 +1,28 @@
+{
+  "factor_id": "wq101_alpha051",
+  "name": "WQ101-Alpha051",
+  "description": "WorldQuant Alpha#051。原始公式：(((delay(close,20)-delay(close,10))/10) - ((delay(close,10)-close)/10)) < -0.05 ? 1 : -(close-delay(close,1))。 语义折衷：直接实现（WQ 原式阈值 -0.05）。",
+  "category": "wq101",
+  "subcategory": "alpha051",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/wq101_alpha051.py",
+    "function_code": "def calculate(data, **kwargs):\n    close = data['close']\n    open_ = data['open']\n    high = data['high']\n    low = data['low']\n    volume = data['volume']\n    ret = returns(close)\n    vwap = vwap_proxy(data)\n    return pd.Series(np.where(((ref(close, 20) - ref(close, 10)) / 10 - (ref(close, 10) - close) / 10) < -0.05, 1.0, -(close - ref(close, 1))), index=close.index)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "2e365c65",
+    "created_at": "2026-04-23T11:18:59.645081",
+    "is_window": true,
+    "min_warmup_bars": 21,
+    "source_family": "wq101"
+  }
+}

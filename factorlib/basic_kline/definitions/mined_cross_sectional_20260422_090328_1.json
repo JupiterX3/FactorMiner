@@ -1,0 +1,37 @@
+{
+  "factor_id": "mined_cross_sectional_20260422_090328_1",
+  "name": "Mined_cross_sectional_1",
+  "description": "来源:cross_sectional 表达式:cs_mad_norm((((momentum max abs(high_low_range)) div ma_deviation) min ma_deviation))",
+  "category": "basic_kline",
+  "subcategory": "event",
+  "computation_type": "ml_model",
+  "computation_data": {
+    "algorithm_name": "gp_cross_sectional",
+    "model_file": "",
+    "performance_metrics": {
+      "name": "GP截面因子_1",
+      "expression": "cs_mad_norm((((momentum max abs(high_low_range)) div ma_deviation) min ma_deviation))",
+      "ic_mean": -0.0277251425725633,
+      "icir": -0.13069800839991821,
+      "rank_ic_mean": -0.04046643307262497,
+      "rank_icir": -0.19734941511592527,
+      "long_short_return": -0.0002883810083778863,
+      "n_symbols": 50,
+      "n_periods": 4392,
+      "total_periods": 4393,
+      "coverage_rate": 0.9997723651263374,
+      "fitness": 0.1899028329346958,
+      "depth": 6,
+      "size": 9,
+      "source_session_id": "63aa056f-e7f7-4c7e-8534-020c0c63f34c",
+      "source_factor_id": "gp_cs_1"
+    }
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "5151924b",
+    "created_at": "2026-04-22T09:03:28.577929"
+  }
+}

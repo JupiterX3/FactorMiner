@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_vol_lag_1",
+  "name": "qlib158-VOL_lag1",
+  "description": "qlib Alpha158 — volume.shift(1) / (volume+eps)",
+  "category": "qlib158",
+  "subcategory": "volume",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "technicals/functions/alpha158_vol_lag_1.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ref(data['volume'], 1) / (data['volume'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "5c4b59d2",
+    "created_at": "2026-04-23T11:17:23.348256",
+    "is_window": false,
+    "min_warmup_bars": 2,
+    "source_family": "qlib158"
+  }
+}

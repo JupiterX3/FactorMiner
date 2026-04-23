@@ -1,0 +1,249 @@
+# 截面GP & 截面RL 因子挖掘功能审计报告
+
+## 1. 整体架构检查
+
+### 前端 → 后端映射关系
+
+| 功能 | 前端模式值 | 前端触发函数 | API端点 | 后台线程函数 | 核心引擎 |
+|------|-----------|-------------|---------|------------|---------|
+| 截面GP | `cross_sectional` | `handleCrossSectionalMining()` | `POST /api/mining/cross_sectional/start` | `_run_cross_sectional_mining_background()` | `GPMiner.mine()` |
+| 截面RL | `cross_sectional_rl` | `handleRLCrossSectionalMining()` | `POST /api/mining/cross_sectional_rl/start` | `_run_rl_cross_sectional_mining_background()` | `RLMiner.mine()` |
+
+> [!NOTE]
+> 前后端映射关系清晰完整，三种挖掘模式（标准/GP/RL）各自有独立的配置区域、提交逻辑和后端处理流程。
+
+---
+
+## 2. 功能可用性验证
+
+### 2.1 截面GP ✅ 基本可用
+
+**前端参数收集** ([factor_mining.js:2712-2782](file:///d:/PythonProject/FactorMiner/webui/static/js/factor_mining.js#L2712-L2782)):
+- 正确收集 `symbols`, `timeframe`, `start_date`, `end_date`, `data_source` 
+- 正确收集 GP 参数: `population_size`, `max_generations`, `max_depth`, `crossover_rate`, `mutation_rate`, `min_ic`, `min_ir`, `max_factors`, `max_correlation`
+- 验证了至少3个交易对、至少1个时间框架（多timeframe时仅使用第一个并给出警告）
+
+**后端接收与处理** ([mining_api.py:512-734](file:///d:/PythonProject/FactorMiner/webui/routes/mining_api.py#L512-L734)):
+- 参数接收与反序列化正确
+- 数据加载、进度回调、结果保存逻辑完整
+- 因子保存到 `factor_storage` 和 `mining_sessions.json` 双路径
+
+**核心引擎** ([gp_miner.py](file:///d:/PythonProject/FactorMiner/factor_miner/core/gp_miner.py)):
+- 10维特征空间 + 26个算子（含截面算子）
+- 表达式树的初始化/评估/交叉/变异/精英保留逻辑完整
+- 截面IC/IR评估逻辑正确（逐日截面计算）
+- 多样化筛选（相关性过滤）实现正确
+
+### 2.2 截面RL ✅ 基本可用
+
+**前端参数收集** ([factor_mining.js:2627-2710](file:///d:/PythonProject/FactorMiner/webui/static/js/factor_mining.js#L2627-L2710)):
+- 正确收集所有 RL 参数（batch_size, train_steps, d_model, nhead, num_layers 等）
+- 前端验证 `d_model % nhead == 0`（重要！防止 Transformer 初始化崩溃）
+- PyTorch 环境检测 `checkRLTorchStatus()` 正常工作
+- LoRD 开关通过 checkbox 传递
+
+**后端接收与处理** ([mining_api.py:779-1009](file:///d:/PythonProject/FactorMiner/webui/routes/mining_api.py#L779-L1009)):
+- 首先检查 `TORCH_AVAILABLE`，不可用时直接返回400（优雅降级）
+- 参数接收完整，类型转换正确
+- 进度回调、结果保存逻辑同GP
+
+**核心引擎** ([rl_miner.py](file:///d:/PythonProject/FactorMiner/factor_miner/core/rl_miner.py)):
+- 27个算子 + 10维特征空间，与设计文档一致
+- LoopedTransformer + Actor-Critic + REINFORCE算法正确实现
+- StackVM公式执行引擎实现完整
+- CrossSectionalBacktest回测评估器参数与设计文档一致
+- LoRD正则化正确实现（Newton-Schulz迭代）
+
+---
+
+## 3. 发现的问题
+
+### 🔴 严重问题
+
+#### 问题1: RL结果展示函数 `showRLResults` 缺少与GP对等的指标列
+
+**位置**: [factor_mining.js:2291-2367](file:///d:/PythonProject/FactorMiner/webui/static/js/factor_mining.js#L2291-L2367)
+
+RL结果表格只显示4列（因子ID、表达式、回测得分、平均收益），而GP结果显示11列（含IC均值、ICIR、Fitness、Rank IC、Rank ICIR、多空收益、币种数、期数等）。
+
+**影响**: RL挖掘出的因子缺少可对比的截面质量指标，用户无法评估RL因子的截面有效性。
+
+**根因**: RL引擎使用回测PnL作为评估指标（score/avg_return），没有计算截面IC/IR。这与设计文档描述一致（GP用IC/IR，RL用PnL），但在结果展示上缺乏统一性。
+
+**建议**: 可在RL输出阶段额外计算截面IC/IR，补充到因子信息中，使两种模式的结果可以对比。
+
+---
+
+#### 问题2: `data_source` 映射逻辑过于简化
+
+**位置**: [factor_mining.js:2652](file:///d:/PythonProject/FactorMiner/webui/static/js/factor_mining.js#L2652) 和 [factor_mining.js:2730](file:///d:/PythonProject/FactorMiner/webui/static/js/factor_mining.js#L2730)
+
+```javascript
+const data_source = exchange === 'binance' ? 'binance' : 'yahoo';
+```
+
+当用户选择 OKX 或 Bybit 交易所时，`data_source` 会被映射为 `'yahoo'`，但 `DataLoader.get_data()` 的 yahoo 数据源用于传统金融数据（股票/ETF），不适合加密货币。这会导致数据加载失败或加载到错误的数据。
+
+**建议**: 应根据实际交易所传递正确的 `data_source` 值，或者 `DataLoader` 应支持直接从本地文件加载（因为用户已经通过"数据管理"页面下载了数据）。
+
+---
+
+#### 问题3: 前端没有"停止挖掘"按钮
+
+**位置**: 整个 [factor_mining.html](file:///d:/PythonProject/FactorMiner/webui/templates/factor_mining.html)
+
+后端已实现完整的停止逻辑：
+- GP: `mining_api.py:752-774` → `gp_miner.request_stop()`
+- RL: `mining_api.py:765-768` → `rl_miner.stop()`
+
+但前端没有任何UI元素来触发停止操作。对于可能运行1-30分钟的任务，用户无法中止正在进行的挖掘。
+
+---
+
+### 🟡 中等问题
+
+#### 问题4: SSE进度流用于所有模式但 `message` 字段未正确传递
+
+**位置**: [factor_mining.js:1056-1072](file:///d:/PythonProject/FactorMiner/webui/static/js/factor_mining.js#L1056-L1072)
+
+`updateProgressDisplay` 函数尝试读取 `data.messages` 数组来显示调试信息，但后端 SSE (`/api/mining/progress/<session_id>`) 只返回 `message`（单数字符串），没有 `messages` 数组。
+
+```javascript
+// 前端代码
+const { progress, current_step, messages } = data;
+// ...
+if (messages && messages.length > 0) {  // 永远不会进入这个分支
+```
+
+**影响**: 调试信息区域只显示进度百分比和步骤名称，丢失了后端丰富的文本消息（如每代的最佳IC/表达式、RL的实时reward等）。
+
+**建议**: 前端应同时读取 `data.message`（单数字符串）并显示在调试区。
+
+---
+
+#### 问题5: GP停止后 session 状态可能不一致
+
+**位置**: [gp_miner.py:787-791](file:///d:/PythonProject/FactorMiner/factor_miner/core/gp_miner.py#L787-L791) vs [mining_api.py:762-763](file:///d:/PythonProject/FactorMiner/webui/routes/mining_api.py#L762-L763)
+
+当 GP 被用户停止时，`_stop_requested` 导致进化循环中断，但 `mine()` 方法仍会继续执行后续的因子筛选和结果返回逻辑，最终返回 `success: True`。
+
+而 `mining_api.py:762` 将 session 状态设为 `stopping`，但 `_run_cross_sectional_mining_background` 线程并不检查 `stopping` 状态——它会正常完成并将状态设为 `completed`。
+
+**结果**: 用户点击停止后，任务仍会"成功完成"，但结果可能不完整（进化代数不足）。这不是严重bug，但用户体验不一致。
+
+---
+
+#### 问题6: RL训练循环中逐样本执行效率低
+
+**位置**: [rl_miner.py:566-579](file:///d:/PythonProject/FactorMiner/factor_miner/core/rl_miner.py#L566-L579)
+
+```python
+for i in range(self.batch_size):
+    formula = seqs[i].tolist()
+    res = self.vm.execute(formula, feat_tensor)
+```
+
+每个训练步内的公式评估是逐条执行的（Python for循环 × batch_size），这是主要的性能瓶颈。StackVM是单公式执行引擎，无法批量化。
+
+**影响**: BS=512时，每步需执行512次StackVM，大量时间消耗在Python循环和CPU-GPU数据传输上，而非GPU计算。
+
+**建议**: 可将公式按相同token序列分组，批量执行相同公式（减少重复计算）。或将StackVM改造为支持batch执行的版本。
+
+---
+
+#### 问题7: `factor_data` 字段在保存到文件时被序列化但数据量巨大
+
+**位置**: GP: [mining_api.py:656-672](file:///d:/PythonProject/FactorMiner/webui/routes/mining_api.py#L656-L672), RL: [mining_api.py:940-948](file:///d:/PythonProject/FactorMiner/webui/routes/mining_api.py#L940-L948)
+
+GP的 `factors_for_storage` 没有包含 `factor_data`（因子值时序数据），只保留了指标信息——这是正确的。
+
+但 RL的 `factor_data` 在 `factors_result` 中包含了每个币种的完整因子值序列（dates + values列表），这些数据在写入 JSON 文件时可能非常大（15因子 × 30币种 × 365天 ≈ 数MB）。
+
+GP端也有 `factor_data`，但在构建 `factors_for_storage` 时已正确排除。
+
+---
+
+### 🟢 轻微问题
+
+#### 问题8: 设计文档与实际代码存在的细微差异
+
+| 维度 | 设计文档 | 实际代码 |
+|------|---------|---------|
+| GP特征数量 | 10维(RET,VOL,V_CHG等) | 10维(returns,log_ret,volatility等) — **特征名称不同但含义类似** |
+| GP算子数量 | 无明确计数 | 26个算子（多于设计文档提到的） |
+| RL算子数量 | 27个 | **27个** ✅ |
+| RL特征名称 | 与设计文档一致 | ✅ FEATURE_NAMES完全一致 |
+| RL目标收益 | log(close_{t+2}/close_{t+1}) | `log(roll(c,-2) / (roll(c,-1) + 1e-9))` ✅ 一致 |
+| 信号阈值 | 0.65 | `signal > 0.65` ✅ 一致 |
+| 回撤惩罚 | -3% → 1.5x | `net_pnl < -0.03` × 1.5 ✅ 一致 |
+
+GP特征名称差异不影响功能：GP使用了不同的命名方式（`returns`, `log_ret` 等），但计算含义与设计文档描述的基本对应。这是因为GP使用pandas实现，而RL使用torch实现，两者独立编码。
+
+---
+
+#### 问题9: 历史记录展示缺少模式区分
+
+**位置**: [factor_mining.html:520-549](file:///d:/PythonProject/FactorMiner/webui/templates/factor_mining.html#L520-L549)
+
+挖掘历史表格列中有"因子类型"列，但前端 `loadMiningHistory()` 是否正确显示截面GP/RL的类型标识需要确认。当前的历史记录结构中 `algorithms_used` 字段对GP/RL来说可能为空，应改用 `config.mode` 来判断。
+
+---
+
+## 4. 前后端参数对照表
+
+### 截面GP参数
+
+| 前端ID | 前端值 | JS变量名 | 后端参数名 | 后端默认值 | ✅/❌ |
+|--------|-------|---------|-----------|-----------|------|
+| `csPopulationSize` | 200 | `population_size` | `population_size` | 200 | ✅ |
+| `csMaxGenerations` | 30 | `max_generations` | `max_generations` | 30 | ✅ |
+| `csMaxDepth` | 5 | `max_depth` | `max_depth` | 5 | ✅ |
+| `csMaxFactors` | 15 | `max_factors` | `max_factors` | 15 | ✅ |
+| `csCrossoverRate` | 0.7 | `crossover_rate` | `crossover_rate` | 0.7 | ✅ |
+| `csMutationRate` | 0.2 | `mutation_rate` | `mutation_rate` | 0.2 | ✅ |
+| `csMinIC` | 0.02 | `min_ic` | `min_ic` | 0.02 | ✅ |
+| `csMinIR` | 0.1 | `min_ir` | `min_ir` | 0.1 | ✅ |
+| `csMaxCorrelation` | 0.7 | `max_correlation` | `max_correlation` | 0.7 | ✅ |
+
+### 截面RL参数
+
+| 前端ID | 前端值 | JS变量名 | 后端参数名 | 后端默认值 | ✅/❌ |
+|--------|-------|---------|-----------|-----------|------|
+| `rlBatchSize` | 512 | `batch_size` | `batch_size` | 512/64(auto) | ✅ |
+| `rlTrainSteps` | 500 | `train_steps` | `train_steps` | 500 | ✅ |
+| `rlMaxFormulaLen` | 16 | `max_formula_len` | `max_formula_len` | 16 | ✅ |
+| `rlLr` | 0.001 | `lr` | `lr` | 1e-3 | ✅ |
+| `rlDModel` | 64 | `d_model` | `d_model` | 64 | ✅ |
+| `rlNhead` | 4 | `nhead` | `nhead` | 4 | ✅ |
+| `rlNumLayers` | 2 | `num_layers` | `num_layers` | 2 | ✅ |
+| `rlNumLoops` | 3 | `num_loops` | `num_loops` | 3 | ✅ |
+| `rlEntropyCoef` | 0.01 | `entropy_coef` | `entropy_coef` | 0.01 | ✅ |
+| `rlDevice` | auto | `device` | `device` | auto | ✅ |
+| `rlUseLord` | checked | `use_lord` | `use_lord` | True | ✅ |
+| `rlTradeSize` | 10000 | `trade_size` | `trade_size` | 10000.0 | ✅ |
+| `rlBaseFee` | 0.001 | `base_fee` | `base_fee` | 0.001 | ✅ |
+| `rlMaxFactors` | 15 | `max_factors` | `max_factors` | 15 | ✅ |
+| `rlMaxCorrelation` | 0.7 | `max_correlation` | `max_correlation` | 0.7 | ✅ |
+
+> [!TIP]
+> 所有参数的前后端传递完全对齐，类型转换也正确（parseInt/parseFloat → int/float）。
+
+---
+
+## 5. 优化建议 (按优先级)
+
+### P0 - 必须修复
+
+1. **添加"停止挖掘"按钮**: 在进度面板中添加停止按钮，调用 `POST /api/mining/cross_sectional/stop/<session_id>`
+2. **修复调试信息显示**: `updateProgressDisplay` 应读取 `data.message`（单数字符串）并添加到调试区
+
+### P1 - 强烈建议
+
+3. **修复 `data_source` 逻辑**: 对OKX/Bybit应直接从本地文件加载数据，而非映射为yahoo
+4. **RL结果补充截面IC**: 在RL因子输出时计算截面IC/IR指标，使GP和RL结果可对比
+
+### P2 - 锦上添花
+
+5. **RL BatchVM优化**: 将StackVM改为支持batch执行，或至少做公式去重
+6. **RL factor_data 瘦身**: 保存结果时排除大体量的factor_data字段
+7. **停止后状态一致性**: GP停止时在结果中标记 `status: stopped` 和 `actual_generations`

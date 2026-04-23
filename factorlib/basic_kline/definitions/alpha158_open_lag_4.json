@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_open_lag_4",
+  "name": "qlib158-OPEN_lag4",
+  "description": "qlib Alpha158 — open.shift(4) / close",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_open_lag_4.py",
+    "function_code": "def calculate(data, **kwargs):\n    return ref(data['open'], 4) / (data['close'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "7bb211f2",
+    "created_at": "2026-04-23T11:17:23.309723",
+    "is_window": false,
+    "min_warmup_bars": 5,
+    "source_family": "qlib158"
+  }
+}

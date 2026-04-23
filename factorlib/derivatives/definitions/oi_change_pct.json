@@ -1,0 +1,29 @@
+{
+  "factor_id": "oi_change_pct",
+  "name": "持仓量变化率",
+  "description": "open_interest 在 period 周期内的百分比变化，反映资金入场/出场强度。",
+  "category": "derivatives",
+  "subcategory": "open_interest",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/oi_change_pct.py",
+    "function_code": "def calculate(data, period=12, **kwargs):\n    if 'open_interest' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    return data['open_interest'].pct_change(period)",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {
+    "period": 12
+  },
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.196148",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

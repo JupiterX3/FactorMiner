@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_ksft",
+  "name": "qlib158-KSFT",
+  "description": "qlib Alpha158 — (2*close-high-low)/open",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_ksft.py",
+    "function_code": "def calculate(data, **kwargs):\n    return (2 * data['close'] - data['high'] - data['low']) / (data['open'] + EPS)\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "e29ad8b8",
+    "created_at": "2026-04-23T11:17:23.305138",
+    "is_window": false,
+    "min_warmup_bars": 1,
+    "source_family": "qlib158"
+  }
+}

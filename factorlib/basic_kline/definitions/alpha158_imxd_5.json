@@ -1,0 +1,28 @@
+{
+  "factor_id": "alpha158_imxd_5",
+  "name": "qlib158-IMXD_5",
+  "description": "qlib Alpha158 — (ts_argmax(high, w) - ts_argmin(low, w)) / w  (window=5)",
+  "category": "basic_kline",
+  "subcategory": "technical",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "basic_kline/functions/alpha158_imxd_5.py",
+    "function_code": "def calculate(data, **kwargs):\n    return (ts_argmax(data['high'], 5) - ts_argmin(data['low'], 5)) / 5\n",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np",
+      "from _alpha_ops import *  # noqa: F401,F403"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "checksum": "bc1fcf2b",
+    "created_at": "2026-04-23T11:17:23.407848",
+    "is_window": true,
+    "min_warmup_bars": 5,
+    "source_family": "qlib158"
+  }
+}

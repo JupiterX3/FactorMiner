@@ -9,6 +9,7 @@ import numpy as np
 from typing import Dict, List, Optional, Union, Tuple
 from pathlib import Path
 import ccxt
+import sys
 from datetime import datetime, timedelta
 import time
 import logging
@@ -34,6 +35,13 @@ class SmartBatchDownloader(DataDownloader):
     
     def __init__(self):
         super().__init__()
+        try:
+            if hasattr(sys.stdout, 'reconfigure'):
+                sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+            if hasattr(sys.stderr, 'reconfigure'):
+                sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
         self.logger = logging.getLogger(__name__)
         
         self._exchange_cache = {}
@@ -256,12 +264,13 @@ class SmartBatchDownloader(DataDownloader):
                         progress_callback(progress, f"下载第 {batch_count}/{total_batches} 批: "
                                         f"{current_dt.strftime('%Y-%m-%d')} 到 {batch_end.strftime('%Y-%m-%d')}")
                     
-                    # 下载数据
-                    ohlcv = exchange.fetch_ohlcv(
-                        symbol, 
-                        timeframe, 
+                    # 下载数据（期货口径保留 taker_buy_base/quote）
+                    ohlcv = self._fetch_klines_with_taker(
+                        exchange,
+                        symbol,
+                        timeframe,
                         int(current_dt.timestamp() * 1000),
-                        limit=config.max_candles_per_batch
+                        limit=config.max_candles_per_batch,
                     )
                     
                     if ohlcv:
@@ -295,11 +304,12 @@ class SmartBatchDownloader(DataDownloader):
                             if progress_callback:
                                 progress_callback(progress, f"第 {batch_count} 批重试 {retry_count}/{config.retry_attempts}")
                             
-                            ohlcv = exchange.fetch_ohlcv(
-                                symbol, 
-                                timeframe, 
+                            ohlcv = self._fetch_klines_with_taker(
+                                exchange,
+                                symbol,
+                                timeframe,
                                 int(current_dt.timestamp() * 1000),
-                                limit=config.max_candles_per_batch
+                                limit=config.max_candles_per_batch,
                             )
                             
                             if ohlcv:
@@ -321,7 +331,15 @@ class SmartBatchDownloader(DataDownloader):
                 progress_callback(95, f"数据下载完成，共 {len(all_data)} 条，正在处理...")
             
             # 转换为DataFrame - 直接命名为 date，避免后续复杂操作
-            df = pd.DataFrame(all_data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            # 期货口径下 all_data 每行 8 列（含 taker_buy_base/quote），
+            # 其余情况 taker 两列为 None，保持列对齐
+            df = pd.DataFrame(
+                all_data,
+                columns=[
+                    'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                    'taker_buy_base', 'taker_buy_quote',
+                ],
+            )
             # 转换时间戳并处理时区问题 - 直接命名为 date
             df['date'] = pd.to_datetime(df['timestamp'], unit='ms')
             
@@ -496,8 +514,12 @@ class SmartBatchDownloader(DataDownloader):
                     # 处理新数据：确保有 date 列
                     df_new = df_save.copy()
                     if df_new.index.name == 'date':
-                        df_new = df_new.reset_index()
-                        print("新数据从索引恢复 date 列")
+                        if 'date' in df_new.columns:
+                            df_new = df_new.reset_index(drop=True)
+                            print("新数据索引为 date 且已存在 date 列，已丢弃索引避免重复列")
+                        else:
+                            df_new = df_new.reset_index()
+                            print("新数据从索引恢复 date 列")
                     
                     if 'date' not in df_new.columns:
                         print("❌ 新数据没有 date 列，无法合并")
@@ -534,7 +556,10 @@ class SmartBatchDownloader(DataDownloader):
             
             # 确保保存前数据格式正确
             if df_save.index.name == 'date':
-                df_save = df_save.reset_index()
+                if 'date' in df_save.columns:
+                    df_save = df_save.reset_index(drop=True)
+                else:
+                    df_save = df_save.reset_index()
             
             # 过滤无效日期
             if 'date' in df_save.columns:

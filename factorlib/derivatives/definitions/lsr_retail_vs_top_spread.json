@@ -1,0 +1,27 @@
+{
+  "factor_id": "lsr_retail_vs_top_spread",
+  "name": "散户-大户多空比差",
+  "description": "全局账户多空比（近似散户）与大户账户多空比的差值，正向较大时 = 散户更激进。常见反向指标。",
+  "category": "derivatives",
+  "subcategory": "long_short_ratio",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "derivatives/functions/lsr_retail_vs_top_spread.py",
+    "function_code": "def calculate(data, **kwargs):\n    if 'lsr_global_account' not in data.columns \\\n            or 'lsr_top_account' not in data.columns:\n        return pd.Series(index=data.index, dtype=float)\n    return data['lsr_global_account'] - data['lsr_top_account']",
+    "entry_point": "calculate",
+    "imports": [
+      "import pandas as pd",
+      "import numpy as np"
+    ]
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2026-04-23T12:43:43.217421",
+    "source_family": "derivatives",
+    "requires_extras": [
+      "derivatives"
+    ]
+  }
+}

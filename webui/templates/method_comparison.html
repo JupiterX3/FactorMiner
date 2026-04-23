@@ -1,0 +1,950 @@
+{% extends "base.html" %}
+
+{% block title %}方法对比 - walk-forward 对照实验 - {{ config.title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.factor-box, .symbol-box {
+    max-height: 320px;
+    overflow-y: auto;
+}
+.factor-box .form-check, .symbol-box .form-check {
+    margin-bottom: 0.2rem;
+    padding-left: 1.5rem;
+}
+.metric-card {
+    border-left: 4px solid #0d6efd;
+    padding: 0.75rem 1rem;
+    background: #f8f9fa;
+    border-radius: 0.25rem;
+    margin-bottom: 0.75rem;
+}
+.metric-card.eq { border-left-color: #6c757d; }
+.metric-card.ic { border-left-color: #0d6efd; }
+.metric-card.icir { border-left-color: #198754; }
+
+.mc-metric-value {
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+.mc-metric-label {
+    font-size: 0.8rem;
+    color: #6c757d;
+}
+.pair-test-cell { font-variant-numeric: tabular-nums; }
+#methodChart { max-height: 420px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <h2>⚖️ 方法对比（walk-forward）</h2>
+        <p class="text-muted mb-2">
+            在完全相同的 rolling (train→oos) 切分上，逐段为 <code>equal_weight</code> / <code>ic_weight</code> /
+            <code>max_icir_weight</code> 估计权重并在样本外评估，最终输出聚合指标、净值曲线与两两配对 t 检验。
+        </p>
+    </div>
+</div>
+
+<div class="row">
+    <!-- ───────────────── 左侧：参数 ───────────────── -->
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="fas fa-cog me-2"></i>实验参数</h5>
+            </div>
+            <div class="card-body">
+                <form id="mcForm">
+                    <!-- 因子选择 -->
+                    <div class="mb-3">
+                        <label class="form-label d-flex justify-content-between">
+                            <span>因子（≥2）</span>
+                            <small class="text-muted">已选 <span id="mcFactorCount">0</span> 个</small>
+                        </label>
+                        <input type="text" class="form-control form-control-sm mb-1" id="mcFactorSearch" placeholder="搜索因子...">
+                        <div id="mcFactorBox" class="factor-box border rounded p-2">
+                            <div class="text-muted small">加载中...</div>
+                        </div>
+                        <div class="mt-1 d-flex gap-1">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="mcSelectAllFactors()">全选可见</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="mcClearFactors()">清空</button>
+                        </div>
+                        <div class="mt-2">
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control form-control-sm" id="mcFactorImport"
+                                       placeholder="批量导入因子ID: a,b,c 或 [a,b,c]">
+                                <button class="btn btn-outline-primary" type="button" onclick="mcImportFactors()">导入</button>
+                            </div>
+                            <div class="form-text small" id="mcFactorImportMsg"></div>
+                        </div>
+                    </div>
+
+                    <!-- 交易所/类型/timeframe -->
+                    <div class="mb-3">
+                        <label class="form-label">交易所 / 类型 / TF</label>
+                        <div class="d-flex gap-2">
+                            <select class="form-select form-select-sm" id="mcExchange">
+                                <option value="binance" selected>Binance</option>
+                            </select>
+                            <select class="form-select form-select-sm" id="mcTradeType">
+                                <option value="futures" selected>期货</option>
+                                <option value="spot">现货</option>
+                            </select>
+                            <select class="form-select form-select-sm" id="mcTimeframe">
+                                <option value="15m">15m</option>
+                                <option value="1h" selected>1h</option>
+                                <option value="4h">4h</option>
+                                <option value="1d">1d</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Symbol 选择 -->
+                    <div class="mb-3">
+                        <label class="form-label d-flex justify-content-between">
+                            <span>交易对（≥2）</span>
+                            <small class="text-muted">已选 <span id="mcSymbolCount">0</span> 个</small>
+                        </label>
+                        <input type="text" class="form-control form-control-sm mb-1" id="mcSymbolSearch" placeholder="搜索交易对...">
+                        <select class="form-select" id="mcSymbols" multiple size="7"></select>
+                        <div class="mt-1 d-flex gap-1">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="mcSelectAllSymbols()">全选</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="mcClearSymbols()">清空</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="mcReloadSymbols()">
+                                <i class="fas fa-sync-alt"></i>
+                            </button>
+                        </div>
+                        <div class="mt-2">
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control form-control-sm" id="mcSymbolImport"
+                                       placeholder="批量导入: [BTCUSDT,ETHUSDT,...]">
+                                <button class="btn btn-outline-primary" type="button" onclick="mcImportSymbols()">导入</button>
+                            </div>
+                            <div class="form-text small" id="mcSymbolImportMsg"></div>
+                        </div>
+                    </div>
+
+                    <!-- 日期范围 -->
+                    <div class="mb-3">
+                        <label class="form-label">数据时间范围</label>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <input type="date" class="form-control form-control-sm" id="mcStartDate">
+                                <div class="form-text small">开始</div>
+                            </div>
+                            <div class="col-6">
+                                <input type="date" class="form-control form-control-sm" id="mcEndDate">
+                                <div class="form-text small">结束</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Walk-forward 窗口 -->
+                    <div class="mb-3">
+                        <label class="form-label">Walk-forward 窗口（单位：天）</label>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm" id="mcTrainWin" min="1" step="1" value="60">
+                                <div class="form-text small">train</div>
+                            </div>
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm" id="mcOosWin" min="1" step="1" value="14">
+                                <div class="form-text small">oos</div>
+                            </div>
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm" id="mcStep" min="1" step="1" value="14">
+                                <div class="form-text small">step</div>
+                            </div>
+                        </div>
+                        <div class="form-text small">
+                            rolling_only：每次训练窗长度不变，整段以 step 向前推进，生成连续不重叠的 OOS 段。
+                        </div>
+                    </div>
+
+                    <!-- 组合与成本 -->
+                    <div class="mb-3">
+                        <label class="form-label">分组数 / 交易成本 / 预测步长</label>
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <select class="form-select form-select-sm" id="mcNGroups">
+                                    <option>3</option>
+                                    <option selected>5</option>
+                                    <option>10</option>
+                                </select>
+                                <div class="form-text small">n_groups</div>
+                            </div>
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm" id="mcCost" min="0" step="0.0001" value="0.001">
+                                <div class="form-text small" title="每期按 turnover × cost 扣费">cost/单边</div>
+                            </div>
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm" id="mcPredictStep" min="1" step="1" value="1">
+                                <div class="form-text small">predict_step</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 对比方法 -->
+                    <div class="mb-3">
+                        <label class="form-label">对比方法</label>
+                        <div class="form-check">
+                            <input class="form-check-input mc-method" type="checkbox" id="m_equal" value="equal_weight" checked>
+                            <label class="form-check-label small" for="m_equal">equal_weight（基线，排名等权平均）</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input mc-method" type="checkbox" id="m_ic" value="ic_weight" checked>
+                            <label class="form-check-label small" for="m_ic">ic_weight（训练段平均 Rank IC → L1 归一化）</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input mc-method" type="checkbox" id="m_icir" value="max_icir_weight" checked>
+                            <label class="form-check-label small" for="m_icir">max_icir_weight（Σ⁻¹μ 最大化 ICIR）</label>
+                        </div>
+                    </div>
+
+                    <!-- 高级覆盖率参数 -->
+                    <details class="mb-3">
+                        <summary class="small text-muted">覆盖率 / 有效样本 筛选（高级）</summary>
+                        <div class="row g-2 mt-2">
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm" id="mcMinCov" min="0" max="1" step="0.01" value="0.3">
+                                <div class="form-text small">min_coverage</div>
+                            </div>
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm" id="mcMinValid" min="1" step="1" value="30">
+                                <div class="form-text small">min_valid_count</div>
+                            </div>
+                            <div class="col-4">
+                                <input type="number" class="form-control form-control-sm" id="mcMinGroup" min="1" step="1" value="3">
+                                <div class="form-text small">min_group_size</div>
+                            </div>
+                        </div>
+                    </details>
+
+                    <button type="submit" class="btn btn-primary w-100" id="mcStartBtn">
+                        <i class="fas fa-play me-2"></i>开始对比
+                    </button>
+                    <button type="button" class="btn btn-danger w-100 mt-2" id="mcCancelBtn" style="display:none;" onclick="mcCancel()">
+                        <i class="fas fa-stop me-2"></i>取消
+                    </button>
+                </form>
+
+                <div class="mt-3" id="mcProgressBox" style="display:none;">
+                    <div class="small mb-1" id="mcPhaseText">—</div>
+                    <div class="progress" style="height:6px;">
+                        <div id="mcProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-primary" style="width:0%"></div>
+                    </div>
+                    <div class="small text-muted mt-1" id="mcProgressMsg">—</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>口径说明</h6>
+            </div>
+            <div class="card-body small text-muted">
+                <ul class="mb-0">
+                    <li>所有方法共用同一套 (train, oos) 切分，切分仅按日历日计算，不按 bar 数。</li>
+                    <li>权重估计口径：<strong>train 段每日 Rank IC</strong>（截面 Spearman）。</li>
+                    <li>OOS 评估：组合因子 = Σ wᵢ · rank(fᵢ)，每期做多最高分组、做空最低分组。</li>
+                    <li>换手率 = 0.5 × L1(wₜ − wₜ₋₁)，扣费 = 换手率 × cost；净值曲线默认展示<em>扣费后</em>。</li>
+                    <li>Sharpe 使用 √252 年化常数，仅用作方法间横向比较。</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- ───────────────── 右侧：结果 ───────────────── -->
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>对比结果</h5>
+                <div class="btn-group btn-group-sm">
+                    <a href="/cross-sectional-evaluation" class="btn btn-outline-secondary">
+                        <i class="fas fa-arrow-left me-1"></i>回到截面评估
+                    </a>
+                    <button class="btn btn-outline-secondary" id="mcExportBtn" style="display:none;" onclick="mcExportCsv()">
+                        <i class="fas fa-download me-1"></i>导出 CSV
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div id="mcPlaceholder" class="text-center text-muted py-5">
+                    <i class="fas fa-balance-scale fa-3x mb-3"></i>
+                    <p>选择因子 / 交易对 / 日期范围后点击"开始对比"。</p>
+                </div>
+
+                <div id="mcResults" style="display:none;">
+                    <!-- 总览 -->
+                    <div id="mcOverview" class="mb-3"></div>
+
+                    <!-- 指标表 -->
+                    <div class="mb-3">
+                        <h6>OOS 汇总指标</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered table-striped" id="mcSummaryTable">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>方法</th>
+                                        <th>期数</th>
+                                        <th title="OOS 日 Rank IC 均值">IC 均值</th>
+                                        <th title="Mean(IC) / Std(IC)">ICIR</th>
+                                        <th title="IC t-stat = mean * sqrt(N) / std">t-stat</th>
+                                        <th title="每期多空收益均值，未扣费">LS 均值</th>
+                                        <th title="OOS 段拼接后 ∏(1+r) - 1，已扣费">累计收益（扣费）</th>
+                                        <th title="√252 年化">Sharpe（扣费）</th>
+                                        <th title="基于 equity = ∏(1+r_after) 的最大回撤">MaxDD（扣费）</th>
+                                        <th title="每期 0.5*L1(wt - wt-1) 的均值，1=完全换仓">换手率均值</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 净值曲线 -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <h6 class="mb-0">OOS 累计净值</h6>
+                            <div class="btn-group btn-group-sm" role="group">
+                                <input type="radio" class="btn-check" name="mcCurveKind" id="mcCurveAfter" value="after" checked>
+                                <label class="btn btn-outline-primary" for="mcCurveAfter">扣费后</label>
+                                <input type="radio" class="btn-check" name="mcCurveKind" id="mcCurveBefore" value="before">
+                                <label class="btn btn-outline-primary" for="mcCurveBefore">扣费前</label>
+                            </div>
+                        </div>
+                        <canvas id="methodChart"></canvas>
+                    </div>
+
+                    <!-- 两两配对 t 检验 -->
+                    <div class="mb-3">
+                        <h6>两两配对 t 检验（ls_after_cost，同日期对齐）</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered" id="mcPairTable">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>A</th>
+                                        <th>B</th>
+                                        <th>对齐期数</th>
+                                        <th title="均值差 = mean(A - B)">mean(A − B)</th>
+                                        <th>std(A − B)</th>
+                                        <th>t-stat</th>
+                                        <th>p-value</th>
+                                        <th>结论</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div class="small text-muted">
+                            p 值基于每期 (A-B) 的配对 t 检验；|t| 大且 p&lt;0.05 视为统计显著。
+                            样本非正态时仅作参考，更严谨做法是 block-bootstrap，这里默认保留 t 检验。
+                        </div>
+                    </div>
+
+                    <!-- 切分表 -->
+                    <details class="mb-2">
+                        <summary>walk-forward 切分明细（<span id="mcSplitCount">0</span>）</summary>
+                        <div class="table-responsive mt-2">
+                            <table class="table table-sm table-bordered" id="mcSplitTable">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>#</th>
+                                        <th>train</th>
+                                        <th>oos</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                    </details>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+let mcAllFactors = [];
+let mcAllSymbols = [];
+let mcLastResult = null;
+let mcChart = null;
+let mcCurrentAbort = null;
+let mcCurrentRequestId = null;
+
+const MC_METHOD_LABEL = {
+    equal_weight: 'equal_weight',
+    ic_weight: 'ic_weight',
+    max_icir_weight: 'max_icir_weight',
+};
+const MC_METHOD_COLOR = {
+    equal_weight: '#6c757d',
+    ic_weight: '#0d6efd',
+    max_icir_weight: '#198754',
+};
+
+function mcGenRid() {
+    try {
+        if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+            return window.crypto.randomUUID();
+        }
+    } catch (_) {}
+    return 'mc-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+$(document).ready(function() {
+    mcLoadFactors();
+    mcReloadSymbols();
+
+    $('#mcFactorSearch').on('input', mcFilterFactors);
+    $('#mcSymbolSearch').on('input', mcFilterSymbols);
+    $('#mcSymbols').on('change', mcUpdateSymbolCount);
+    $('#mcExchange').on('change', mcReloadSymbols);
+    $('#mcTradeType').on('change', mcReloadSymbols);
+    $('input[name=mcCurveKind]').on('change', mcRenderChart);
+
+    $('#mcForm').on('submit', function(e) {
+        e.preventDefault();
+        mcStart();
+    });
+});
+
+// ─────────── 因子加载/渲染 ───────────
+function mcLoadFactors() {
+    $.get('/api/factors/list', function(res) {
+        if (res.success) {
+            mcAllFactors = res.factors || [];
+            mcRenderFactors(mcAllFactors);
+        } else {
+            $('#mcFactorBox').html(`<div class="alert alert-danger small mb-0">加载失败：${res.message || '未知'}</div>`);
+        }
+    }).fail(function() {
+        $('#mcFactorBox').html(`<div class="alert alert-danger small mb-0">加载因子列表失败</div>`);
+    });
+}
+
+function mcRenderFactors(list) {
+    const box = $('#mcFactorBox');
+    if (!list.length) {
+        box.html('<div class="text-muted small">无可用因子</div>');
+        return;
+    }
+    box.html(list.map(f => `
+        <div class="form-check">
+            <input class="form-check-input mc-factor-cb" type="checkbox" value="${f.id}" id="mcf_${f.id}" onchange="mcUpdateFactorCount()">
+            <label class="form-check-label small" for="mcf_${f.id}" title="${(f.description || '').replace(/"/g,'&quot;')}">
+                ${f.name || f.id} <span class="text-muted">(${f.type || 'unknown'})</span>
+            </label>
+        </div>
+    `).join(''));
+    mcUpdateFactorCount();
+}
+
+function mcFilterFactors() {
+    const q = $('#mcFactorSearch').val().toLowerCase();
+    if (!q) {
+        $('#mcFactorBox .form-check').show();
+        return;
+    }
+    mcAllFactors.forEach(f => {
+        const hit = (f.name || '').toLowerCase().includes(q)
+                 || (f.id || '').toLowerCase().includes(q)
+                 || (f.type || '').toLowerCase().includes(q);
+        $(`#mcf_${f.id}`).closest('.form-check').toggle(!!hit);
+    });
+}
+
+function mcUpdateFactorCount() {
+    $('#mcFactorCount').text($('.mc-factor-cb:checked').length);
+}
+
+function mcSelectAllFactors() {
+    $('.mc-factor-cb').each(function() {
+        if ($(this).closest('.form-check').is(':visible')) $(this).prop('checked', true);
+    });
+    mcUpdateFactorCount();
+}
+function mcClearFactors() {
+    $('.mc-factor-cb').prop('checked', false);
+    mcUpdateFactorCount();
+}
+
+function mcImportFactors() {
+    const raw = ($('#mcFactorImport').val() || '').trim();
+    if (!raw) return;
+    const ids = raw.replace(/^\[|\]$/g, '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean);
+    const validSet = new Set(mcAllFactors.map(f => String(f.id)));
+    let matched = 0, missing = [];
+    ids.forEach(id => {
+        if (validSet.has(id)) {
+            $(`#mcf_${id}`).prop('checked', true);
+            matched += 1;
+        } else {
+            missing.push(id);
+        }
+    });
+    mcUpdateFactorCount();
+    $('#mcFactorImportMsg').text(`匹配 ${matched} / ${ids.length}` + (missing.length ? `；未识别：${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '...' : ''}` : ''));
+}
+
+// ─────────── Symbol 加载 ───────────
+function mcReloadSymbols() {
+    const ex = $('#mcExchange').val();
+    const tt = $('#mcTradeType').val();
+    $.get(`/api/data/local-data-cached?exchange=${ex}&trade_type=${tt}`, function(res) {
+        if (res.success) {
+            const rows = res.data || [];
+            mcAllSymbols = [...new Set(rows.map(r => r.symbol))].sort();
+            mcRenderSymbols(mcAllSymbols);
+
+            const starts = rows.map(r => r.date_range && r.date_range.start).filter(Boolean).map(s => new Date(s));
+            const ends = rows.map(r => r.date_range && r.date_range.end).filter(Boolean).map(s => new Date(s));
+            if (starts.length && ends.length) {
+                const s0 = new Date(Math.min(...starts));
+                const s1 = new Date(Math.max(...ends));
+                if (!$('#mcStartDate').val()) $('#mcStartDate').val(s0.toISOString().slice(0, 10));
+                if (!$('#mcEndDate').val()) $('#mcEndDate').val(s1.toISOString().slice(0, 10));
+            }
+        } else {
+            mcAllSymbols = [];
+            mcRenderSymbols([]);
+        }
+    });
+}
+
+function mcRenderSymbols(list) {
+    const sel = $('#mcSymbols').empty();
+    list.forEach(s => sel.append(`<option value="${s}">${s}</option>`));
+    mcUpdateSymbolCount();
+}
+
+function mcFilterSymbols() {
+    const q = $('#mcSymbolSearch').val().toLowerCase();
+    const filtered = q ? mcAllSymbols.filter(s => s.toLowerCase().includes(q)) : mcAllSymbols;
+    mcRenderSymbols(filtered);
+}
+
+function mcSelectAllSymbols() {
+    $('#mcSymbols option').prop('selected', true);
+    mcUpdateSymbolCount();
+}
+function mcClearSymbols() {
+    $('#mcSymbols option').prop('selected', false);
+    mcUpdateSymbolCount();
+}
+function mcUpdateSymbolCount() {
+    $('#mcSymbolCount').text($('#mcSymbols option:selected').length);
+}
+
+function mcImportSymbols() {
+    const raw = ($('#mcSymbolImport').val() || '').trim();
+    if (!raw) return;
+    const wanted = raw.replace(/^\[|\]$/g, '').split(/[,\s]+/)
+                       .map(s => s.trim().toUpperCase().replace(/[\s_\-\/]/g, ''))
+                       .filter(Boolean);
+    const norm = s => String(s || '').toUpperCase().replace(/[\s_\-\/]/g, '');
+    const aliasMap = new Map();
+    mcAllSymbols.forEach(s => aliasMap.set(norm(s), s));
+    let matched = 0, missing = [];
+    wanted.forEach(w => {
+        const s = aliasMap.get(w);
+        if (s) {
+            $(`#mcSymbols option[value="${s}"]`).prop('selected', true);
+            matched += 1;
+        } else {
+            missing.push(w);
+        }
+    });
+    mcUpdateSymbolCount();
+    $('#mcSymbolImportMsg').text(`匹配 ${matched} / ${wanted.length}` + (missing.length ? `；未识别：${missing.slice(0, 5).join(', ')}${missing.length > 5 ? '...' : ''}` : ''));
+}
+
+// ─────────── 启动 ───────────
+function mcGetSelectedMethods() {
+    return $('.mc-method:checked').map(function() { return this.value; }).get();
+}
+function mcGetSelectedFactorIds() {
+    return $('.mc-factor-cb:checked').map(function() { return this.value; }).get();
+}
+function mcGetSelectedSymbols() {
+    return $('#mcSymbols option:selected').map(function() { return this.value; }).get();
+}
+
+function mcStart() {
+    const factor_ids = mcGetSelectedFactorIds();
+    const symbols = mcGetSelectedSymbols();
+    const start_date = $('#mcStartDate').val();
+    const end_date = $('#mcEndDate').val();
+    const methods = mcGetSelectedMethods();
+
+    if (factor_ids.length < 2) { alert('至少选择 2 个因子'); return; }
+    if (symbols.length < 2) { alert('至少选择 2 个交易对'); return; }
+    if (!start_date || !end_date) { alert('请选择日期范围'); return; }
+    if (methods.length < 1) { alert('请至少选择 1 种对比方法'); return; }
+
+    const payload = {
+        factor_ids,
+        symbols,
+        timeframe: $('#mcTimeframe').val(),
+        factor_timeframe: $('#mcTimeframe').val(),
+        factor_bar_mode: 'completed',
+        start_date,
+        end_date,
+        exchange: $('#mcExchange').val(),
+        trade_type: $('#mcTradeType').val(),
+        predict_step: parseInt($('#mcPredictStep').val() || '1', 10),
+        sample_step: 1,
+        n_groups: parseInt($('#mcNGroups').val() || '5', 10),
+        min_coverage: parseFloat($('#mcMinCov').val() || '0.3'),
+        min_valid_count: parseInt($('#mcMinValid').val() || '30', 10),
+        min_group_size: parseInt($('#mcMinGroup').val() || '3', 10),
+        treat_zero_as_invalid: true,
+        max_lookback: 200,
+        train_window_days: parseFloat($('#mcTrainWin').val() || '60'),
+        oos_window_days: parseFloat($('#mcOosWin').val() || '14'),
+        step_days: parseFloat($('#mcStep').val() || '14'),
+        transaction_cost: parseFloat($('#mcCost').val() || '0.001'),
+        methods,
+        request_id: mcGenRid(),
+    };
+
+    mcCurrentRequestId = payload.request_id;
+    mcCurrentAbort = new AbortController();
+
+    $('#mcStartBtn').prop('disabled', true);
+    $('#mcCancelBtn').show();
+    $('#mcPlaceholder').hide();
+    $('#mcResults').hide();
+    $('#mcExportBtn').hide();
+    $('#mcProgressBox').show();
+    $('#mcProgressBar').css('width', '2%');
+    $('#mcPhaseText').text('启动中...');
+    $('#mcProgressMsg').text('');
+
+    mcLastResult = null;
+
+    fetch('/api/factors/method_comparison_stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: mcCurrentAbort.signal,
+    }).then(async (resp) => {
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(`HTTP ${resp.status}: ${txt}`);
+        }
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            // 以 "\n\n" 切 SSE
+            let idx;
+            while ((idx = buf.indexOf('\n\n')) >= 0) {
+                const raw = buf.slice(0, idx);
+                buf = buf.slice(idx + 2);
+                const evt = mcParseSseFrame(raw);
+                if (evt) mcHandleEvent(evt.event, evt.data);
+            }
+        }
+    }).catch(err => {
+        if (err && err.name === 'AbortError') {
+            $('#mcPhaseText').text('已取消');
+            return;
+        }
+        alert('对比失败: ' + (err && err.message ? err.message : err));
+        $('#mcPhaseText').text('失败');
+    }).finally(() => {
+        $('#mcStartBtn').prop('disabled', false);
+        $('#mcCancelBtn').hide();
+        mcCurrentAbort = null;
+    });
+}
+
+function mcParseSseFrame(frame) {
+    const lines = frame.split('\n');
+    let event = 'message';
+    let dataParts = [];
+    for (const ln of lines) {
+        if (ln.startsWith('event:')) event = ln.slice(6).trim();
+        else if (ln.startsWith('data:')) dataParts.push(ln.slice(5).trim());
+    }
+    if (!dataParts.length) return null;
+    try {
+        return { event, data: JSON.parse(dataParts.join('\n')) };
+    } catch (_) {
+        return null;
+    }
+}
+
+function mcHandleEvent(event, data) {
+    if (event === 'progress') {
+        const phase = data.phase || '';
+        const total = data.total || data.n_splits || 0;
+        const done = data.completed || 0;
+        $('#mcPhaseText').text(`阶段: ${phase}`);
+        if (total > 0) {
+            $('#mcProgressBar').css('width', `${Math.min(100, Math.round(done / total * 100))}%`);
+        } else {
+            $('#mcProgressBar').css('width', '6%');
+        }
+        $('#mcProgressMsg').text(data.message || '');
+    } else if (event === 'error') {
+        $('#mcPhaseText').text('错误');
+        $('#mcProgressMsg').text(data.message || '');
+    } else if (event === 'done') {
+        if (!data.success) {
+            $('#mcPhaseText').text('失败');
+            return;
+        }
+        $('#mcPhaseText').text(`完成，用时 ${data.total_elapsed}s`);
+        $('#mcProgressBar').css('width', '100%');
+        mcLastResult = data;
+        mcRenderResults(data);
+    }
+}
+
+function mcCancel() {
+    if (mcCurrentAbort) {
+        try { mcCurrentAbort.abort(); } catch (_) {}
+    }
+    if (mcCurrentRequestId) {
+        $.ajax({
+            url: `/api/factors/cancel_evaluation`,
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ request_id: mcCurrentRequestId }),
+        });
+    }
+}
+
+// ─────────── 结果渲染 ───────────
+function mcFmt(v, digits) {
+    if (v === null || v === undefined || !isFinite(v)) return '—';
+    return Number(v).toFixed(digits !== undefined ? digits : 4);
+}
+function mcFmtPct(v, digits) {
+    if (v === null || v === undefined || !isFinite(v)) return '—';
+    return (Number(v) * 100).toFixed(digits !== undefined ? digits : 2) + '%';
+}
+
+function mcRenderResults(data) {
+    $('#mcPlaceholder').hide();
+    $('#mcResults').show();
+    $('#mcExportBtn').show();
+
+    // 总览
+    const cfg = data.config || {};
+    const overview = `
+        <div class="row g-2">
+            <div class="col-md-3"><div class="metric-card"><div class="mc-metric-label">切分数</div><div class="mc-metric-value">${data.n_splits}</div></div></div>
+            <div class="col-md-3"><div class="metric-card"><div class="mc-metric-label">因子数（成功）</div><div class="mc-metric-value">${(data.factor_ids || []).length}</div></div></div>
+            <div class="col-md-3"><div class="metric-card"><div class="mc-metric-label">窗口 (train/oos/step)</div><div class="mc-metric-value" style="font-size:1rem">${cfg.train_window_days}d / ${cfg.oos_window_days}d / ${cfg.step_days}d</div></div></div>
+            <div class="col-md-3"><div class="metric-card"><div class="mc-metric-label">交易成本 / TF</div><div class="mc-metric-value" style="font-size:1rem">${cfg.transaction_cost} / ${cfg.timeframe}</div></div></div>
+        </div>
+    `;
+    $('#mcOverview').html(overview);
+
+    // 汇总表
+    const $tb = $('#mcSummaryTable tbody').empty();
+    (data.methods || []).forEach(m => {
+        const s = (data.summary || {})[m] || {};
+        $tb.append(`
+            <tr>
+                <td><span class="badge" style="background:${MC_METHOD_COLOR[m] || '#333'}">${MC_METHOD_LABEL[m] || m}</span></td>
+                <td>${s.n_periods || 0}</td>
+                <td class="pair-test-cell">${mcFmt(s.ic_mean, 4)}</td>
+                <td class="pair-test-cell">${mcFmt(s.icir, 3)}</td>
+                <td class="pair-test-cell">${mcFmt(s.ic_tstat, 2)}</td>
+                <td class="pair-test-cell">${mcFmt(s.ls_return_mean, 4)}</td>
+                <td class="pair-test-cell">${mcFmtPct(s.ls_total_return_after_cost, 2)}</td>
+                <td class="pair-test-cell">${mcFmt(s.sharpe_after_cost, 2)}</td>
+                <td class="pair-test-cell text-danger">${mcFmtPct(s.max_drawdown_after_cost, 2)}</td>
+                <td class="pair-test-cell">${mcFmtPct(s.turnover_mean, 2)}</td>
+            </tr>
+        `);
+    });
+
+    // 配对 t 检验
+    const $tp = $('#mcPairTable tbody').empty();
+    (data.paired_tests || []).forEach(pt => {
+        const p = pt.p_value;
+        let verdict = '—';
+        if (p !== null && p !== undefined && isFinite(p)) {
+            if (p < 0.01) verdict = '<span class="text-success fw-bold">显著 (p&lt;0.01)</span>';
+            else if (p < 0.05) verdict = '<span class="text-success">显著 (p&lt;0.05)</span>';
+            else if (p < 0.1) verdict = '<span class="text-warning">边际 (p&lt;0.1)</span>';
+            else verdict = '<span class="text-muted">不显著</span>';
+            // 注明方向
+            if (pt.mean_diff !== null && pt.mean_diff !== undefined) {
+                const sign = pt.mean_diff > 0 ? 'A&gt;B' : 'A&lt;B';
+                verdict += ` · ${sign}`;
+            }
+        } else if (pt.message) {
+            verdict = pt.message;
+        }
+        $tp.append(`
+            <tr>
+                <td><span class="badge" style="background:${MC_METHOD_COLOR[pt.method_a] || '#333'}">${pt.method_a}</span></td>
+                <td><span class="badge" style="background:${MC_METHOD_COLOR[pt.method_b] || '#333'}">${pt.method_b}</span></td>
+                <td class="pair-test-cell">${pt.n}</td>
+                <td class="pair-test-cell">${mcFmt(pt.mean_diff, 5)}</td>
+                <td class="pair-test-cell">${mcFmt(pt.std_diff, 5)}</td>
+                <td class="pair-test-cell">${mcFmt(pt.t_stat, 2)}</td>
+                <td class="pair-test-cell">${mcFmt(pt.p_value, 4)}</td>
+                <td>${verdict}</td>
+            </tr>
+        `);
+    });
+
+    // 切分表
+    const $ts = $('#mcSplitTable tbody').empty();
+    $('#mcSplitCount').text(data.n_splits);
+    (data.splits || []).forEach((sp, i) => {
+        $ts.append(`
+            <tr>
+                <td>${i + 1}</td>
+                <td><small>${sp.train_start} → ${sp.train_end}</small></td>
+                <td><small>${sp.oos_start} → ${sp.oos_end}</small></td>
+            </tr>
+        `);
+    });
+
+    mcRenderChart();
+}
+
+function mcRenderChart() {
+    if (!mcLastResult) return;
+    const kind = $('input[name=mcCurveKind]:checked').val() || 'after';
+    const equityKey = kind === 'before' ? 'equity_before_cost' : 'equity_after_cost';
+
+    const methods = mcLastResult.methods || [];
+    // 用并集日期做横轴；每个方法在未出现的日期以 null 保持断点
+    const allDates = mcLastResult.all_dates || [];
+    const perMethodDates = mcLastResult.dates_by_method || {};
+    const curves = mcLastResult.curves || {};
+
+    const datasets = methods.map(m => {
+        const ds = new Array(allDates.length).fill(null);
+        const mdates = perMethodDates[m] || [];
+        const mcurve = (curves[m] || {})[equityKey] || [];
+        const idxMap = new Map();
+        allDates.forEach((d, i) => idxMap.set(d, i));
+        for (let i = 0; i < mdates.length; i++) {
+            const pos = idxMap.get(mdates[i]);
+            if (pos !== undefined) ds[pos] = mcurve[i];
+        }
+        return {
+            label: MC_METHOD_LABEL[m] || m,
+            data: ds,
+            borderColor: MC_METHOD_COLOR[m] || '#333',
+            backgroundColor: 'transparent',
+            spanGaps: true,
+            pointRadius: 0,
+            borderWidth: 2,
+            tension: 0.15,
+        };
+    });
+
+    const ctx = document.getElementById('methodChart').getContext('2d');
+    if (mcChart) mcChart.destroy();
+    mcChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: allDates.map(d => d.slice(0, 16).replace('T', ' ')),
+            datasets,
+        },
+        options: {
+            responsive: true,
+            interaction: { mode: 'index', intersect: false },
+            plugins: {
+                legend: { position: 'top' },
+                title: { display: true, text: kind === 'before' ? 'OOS 累计净值（扣费前）' : 'OOS 累计净值（扣费后）' },
+                tooltip: {
+                    callbacks: {
+                        label: ctx => `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(4)}`
+                    }
+                }
+            },
+            scales: {
+                x: { ticks: { maxTicksLimit: 12, maxRotation: 0, autoSkip: true } },
+                y: { title: { display: true, text: 'Equity (起始=1)' } }
+            }
+        }
+    });
+}
+
+// ─────────── 导出 CSV ───────────
+function mcExportCsv() {
+    if (!mcLastResult) return;
+    const methods = mcLastResult.methods || [];
+    const summary = mcLastResult.summary || {};
+
+    const lines = [];
+    // Part 1: summary
+    lines.push('# Summary');
+    lines.push(['method', 'n_periods', 'ic_mean', 'ic_std', 'icir', 'ic_tstat',
+                'ls_return_mean', 'ls_total_return', 'ls_total_return_after_cost',
+                'sharpe', 'sharpe_after_cost', 'max_drawdown', 'max_drawdown_after_cost',
+                'turnover_mean'].join(','));
+    methods.forEach(m => {
+        const s = summary[m] || {};
+        lines.push([m, s.n_periods, s.ic_mean, s.ic_std, s.icir, s.ic_tstat,
+                    s.ls_return_mean, s.ls_total_return, s.ls_total_return_after_cost,
+                    s.sharpe, s.sharpe_after_cost, s.max_drawdown, s.max_drawdown_after_cost,
+                    s.turnover_mean].map(v => (v === null || v === undefined) ? '' : v).join(','));
+    });
+
+    // Part 2: paired tests
+    lines.push('');
+    lines.push('# Paired t-test');
+    lines.push(['method_a', 'method_b', 'n', 'mean_diff', 'std_diff', 't_stat', 'p_value'].join(','));
+    (mcLastResult.paired_tests || []).forEach(pt => {
+        lines.push([pt.method_a, pt.method_b, pt.n, pt.mean_diff, pt.std_diff, pt.t_stat, pt.p_value]
+            .map(v => (v === null || v === undefined) ? '' : v).join(','));
+    });
+
+    // Part 3: equity curves (after cost)
+    lines.push('');
+    lines.push('# Equity after cost (OOS)');
+    const allDates = mcLastResult.all_dates || [];
+    const perMethodDates = mcLastResult.dates_by_method || {};
+    const curves = mcLastResult.curves || {};
+    lines.push(['date', ...methods].join(','));
+    const idxMap = {};
+    methods.forEach(m => {
+        const map = {};
+        const mdates = perMethodDates[m] || [];
+        const mcurve = (curves[m] || {}).equity_after_cost || [];
+        for (let i = 0; i < mdates.length; i++) map[mdates[i]] = mcurve[i];
+        idxMap[m] = map;
+    });
+    allDates.forEach(d => {
+        const row = [d];
+        methods.forEach(m => {
+            const v = idxMap[m][d];
+            row.push(v === undefined || v === null ? '' : v);
+        });
+        lines.push(row.join(','));
+    });
+
+    const csv = '\ufeff' + lines.join('\n'); // BOM + content
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `method_comparison_${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+</script>
+{% endblock %}

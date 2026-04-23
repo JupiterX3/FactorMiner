@@ -788,6 +788,7 @@ class CrossSectionalEvaluator:
         compute_ic_decay_curve: bool = False,
         ic_decay_max_lag: int = 5,
         transaction_cost: float = 0.001,
+        n_ic_segments: int = 4,
     ):
         """
         初始化截面评估器
@@ -881,6 +882,10 @@ class CrossSectionalEvaluator:
             self.transaction_cost = float(transaction_cost)
         except (TypeError, ValueError):
             self.transaction_cost = 0.001
+        try:
+            self.n_ic_segments = max(2, min(int(n_ic_segments), 12))
+        except (TypeError, ValueError):
+            self.n_ic_segments = 4
         self.stats = FactorStatistics()
 
     def _normalize_factor_cross_sectional(self, factor_vals: np.ndarray) -> np.ndarray:
@@ -1205,8 +1210,26 @@ class CrossSectionalEvaluator:
                     lookahead = comp_data.get(k, 0) or 0
                     break
 
-            # shift_n 表示：信号延后了多少根K线用于对齐 returns
-            shift_n = int(shift_n) + int(lookahead)
+            # 含未来数据的因子若不做额外滞后会造成前瞻偏差：
+            # 这里通过 shift_n += lookahead 来补偿，但仅适用于"因子值等价于
+            # 当前时点已知信息 + N 根未来K线"的可机械补偿情形。
+            # 若因子是窗口内含未来聚合（例如未来 N 根的 max），该补偿并非完全等价，
+            # 此时应在挖掘阶段禁用此类因子。这里打印警告便于排查。
+            try:
+                lookahead_int = int(lookahead or 0)
+            except (TypeError, ValueError):
+                lookahead_int = 0
+            if lookahead_int > 0:
+                try:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "因子 %s 声明 lookahead=%d，已自动将信号额外延后 %d 根K线以对齐未来收益；"
+                        "若因子值含未来窗口聚合，补偿并非严格等价，结果可能仍有前瞻偏差。",
+                        factor_id, lookahead_int, lookahead_int,
+                    )
+                except Exception:
+                    pass
+            shift_n = int(shift_n) + lookahead_int
         except Exception:
             # 解析失败则回退默认
             return int(default_trade_lag)
@@ -1326,11 +1349,19 @@ class CrossSectionalEvaluator:
         ic_series = []
         date_counts = []
         coverage_series = []
-        
+
+        # 最小样本阈值：取 min_valid_count 与 n_groups*min_group_size 中较大者，
+        # 并确保至少 10（避免相关系数在极小样本下不可信）
+        min_group_samples = max(
+            int(self.min_valid_count),
+            int(self.n_groups) * int(self.min_group_size),
+            10,
+        )
+
         for date, group in cs_data.groupby('date'):
-            if len(group) < 10:
+            if len(group) < min_group_samples:
                 continue
-            
+
             total_count = len(group)
             valid_mask = self._get_valid_signal_mask(group['factor_value'], group['returns'])
             valid_count = int(valid_mask.sum())
@@ -1340,7 +1371,7 @@ class CrossSectionalEvaluator:
             group_valid = group.loc[valid_mask]
             factor_vals = group_valid['factor_value'].to_numpy(dtype=float)
             return_vals = group_valid['returns'].to_numpy(dtype=float)
-            if len(factor_vals) < 10:
+            if len(factor_vals) < min_group_samples:
                 continue
 
             factor_vals = self._normalize_factor_cross_sectional(factor_vals)
@@ -1380,6 +1411,11 @@ class CrossSectionalEvaluator:
             return {'ic_mean': np.nan, 'ic_std': np.nan, 'icir': np.nan}
         
         ic_df = pd.DataFrame(ic_series)
+        # 子段一致性需要按时间顺序等分 IC 序列，这里对 date 做一次稳定排序
+        try:
+            ic_df = ic_df.sort_values('date').reset_index(drop=True)
+        except Exception:
+            ic_df = ic_df.reset_index(drop=True)
         
         ic_mean = ic_df['ic_pearson'].mean()
         ic_std = ic_df['ic_pearson'].std()
@@ -1404,18 +1440,132 @@ class CrossSectionalEvaluator:
             ic_positive_ratio = np.nan
         else:
             ic_positive_ratio = (ic_pearson_vals[finite_mask] > 0).mean()
-        
+
+        # IC t 值：ic_mean / (ic_std / sqrt(n))
+        n_ic_periods = int(len(ic_df))
+        if (
+            n_ic_periods < 2
+            or ic_std is None
+            or not np.isfinite(ic_std)
+            or ic_std <= 0
+        ):
+            ic_tstat = np.nan
+        else:
+            ic_tstat = float(ic_mean) * np.sqrt(n_ic_periods) / float(ic_std)
+        if (
+            n_ic_periods < 2
+            or rank_ic_std is None
+            or not np.isfinite(rank_ic_std)
+            or rank_ic_std <= 0
+        ):
+            rank_ic_tstat = np.nan
+        else:
+            rank_ic_tstat = (
+                float(rank_ic_mean) * np.sqrt(n_ic_periods) / float(rank_ic_std)
+            )
+
+        # 子段一致性：按时间等分 N 段，分别计算每段的 IC 均值，
+        # 统计与整体 IC 均值同号的段数作为一致性指标
+        n_seg_target = int(getattr(self, 'n_ic_segments', 4) or 4)
+        # 样本不足时降级为 min(n_periods // 5, n_seg_target)，至少保证每段 >= 5 期
+        n_seg = max(1, min(n_seg_target, n_ic_periods // 5 if n_ic_periods >= 5 else 1))
+        ic_segments = []
+        ic_seg_same_sign = 0
+        rank_ic_seg_same_sign = 0
+        if n_seg >= 1 and n_ic_periods >= 1:
+            overall_sign = np.sign(ic_mean) if np.isfinite(ic_mean) else 0
+            overall_rank_sign = (
+                np.sign(rank_ic_mean) if np.isfinite(rank_ic_mean) else 0
+            )
+            # 用 np.array_split 对按时间排序的 DataFrame 做等分（尾段可能少 1 个样本）
+            seg_indices = np.array_split(np.arange(n_ic_periods), n_seg)
+            for seg_idx, idx_arr in enumerate(seg_indices):
+                if len(idx_arr) == 0:
+                    continue
+                seg_df = ic_df.iloc[idx_arr]
+                seg_ic_mean = float(seg_df['ic_pearson'].mean())
+                seg_rank_ic_mean = float(seg_df['ic_spearman'].mean())
+                seg_n = int(len(seg_df))
+                try:
+                    seg_start = seg_df['date'].iloc[0]
+                    seg_end = seg_df['date'].iloc[-1]
+                    seg_start_str = (
+                        str(seg_start) if seg_start is not None else None
+                    )
+                    seg_end_str = str(seg_end) if seg_end is not None else None
+                except Exception:
+                    seg_start_str, seg_end_str = None, None
+                ic_segments.append({
+                    'segment': seg_idx + 1,
+                    'n_periods': seg_n,
+                    'ic_mean': seg_ic_mean,
+                    'rank_ic_mean': seg_rank_ic_mean,
+                    'start_date': seg_start_str,
+                    'end_date': seg_end_str,
+                })
+                if (
+                    overall_sign != 0
+                    and np.isfinite(seg_ic_mean)
+                    and np.sign(seg_ic_mean) == overall_sign
+                ):
+                    ic_seg_same_sign += 1
+                if (
+                    overall_rank_sign != 0
+                    and np.isfinite(seg_rank_ic_mean)
+                    and np.sign(seg_rank_ic_mean) == overall_rank_sign
+                ):
+                    rank_ic_seg_same_sign += 1
+
+        ic_segment_total = len(ic_segments)
+        if ic_segment_total > 0:
+            ic_segment_consistency = ic_seg_same_sign / ic_segment_total
+            rank_ic_segment_consistency = (
+                rank_ic_seg_same_sign / ic_segment_total
+            )
+        else:
+            ic_segment_consistency = np.nan
+            rank_ic_segment_consistency = np.nan
+
+        # Rank IC 时序（供因子间 IC 相关性计算复用，避免重复跑评估）：
+        # 仅保留有限值；date 统一序列化为 ISO 字符串，方便 JSON 传输与前端对齐。
+        rank_ic_series_out = []
+        try:
+            for _, row in ic_df.iterrows():
+                rv = row.get('ic_spearman')
+                if rv is None or not np.isfinite(rv):
+                    continue
+                dv = row.get('date')
+                try:
+                    date_str = pd.Timestamp(dv).isoformat()
+                except Exception:
+                    date_str = str(dv) if dv is not None else None
+                if date_str is None:
+                    continue
+                rank_ic_series_out.append({'date': date_str, 'rank_ic': float(rv)})
+        except Exception:
+            rank_ic_series_out = []
+
         return {
             'ic_mean': ic_mean,
             'ic_std': ic_std,
             'icir': icir,
+            'ic_tstat': ic_tstat,
             'rank_ic_mean': rank_ic_mean,
             'rank_ic_std': rank_ic_std,
             'rank_icir': rank_icir,
+            'rank_ic_tstat': rank_ic_tstat,
             'ic_positive_ratio': ic_positive_ratio,
             'n_periods': len(ic_df),
             'avg_symbols_per_period': np.mean(date_counts),
             'avg_coverage': float(np.mean(coverage_series)) if coverage_series else np.nan,
+            'ic_segments': ic_segments,
+            'ic_segments_total': ic_segment_total,
+            'ic_segments_requested': int(n_seg_target),
+            'ic_segment_same_sign_count': int(ic_seg_same_sign),
+            'rank_ic_segment_same_sign_count': int(rank_ic_seg_same_sign),
+            'ic_segment_consistency': ic_segment_consistency,
+            'rank_ic_segment_consistency': rank_ic_segment_consistency,
+            'rank_ic_series': rank_ic_series_out,
         }
     
     def calculate_cross_sectional_returns(
@@ -1787,7 +1937,14 @@ class CrossSectionalEvaluator:
             'summary': {
                 'ic_mean': ic_results.get('ic_mean'),
                 'icir': ic_results.get('icir'),
+                'ic_tstat': ic_results.get('ic_tstat'),
                 'rank_ic_mean': ic_results.get('rank_ic_mean'),
+                'rank_ic_tstat': ic_results.get('rank_ic_tstat'),
+                'ic_segment_same_sign_count': ic_results.get('ic_segment_same_sign_count'),
+                'rank_ic_segment_same_sign_count': ic_results.get('rank_ic_segment_same_sign_count'),
+                'ic_segments_total': ic_results.get('ic_segments_total'),
+                'ic_segment_consistency': ic_results.get('ic_segment_consistency'),
+                'rank_ic_segment_consistency': ic_results.get('rank_ic_segment_consistency'),
                 'long_short_return': return_results.get('long_short_return'),
                 'long_short_return_after_cost': return_results.get('long_short_return_after_cost'),
                 'sharpe_ratio': return_results.get('sharpe_ratio'),
@@ -1828,6 +1985,7 @@ class CrossSectionalEvaluator:
                 'compute_fsc': self.compute_fsc,
                 'compute_ic_decay_curve': self.compute_ic_decay_curve,
                 'ic_decay_max_lag': self.ic_decay_max_lag,
+                'n_ic_segments': self.n_ic_segments,
             },
         }
 

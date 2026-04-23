@@ -191,11 +191,11 @@ function initializeDataSelectors() {
 /**
  * 刷新本地数据元信息
  */
-async function refreshLocalMeta() {
+async function refreshLocalMeta(forceRefresh = false) {
     const exchangeSelect = document.getElementById('exchangeSelect');
     const tradeTypeSelect = document.getElementById('tradeTypeSelect');
     
-    console.log('refreshLocalMeta 被调用');
+    console.log('refreshLocalMeta 被调用', { forceRefresh });
     console.log('交易所选择:', exchangeSelect?.value);
     console.log('交易类型选择:', tradeTypeSelect?.value);
     
@@ -208,10 +208,17 @@ async function refreshLocalMeta() {
         console.log('交易所或交易类型未选择，跳过刷新');
         return;
     }
+
+    const btn = document.getElementById('refreshDataBtn');
+    if (btn && forceRefresh) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-sync-alt fa-spin me-1"></i>刷新中...';
+    }
     
     try {
-        console.log(`请求API: /api/data/local-data?exchange=${exchangeSelect.value}&trade_type=${tradeTypeSelect.value}`);
-        const response = await fetch(`/api/data/local-data?exchange=${exchangeSelect.value}&trade_type=${tradeTypeSelect.value}`);
+        const forceParam = forceRefresh ? '&force=1' : '';
+        console.log(`请求API: /api/data/local-data?exchange=${exchangeSelect.value}&trade_type=${tradeTypeSelect.value}${forceParam}`);
+        const response = await fetch(`/api/data/local-data?exchange=${exchangeSelect.value}&trade_type=${tradeTypeSelect.value}${forceParam}`);
         
         if (response.ok) {
             const data = await response.json();
@@ -224,6 +231,9 @@ async function refreshLocalMeta() {
                 updateTimeframesSelect();
                 updateRangeForSelection();
                 console.log('数据选择器更新完成');
+                
+                const cacheInfo = data.cached ? `缓存数据 (更新于 ${data.cached_at || '未知'})` : '已从磁盘刷新';
+                console.log('数据来源:', cacheInfo);
             } else {
                 console.log('没有找到数据');
                 showAlert('warning', '没有找到可用的数据');
@@ -235,6 +245,11 @@ async function refreshLocalMeta() {
     } catch (error) {
         console.error('获取本地数据失败:', error);
         showAlert('error', '获取本地数据失败');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="fas fa-sync-alt me-1"></i>刷新数据';
+        }
     }
 }
 
@@ -879,7 +894,7 @@ async function startMining(formData) {
         
         if (result.success) {
             // 挖掘成功，保存会话ID
-            miningSession = result;
+            miningSession = result.session_id;
             showAlert('success', '因子挖掘已启动，正在监控进度...');
             console.log('挖掘会话ID:', result.session_id);
             
@@ -911,19 +926,21 @@ async function startMining(formData) {
  * 显示挖掘进度界面
  */
 function showMiningProgress() {
-    // 隐藏等待状态
     const waitingState = document.getElementById('waitingState');
     if (waitingState) {
         waitingState.style.display = 'none';
     }
     
-    // 显示进度界面
     const miningProgress = document.getElementById('miningProgress');
     if (miningProgress) {
         miningProgress.style.display = 'block';
     }
+
+    const stopBtn = document.getElementById('stopMiningBtn');
+    if (stopBtn) {
+        stopBtn.style.display = 'inline-block';
+    }
     
-    // 重置子进度条
     resetSubProgress();
 }
 
@@ -988,8 +1005,7 @@ function startProgressMonitoring(sessionId) {
             if (data.success !== false) {
                 updateProgressDisplay(data);
                 
-                if (data.status === 'completed') {
-                    // 挖掘完成，获取完整结果
+                if (data.status === 'completed' || data.status === 'stopped') {
                     handleMiningCompleted(sessionId);
                 } else if (data.status === 'error' || data.status === 'failed') {
                     handleMiningError(data.error || data.message || '挖掘任务失败');
@@ -1031,8 +1047,7 @@ function fallbackToPolling(sessionId) {
                 if (data.success) {
                     updateProgressDisplay(data);
                     
-                    if (data.status === 'completed') {
-                        // 挖掘完成，获取完整结果
+                    if (data.status === 'completed' || data.status === 'stopped') {
                         handleMiningCompleted(sessionId);
                     } else if (data.status === 'error' || data.status === 'failed') {
                         handleMiningError(data.error || data.message || '挖掘任务失败');
@@ -1054,17 +1069,18 @@ function fallbackToPolling(sessionId) {
  * 更新进度显示（简化版）
  */
 function updateProgressDisplay(data) {
-    const { progress, current_step, messages } = data;
-    console.log('更新进度显示:', { progress, current_step, messages });
+    const { progress, current_step, messages, message } = data;
+    console.log('更新进度显示:', { progress, current_step, messages, message });
     
-    // 更新总体进度
     const overallProgress = progress || 0;
     updateOverallProgress(overallProgress, current_step, messages);
     
-    // 添加调试信息
     addDebugInfo(`[${new Date().toLocaleTimeString()}] 进度更新: ${overallProgress}% - ${current_step || '未知步骤'}`);
-    
-    // 如果有消息，添加到调试信息
+
+    if (message) {
+        addDebugInfo(`[${new Date().toLocaleTimeString()}] ${message}`);
+    }
+
     if (messages && messages.length > 0) {
         messages.forEach(msg => {
             addDebugInfo(`[${new Date().toLocaleTimeString()}] ${msg.message || msg}`);
@@ -1226,10 +1242,8 @@ async function handleMiningCompleted(sessionId) {
 
                 if (isRL) {
                     showMiningResults(resultData);
-                    showRLResults(resultData);
                 } else if (isCrossSectional) {
                     showMiningResults(resultData);
-                    showCrossSectionalResults(resultData);
                 } else {
                     showMiningResults(resultData);
                 }
@@ -1282,6 +1296,50 @@ function handleMiningError(error) {
     showAlert('error', `挖掘失败: ${error}`);
 }
 
+async function stopMining() {
+    if (!miningSession) {
+        showAlert('warning', '没有正在运行的挖掘任务');
+        return;
+    }
+
+    const stopBtn = document.getElementById('stopMiningBtn');
+    if (stopBtn) {
+        stopBtn.disabled = true;
+        stopBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>停止中...';
+    }
+
+    try {
+        const sessionId = typeof miningSession === 'string' ? miningSession : miningSession.session_id;
+        const isStandard = currentMiningMode === 'standard';
+        const endpoint = isStandard
+            ? `/api/mining/stop/${sessionId}`
+            : `/api/mining/cross_sectional/stop/${sessionId}`;
+
+        const response = await fetch(endpoint, { method: 'POST' });
+        const result = await response.json();
+
+        if (result.success) {
+            addDebugInfo('停止信号已发送，等待任务中止...', 'warning');
+            showAlert('warning', '正在停止挖掘任务...');
+        } else {
+            addDebugInfo(`停止失败: ${result.error || '未知错误'}`, 'error');
+            showAlert('error', result.error || '停止挖掘失败');
+            if (stopBtn) {
+                stopBtn.disabled = false;
+                stopBtn.innerHTML = '<i class="fas fa-stop me-1"></i>停止挖掘';
+            }
+        }
+    } catch (error) {
+        console.error('停止挖掘失败:', error);
+        addDebugInfo(`停止挖掘失败: ${error.message}`, 'error');
+        showAlert('error', `停止挖掘失败: ${error.message}`);
+        if (stopBtn) {
+            stopBtn.disabled = false;
+            stopBtn.innerHTML = '<i class="fas fa-stop me-1"></i>停止挖掘';
+        }
+    }
+}
+
 /**
  * 显示挖掘结果
  */
@@ -1300,11 +1358,10 @@ function showMiningResults(data) {
         const isRL = data.results?.mode === 'cross_sectional_rl'
             || data.config?.mode === 'cross_sectional_rl';
 
-        if (isCrossSectional || isRL) {
-            const totalFactorsEl = document.getElementById('totalFactors');
-            const selectedFactorsEl = document.getElementById('selectedFactors');
-            if (totalFactorsEl) totalFactorsEl.textContent = '-';
-            if (selectedFactorsEl) selectedFactorsEl.textContent = '-';
+        if (isRL) {
+            showRLResults(data);
+        } else if (isCrossSectional) {
+            showCrossSectionalResults(data);
         } else {
             updateResultsOverview(data);
             updateResultsTable(data);
@@ -1499,6 +1556,87 @@ async function onSaveSelectedFactors() {
     }
 }
 
+function renderMinedSaveActions(sessionId, tableContainer) {
+    if (!tableContainer || !tableContainer.parentElement) return;
+    let actionWrap = document.getElementById('minedSaveActions');
+    if (!actionWrap) {
+        actionWrap = document.createElement('div');
+        actionWrap.id = 'minedSaveActions';
+        actionWrap.className = 'mt-2 d-flex align-items-center gap-2';
+        actionWrap.innerHTML = `
+            <button id="saveMinedSelectedBtn" class="btn btn-success btn-sm" disabled>加入因子库（挖掘因子）</button>
+            <span id="saveMinedSelectedHint" class="text-muted small"></span>
+        `;
+        tableContainer.parentElement.appendChild(actionWrap);
+        const btn = document.getElementById('saveMinedSelectedBtn');
+        if (btn) btn.addEventListener('click', onSaveMinedSelectedFactors);
+    }
+    const btn = document.getElementById('saveMinedSelectedBtn');
+    if (btn) btn.dataset.sessionId = sessionId || '';
+    bindMinedSelectionEvents();
+}
+
+function bindMinedSelectionEvents() {
+    const btn = document.getElementById('saveMinedSelectedBtn');
+    const hint = document.getElementById('saveMinedSelectedHint');
+    const selectAll = document.getElementById('minedSelectAll');
+    const rowChks = document.querySelectorAll('.minedRowChk');
+    if (!btn) return;
+    const updateState = () => {
+        const checked = Array.from(rowChks).filter(chk => chk.checked).length;
+        btn.disabled = checked === 0;
+        if (hint) hint.textContent = checked > 0 ? `已选择 ${checked} 个因子` : '';
+    };
+    if (selectAll) {
+        selectAll.addEventListener('change', () => {
+            rowChks.forEach(chk => { chk.checked = selectAll.checked; });
+            updateState();
+        });
+    }
+    rowChks.forEach(chk => chk.addEventListener('change', updateState));
+    updateState();
+}
+
+async function onSaveMinedSelectedFactors() {
+    const btn = document.getElementById('saveMinedSelectedBtn');
+    if (!btn || btn.disabled) return;
+    const sessionId = btn.dataset.sessionId;
+    const selected = Array.from(document.querySelectorAll('.minedRowChk'))
+        .filter(chk => chk.checked)
+        .map(chk => chk.dataset.factorId);
+    if (!sessionId || !selected.length) return;
+    try {
+        btn.disabled = true;
+        const origText = btn.textContent;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>保存中...';
+        const resp = await fetch('/api/mining/save_selected_factors', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ session_id: sessionId, factor_ids: selected })
+        });
+        const json = await resp.json();
+        if (json && json.success) {
+            showAlert('success', `已加入因子库 ${json.saved_count} 个因子，可在截面评估直接使用`);
+            document.querySelectorAll('.minedRowChk').forEach(chk => {
+                if (selected.includes(chk.dataset.factorId)) {
+                    chk.checked = false;
+                    chk.closest('tr')?.classList.add('table-success');
+                    setTimeout(() => chk.closest('tr')?.classList.remove('table-success'), 3000);
+                }
+            });
+            const selectAll = document.getElementById('minedSelectAll');
+            if (selectAll) selectAll.checked = false;
+        } else {
+            showAlert('error', `加入因子库失败: ${json && (json.message || json.error) ? (json.message || json.error) : '未知错误'}`);
+        }
+    } catch (e) {
+        showAlert('error', `加入因子库失败: ${e.message}`);
+    } finally {
+        btn.innerHTML = '加入因子库（挖掘因子）';
+        bindMinedSelectionEvents();
+    }
+}
+
 /**
  * 更新结果概览
  */
@@ -1506,22 +1644,26 @@ function updateResultsOverview(data) {
     console.log('更新结果概览:', data);
     
     try {
-        // 更新总因子数
+        const results = data.results || data;
+
         const totalFactorsElement = document.getElementById('totalFactors');
         if (totalFactorsElement) {
-            totalFactorsElement.textContent = data.factor_count || data.factors_info?.total_factors || 0;
+            totalFactorsElement.textContent = results.total_factors || data.factor_count || data.factors_info?.total_factors || 0;
         }
         
-        // 更新选中因子数
         const selectedFactorsElement = document.getElementById('selectedFactors');
-        if (selectedFactorsElement && data.optimization && data.optimization.selected_factors) {
-            selectedFactorsElement.textContent = data.optimization.selected_factors.length || 0;
+        if (selectedFactorsElement) {
+            const opt = results.optimization || data.optimization;
+            if (opt && opt.selected_factors) {
+                selectedFactorsElement.textContent = opt.selected_factors.length || 0;
+            } else {
+                selectedFactorsElement.textContent = results.total_factors || 0;
+            }
         }
         
-        // 更新平均IC
         const avgICElement = document.getElementById('avgIC');
         if (avgICElement) {
-            const evaluationData = data.evaluation?.evaluation || data.evaluation;
+            const evaluationData = results.evaluation || data.evaluation?.evaluation || data.evaluation;
             if (evaluationData) {
                 const factors = Object.values(evaluationData);
                 if (factors.length > 0) {
@@ -1534,10 +1676,9 @@ function updateResultsOverview(data) {
             }
         }
         
-        // 更新平均多空收益
         const avgReturnElement = document.getElementById('avgReturn');
         if (avgReturnElement) {
-            const evaluationData = data.evaluation?.evaluation || data.evaluation;
+            const evaluationData = results.evaluation || data.evaluation?.evaluation || data.evaluation;
             if (evaluationData) {
                 const factors = Object.values(evaluationData);
                 if (factors.length > 0) {
@@ -1562,31 +1703,28 @@ function updateResultsTable(data) {
     console.log('更新结果表格:', data);
     
     try {
-        // 查找结果表格容器
         const resultsTableContainer = document.querySelector('#miningResults .table-responsive');
         if (!resultsTableContainer) {
             console.error('找不到结果表格容器');
             return;
         }
         
-        // 清空现有内容
         resultsTableContainer.innerHTML = '';
         
-        // 获取实际的评估数据（支持嵌套结构）
-        const evaluationData = data.evaluation?.evaluation || data.evaluation;
+        const results = data.results || data;
+        const evaluationData = results.evaluation || data.evaluation?.evaluation || data.evaluation;
         if (!evaluationData || Object.keys(evaluationData).length === 0) {
             resultsTableContainer.innerHTML = '<div class="alert alert-warning">暂无挖掘结果</div>';
             return;
         }
         
-        // 创建表格
         const table = document.createElement('table');
-        table.className = 'table table-striped table-hover';
+        table.className = 'table table-sm table-striped table-hover align-middle';
         
-        // 创建表头
         const thead = document.createElement('thead');
         thead.innerHTML = `
             <tr>
+                <th style="width:32px;"><input type="checkbox" id="minedSelectAll"></th>
                 <th>因子名称</th>
                 <th>多空收益</th>
                 <th>IC (Pearson)</th>
@@ -1598,19 +1736,16 @@ function updateResultsTable(data) {
         `;
         table.appendChild(thead);
         
-        // 创建表体
         const tbody = document.createElement('tbody');
         
-        // 获取算法信息（兼容旧格式）
         let algorithmType = '未知';
-        if (data.config?.selected_algorithms && data.config.selected_algorithms.length > 0) {
-            algorithmType = data.config.selected_algorithms[0];
-        } else if (data.factors_info?.factor_types && data.factors_info.factor_types.length > 0) {
-            // 兼容旧格式，从factor_types获取
-            algorithmType = data.factors_info.factor_types[0];
+        const config = data.config || results.config || {};
+        if (config.selected_algorithms && config.selected_algorithms.length > 0) {
+            algorithmType = config.selected_algorithms[0];
+        } else if (results.algorithms_used && results.algorithms_used.length > 0) {
+            algorithmType = results.algorithms_used[0];
         }
         
-        // 按多空收益排序（降序）
         const sortedFactors = Object.entries(evaluationData).sort(([,a], [,b]) => {
             const returnA = a.long_short_return || 0;
             const returnB = b.long_short_return || 0;
@@ -1619,11 +1754,10 @@ function updateResultsTable(data) {
         
         sortedFactors.forEach(([factorName, factorData]) => {
             const row = document.createElement('tr');
-            // 计算多空收益率（百分比）
             const longShortReturn = (factorData.long_short_return || 0) * 100;
-            // 根据多空收益设置行样式
             const returnClass = longShortReturn > 0 ? 'text-success' : longShortReturn < 0 ? 'text-danger' : '';
             row.innerHTML = `
+                <td><input type="checkbox" class="minedRowChk" data-factor-id="${factorName}"></td>
                 <td>${factorName}</td>
                 <td class="${returnClass}"><strong>${longShortReturn.toFixed(2)}%</strong></td>
                 <td>${(factorData.ic_pearson || 0).toFixed(4)}</td>
@@ -1636,10 +1770,11 @@ function updateResultsTable(data) {
         });
         table.appendChild(tbody);
         
-        // 添加到容器
         resultsTableContainer.appendChild(table);
-        
-        // 更新图表
+
+        const sessionId = typeof miningSession === 'string' ? miningSession : (miningSession?.session_id || data.session_id || '');
+        renderMinedSaveActions(sessionId, resultsTableContainer);
+
         updateCharts(data);
         
         console.log('结果表格更新完成');
@@ -1678,18 +1813,19 @@ function updateTypeChart(data) {
             return;
         }
         
-        // 获取算法信息（兼容旧格式）
+        const results = data.results || data;
+        const config = data.config || results.config || {};
+
         let algorithmType = '未知';
-        if (data.config?.selected_algorithms && data.config.selected_algorithms.length > 0) {
-            algorithmType = data.config.selected_algorithms[0];
-        } else if (data.factors_info?.factor_types && data.factors_info.factor_types.length > 0) {
-            // 兼容旧格式，从factor_types获取
-            algorithmType = data.factors_info.factor_types[0];
+        if (config.selected_algorithms && config.selected_algorithms.length > 0) {
+            algorithmType = config.selected_algorithms[0];
+        } else if (results.algorithms_used && results.algorithms_used.length > 0) {
+            algorithmType = results.algorithms_used[0];
         }
         
-        // 统计各算法的因子数量
+        const evaluationData = results.evaluation || data.evaluation || {};
         const typeCounts = {};
-        typeCounts[algorithmType] = Object.keys(data.evaluation || {}).length;
+        typeCounts[algorithmType] = Object.keys(evaluationData).length;
         
         // 销毁旧图表
         if (canvas._chartInstance) {
@@ -1752,13 +1888,15 @@ function updatePerformanceChart(data) {
             return;
         }
         
-        if (!data.evaluation || Object.keys(data.evaluation).length === 0) {
+        const results = data.results || data;
+        const evaluationData = results.evaluation || data.evaluation || {};
+        if (!evaluationData || Object.keys(evaluationData).length === 0) {
             return;
         }
         
         // 提取IC值用于性能分布
         const icValues = [];
-        Object.values(data.evaluation).forEach(factorData => {
+        Object.values(evaluationData).forEach(factorData => {
             if (factorData.ic_pearson !== undefined) {
                 icValues.push(Math.abs(factorData.ic_pearson));
             }
@@ -1860,6 +1998,11 @@ function updateStartButton(disabled) {
             '<i class="fas fa-spinner fa-spin me-2"></i>挖掘中...' : 
             '<i class="fas fa-rocket me-2"></i>开始因子挖掘';
     }
+
+    const stopBtn = document.getElementById('stopMiningBtn');
+    if (stopBtn) {
+        stopBtn.style.display = disabled ? 'inline-block' : 'none';
+    }
 }
 
 /**
@@ -1920,7 +2063,7 @@ async function loadMiningHistory() {
         if (historyTableBody) {
             historyTableBody.innerHTML = `
                 <tr>
-                    <td colspan="7" class="text-center text-muted">
+                    <td colspan="8" class="text-center text-muted">
                         <i class="fas fa-exclamation-triangle me-2"></i>加载失败: ${error.message}
                     </td>
                 </tr>
@@ -1951,7 +2094,7 @@ function updateHistoryTable(sessions) {
         console.log('没有历史数据，显示空状态');
         historyTableBody.innerHTML = `
             <tr>
-                <td colspan="7" class="text-center text-muted">
+                <td colspan="8" class="text-center text-muted">
                     <i class="fas fa-info-circle me-2"></i>暂无挖掘历史
                 </td>
             </tr>
@@ -1969,15 +2112,19 @@ function updateHistoryTable(sessions) {
             const row = document.createElement('tr');
             
             // 安全地获取会话ID
-            const sessionId = session.session_id || `unknown-${index}`;
+            const sessionId = session && session.session_id ? String(session.session_id) : '';
+            if (!sessionId) {
+                return;
+            }
             
             // 格式化时间
-            console.log('原始时间戳:', session.timestamp);
-            let timeStr = '时间无效';
+            const rawTime = session.timestamp || session.completed_time;
+            console.log('原始时间戳:', rawTime);
+            let timeStr = '-';
             
-            if (session.timestamp) {
+            if (rawTime) {
                 try {
-                    const timestamp = new Date(session.timestamp);
+                    const timestamp = new Date(rawTime);
                     console.log('解析后的时间对象:', timestamp);
                     console.log('时间是否有效:', !isNaN(timestamp.getTime()));
                     
@@ -1992,7 +2139,7 @@ function updateHistoryTable(sessions) {
             // 安全地获取配置信息
             const config = session.config || {};
             const symbols = Array.isArray(config.symbols) ? config.symbols : [];
-            const timeframes = Array.isArray(config.timeframes) ? config.timeframes : [];
+            const timeframes = Array.isArray(config.timeframes) ? config.timeframes : (config.timeframe ? [config.timeframe] : []);
             const selectedAlgorithms = Array.isArray(config.selected_algorithms) ? config.selected_algorithms : [];
             
             // 调试配置信息
@@ -2036,24 +2183,36 @@ function updateHistoryTable(sessions) {
             const safeFactorsCount = String(factorsCount);
             const safeStatus = String(session.status || '未知').replace(/[<>]/g, '');
             
+            const modeRaw = session.mode || config.mode || results.mode || 'unknown';
+            const safeMode = String(modeRaw || 'unknown').replace(/[<>]/g, '');
+            const modeLabel = safeMode === 'cross_sectional_rl' ? 'RL截面' :
+                              safeMode === 'cross_sectional' ? 'GP截面' :
+                              safeMode === 'standard' ? '时序' :
+                              safeMode === 'cross_sectional_gp' ? 'GP截面' : safeMode;
+            const modeBadge = safeMode.includes('rl') ? 'info' : 'primary';
+
+            const canView = (session.status === 'completed' || session.status === 'stopped');
             row.innerHTML = `
                 <td>${safeTimeStr}</td>
+                <td><span class="badge bg-${modeBadge}">${modeLabel}</span></td>
                 <td>${safeSymbols}</td>
                 <td>${safeTimeframes}</td>
                 <td>${safeSelectedAlgorithms}</td>
                 <td>${safeFactorsCount}</td>
                 <td>
-                    <span class="badge bg-${session.status === 'completed' ? 'success' : session.status === 'running' ? 'warning' : 'secondary'}">
-                        ${session.status === 'completed' ? '完成' : session.status === 'running' ? '进行中' : '未知'}
+                    <span class="badge bg-${session.status === 'completed' ? 'success' : session.status === 'running' ? 'warning' : session.status === 'stopped' ? 'secondary' : 'secondary'}">
+                        ${session.status === 'completed' ? '完成' : session.status === 'running' ? '进行中' : session.status === 'stopped' ? '已停止' : '未知'}
                     </span>
                 </td>
                 <td>
-                    ${session.status === 'completed' ? 
-                        `<button class="btn btn-sm btn-outline-primary" onclick="viewMiningResult('${sessionId}')">
+                    ${canView ? 
+                        `<button class="btn btn-sm btn-outline-primary me-1" onclick="viewMiningResult('${sessionId}')">
                             <i class="fas fa-eye me-1"></i>查看
-                        </button>` : 
-                        '<span class="text-muted">-</span>'
+                        </button>` : ''
                     }
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteMiningHistory('${sessionId}')">
+                        <i class="fas fa-trash me-1"></i>删除
+                    </button>
                 </td>
             `;
             
@@ -2065,7 +2224,7 @@ function updateHistoryTable(sessions) {
             // 添加错误行
             const errorRow = document.createElement('tr');
             errorRow.innerHTML = `
-                <td colspan="7" class="text-center text-danger">
+                <td colspan="8" class="text-center text-danger">
                     <i class="fas fa-exclamation-triangle me-2"></i>会话数据错误: ${sessionError.message}
                 </td>
             `;
@@ -2074,6 +2233,41 @@ function updateHistoryTable(sessions) {
     });
     
     console.log(`挖掘历史更新完成，共 ${sessions.length} 条记录`);
+}
+
+async function deleteMiningHistory(sessionId) {
+    try {
+        if (!sessionId) return;
+        const ok = confirm('确认删除该条挖掘历史？此操作将同时删除对应结果文件，且不可恢复。');
+        if (!ok) return;
+        const resp = await fetch(`/api/mining/history/delete/${sessionId}`, { method: 'POST' });
+        const json = await resp.json();
+        if (json && json.success) {
+            showAlert('success', '已删除该条挖掘历史');
+            await loadMiningHistory();
+        } else {
+            showAlert('error', `删除失败: ${json && (json.error || json.message) ? (json.error || json.message) : '未知错误'}`);
+        }
+    } catch (e) {
+        showAlert('error', `删除失败: ${e.message}`);
+    }
+}
+
+async function clearMiningHistory() {
+    try {
+        const ok = confirm('确认清空全部挖掘历史？此操作将删除所有历史记录与结果文件，且不可恢复。');
+        if (!ok) return;
+        const resp = await fetch('/api/mining/history/clear', { method: 'POST' });
+        const json = await resp.json();
+        if (json && json.success) {
+            showAlert('success', `已清空历史（删除${json.deleted_count || 0}条）`);
+            await loadMiningHistory();
+        } else {
+            showAlert('error', `清空失败: ${json && (json.error || json.message) ? (json.error || json.message) : '未知错误'}`);
+        }
+    } catch (e) {
+        showAlert('error', `清空失败: ${e.message}`);
+    }
 }
 
 /**
@@ -2109,10 +2303,13 @@ async function viewMiningResult(sessionId) {
         console.log('挖掘结果数据:', data);
         
         if (data.success !== false) {
-            // 显示结果
             showMiningResults(data);
-            
-            // 滚动到结果区域
+
+            const sid = data.session_id || '';
+            if (sid) {
+                loadDiffReport(sid);
+            }
+
             const miningResults = document.getElementById('miningResults');
             if (miningResults) {
                 miningResults.scrollIntoView({ behavior: 'smooth' });
@@ -2303,9 +2500,15 @@ function showRLResults(data) {
 
     if (totalFactorsEl) totalFactorsEl.textContent = factorList.length;
     if (selectedFactorsEl) selectedFactorsEl.textContent = factorList.length;
-    if (avgICEl) avgICEl.textContent = 'N/A';
 
     if (factorList.length > 0) {
+        const icValues = factorList.filter(([, f]) => f.ic_mean != null).map(([, f]) => Math.abs(f.ic_mean || 0));
+        if (icValues.length > 0) {
+            const avgIC = icValues.reduce((s, v) => s + v, 0) / icValues.length;
+            if (avgICEl) avgICEl.textContent = avgIC.toFixed(4);
+        } else {
+            if (avgICEl) avgICEl.textContent = 'N/A';
+        }
         const avgRet = factorList.reduce((s, [, f]) => s + (f.avg_return || 0), 0) / factorList.length;
         if (avgReturnEl) avgReturnEl.textContent = `${(avgRet * 100).toFixed(2)}%`;
     }
@@ -2325,10 +2528,19 @@ function showRLResults(data) {
     table.innerHTML = `
         <thead>
             <tr>
+                <th style="width:32px;"><input type="checkbox" id="minedSelectAll"></th>
                 <th>因子ID</th>
                 <th>表达式</th>
+                <th>IC均值</th>
+                <th>ICIR</th>
+                <th>Rank IC</th>
+                <th>Rank ICIR</th>
+                <th>多空收益</th>
                 <th>回测得分</th>
                 <th>平均收益</th>
+                <th>币种数</th>
+                <th>期数</th>
+                <th>覆盖率</th>
             </tr>
         </thead>
         <tbody></tbody>
@@ -2339,18 +2551,37 @@ function showRLResults(data) {
 
     sorted.forEach(([fid, f]) => {
         const row = document.createElement('tr');
+        const icClass = (f.ic_mean || 0) > 0 ? 'text-success' : (f.ic_mean || 0) < 0 ? 'text-danger' : '';
         const scoreClass = (f.score || 0) > 0 ? 'text-success' : (f.score || 0) < 0 ? 'text-danger' : '';
         const expr = (f.expression || '').length > 80 ? (f.expression || '').substring(0, 77) + '...' : (f.expression || '');
+        const icDisplay = (f.ic_mean !== null && f.ic_mean !== undefined) ? (f.ic_mean || 0).toFixed(4) : 'N/A';
+        const icirDisplay = (f.icir !== null && f.icir !== undefined) ? (f.icir || 0).toFixed(4) : 'N/A';
+        const rankIcDisplay = (f.rank_ic_mean !== null && f.rank_ic_mean !== undefined) ? (f.rank_ic_mean || 0).toFixed(4) : 'N/A';
+        const rankIcirDisplay = (f.rank_icir !== null && f.rank_icir !== undefined) ? (f.rank_icir || 0).toFixed(4) : 'N/A';
+        const lsDisplay = (f.long_short_return !== null && f.long_short_return !== undefined) ? ((f.long_short_return || 0) * 100).toFixed(2) + '%' : 'N/A';
+        const coverageRate = (f.coverage_rate !== null && f.coverage_rate !== undefined)
+            ? f.coverage_rate
+            : ((f.total_periods || 0) > 0 ? (f.n_periods || 0) / f.total_periods : 0);
         row.innerHTML = `
+            <td><input type="checkbox" class="minedRowChk" data-factor-id="${fid}"></td>
             <td><code>${fid}</code></td>
             <td title="${escapeHtml(f.expression || '')}"><small>${escapeHtml(expr)}</small></td>
+            <td class="${icClass}"><strong>${icDisplay}</strong></td>
+            <td>${icirDisplay}</td>
+            <td>${rankIcDisplay}</td>
+            <td>${rankIcirDisplay}</td>
+            <td>${lsDisplay}</td>
             <td class="${scoreClass}"><strong>${(f.score || 0).toFixed(4)}</strong></td>
             <td>${((f.avg_return || 0) * 100).toFixed(2)}%</td>
+            <td>${f.n_symbols || 0}</td>
+            <td>${f.n_periods || 0}</td>
+            <td>${(coverageRate * 100).toFixed(1)}%</td>
         `;
         tbody.appendChild(row);
     });
 
     tableContainer.appendChild(table);
+    renderMinedSaveActions(data.session_id || miningSession, tableContainer);
 
     const trainHistory = results.training_history || [];
     if (trainHistory.length > 0) {
@@ -2649,12 +2880,13 @@ async function handleRLCrossSectionalMining() {
         }
 
         const exchange = document.getElementById('exchangeSelect')?.value || 'binance';
-        const data_source = exchange === 'binance' ? 'binance' : 'yahoo';
+        const data_source = exchange || 'binance';
 
         if (timeframes.length > 1) {
             showAlert('warning', `截面RL当前仅使用第一个时间框架：${timeframes[0]}`);
         }
 
+        const rlMinCoverageRaw = parseFloat(document.getElementById('rlMinCoverage')?.value);
         const rlConfig = {
             symbols: symbols,
             timeframe: timeframes[0],
@@ -2676,6 +2908,7 @@ async function handleRLCrossSectionalMining() {
             base_fee: parseFloat(document.getElementById('rlBaseFee')?.value) || 0.001,
             max_factors: parseInt(document.getElementById('rlMaxFactors')?.value) || 15,
             max_correlation: parseFloat(document.getElementById('rlMaxCorrelation')?.value) || 0.7,
+            min_coverage: Number.isFinite(rlMinCoverageRaw) ? rlMinCoverageRaw : 0.2,
         };
 
         console.log('RL截面挖掘配置:', rlConfig);
@@ -2727,12 +2960,13 @@ async function handleCrossSectionalMining() {
         }
 
         const exchange = document.getElementById('exchangeSelect')?.value || 'binance';
-        const data_source = exchange === 'binance' ? 'binance' : 'yahoo';
+        const data_source = exchange || 'binance';
 
         if (timeframes.length > 1) {
             showAlert('warning', `截面GP当前仅使用第一个时间框架：${timeframes[0]}`);
         }
 
+        const gpMinCoverageRaw = parseFloat(document.getElementById('csMinCoverage')?.value);
         const gpConfig = {
             symbols: symbols,
             timeframe: timeframes[0],
@@ -2748,6 +2982,7 @@ async function handleCrossSectionalMining() {
             min_ir: parseFloat(document.getElementById('csMinIR')?.value) || 0.1,
             max_factors: parseInt(document.getElementById('csMaxFactors')?.value) || 15,
             max_correlation: parseFloat(document.getElementById('csMaxCorrelation')?.value) || 0.7,
+            min_coverage: Number.isFinite(gpMinCoverageRaw) ? gpMinCoverageRaw : 0.2,
         };
 
         console.log('截面挖掘配置:', gpConfig);
@@ -2819,6 +3054,7 @@ function showCrossSectionalResults(data) {
     table.innerHTML = `
         <thead>
             <tr>
+                <th style="width:32px;"><input type="checkbox" id="minedSelectAll"></th>
                 <th>因子ID</th>
                 <th>表达式</th>
                 <th>方向</th>
@@ -2830,6 +3066,7 @@ function showCrossSectionalResults(data) {
                 <th>多空收益</th>
                 <th>币种数</th>
                 <th>期数</th>
+                <th>覆盖率</th>
             </tr>
         </thead>
         <tbody></tbody>
@@ -2849,7 +3086,11 @@ function showCrossSectionalResults(data) {
         const directionLabel = isNegative ? '反向' : '正向';
         const directionBadge = isNegative ? 'bg-warning text-dark' : 'bg-success';
         const expr = (f.expression || '').length > 80 ? (f.expression || '').substring(0, 77) + '...' : (f.expression || '');
+        const coverageRate = (f.coverage_rate !== null && f.coverage_rate !== undefined)
+            ? f.coverage_rate
+            : ((f.total_periods || 0) > 0 ? (f.n_periods || 0) / f.total_periods : 0);
         row.innerHTML = `
+            <td><input type="checkbox" class="minedRowChk" data-factor-id="${fid}"></td>
             <td><code>${fid}</code></td>
             <td title="${escapeHtml(f.expression || '')}"><small>${escapeHtml(expr)}</small></td>
             <td><span class="badge ${directionBadge}">${directionLabel}</span></td>
@@ -2861,23 +3102,44 @@ function showCrossSectionalResults(data) {
             <td>${((f.long_short_return || 0) * 100).toFixed(2)}%</td>
             <td>${f.n_symbols || 0}</td>
             <td>${f.n_periods || 0}</td>
+            <td>${(coverageRate * 100).toFixed(1)}%</td>
         `;
         tbody.appendChild(row);
     });
 
     tableContainer.appendChild(table);
+    renderMinedSaveActions(data.session_id || miningSession, tableContainer);
 
     const genStats = results.generation_stats || [];
     if (genStats.length > 0) {
-        const chartDiv = document.createElement('div');
-        chartDiv.className = 'mt-4';
-        chartDiv.innerHTML = `
-            <h5>进化曲线</h5>
-            <canvas id="evolutionChart" height="200"></canvas>
-        `;
-        tableContainer.parentElement.appendChild(chartDiv);
+        const parent = tableContainer.parentElement;
+        if (parent) {
+            const existing = document.getElementById('evolutionChartWrap');
+            if (existing) existing.remove();
 
-        setTimeout(() => renderEvolutionChart(genStats), 100);
+            const wrap = document.createElement('div');
+            wrap.id = 'evolutionChartWrap';
+            wrap.className = 'mt-4';
+            wrap.innerHTML = `
+                <details id="evolutionChartDetails">
+                    <summary class="fw-bold">进化曲线（点击展开）</summary>
+                    <div class="evolution-chart-container mt-2">
+                        <canvas id="evolutionChart" height="180"></canvas>
+                    </div>
+                    <div class="text-muted small mt-1">为避免卡顿，曲线将按需渲染并自动抽样显示</div>
+                </details>
+            `;
+            parent.appendChild(wrap);
+
+            const details = document.getElementById('evolutionChartDetails');
+            if (details) {
+                details.addEventListener('toggle', () => {
+                    if (details.open) {
+                        setTimeout(() => renderEvolutionChart(genStats), 0);
+                    }
+                }, { once: true });
+            }
+        }
     }
 }
 
@@ -2887,15 +3149,17 @@ function renderEvolutionChart(genStats) {
 
     if (canvas._chartInstance) canvas._chartInstance.destroy();
 
+    const sampled = genStats.filter((_, i) => i % Math.max(1, Math.floor(genStats.length / 200)) === 0 || i === genStats.length - 1);
+
     const ctx = canvas.getContext('2d');
     canvas._chartInstance = new Chart(ctx, {
         type: 'line',
         data: {
-            labels: genStats.map(g => `Gen ${g.generation}`),
+            labels: sampled.map(g => `Gen ${g.generation}`),
             datasets: [
                 {
                     label: '最佳IC',
-                    data: genStats.map(g => g.best_ic || 0),
+                    data: sampled.map(g => g.best_ic || 0),
                     borderColor: 'rgba(54, 162, 235, 1)',
                     backgroundColor: 'rgba(54, 162, 235, 0.1)',
                     fill: true,
@@ -2903,7 +3167,7 @@ function renderEvolutionChart(genStats) {
                 },
                 {
                     label: '最佳ICIR',
-                    data: genStats.map(g => g.best_icir || 0),
+                    data: sampled.map(g => g.best_icir || 0),
                     borderColor: 'rgba(255, 99, 132, 1)',
                     backgroundColor: 'rgba(255, 99, 132, 0.1)',
                     fill: true,
@@ -2911,7 +3175,7 @@ function renderEvolutionChart(genStats) {
                 },
                 {
                     label: '平均适应度',
-                    data: genStats.map(g => g.avg_fitness || 0),
+                    data: sampled.map(g => g.avg_fitness || 0),
                     borderColor: 'rgba(75, 192, 192, 1)',
                     backgroundColor: 'rgba(75, 192, 192, 0.1)',
                     fill: false,
