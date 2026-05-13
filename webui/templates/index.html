@@ -3,117 +3,124 @@
 {% block title %}首页 - {{ config.title }}{% endblock %}
 
 {% block content %}
-<div class="row">
+<div class="row mb-4">
     <div class="col-12">
-        <div class="jumbotron bg-light p-5 rounded">
-            <h1 class="display-4">
-                📊 欢迎使用 {{ config.title }}
-            </h1>
-            <p class="lead">{{ config.description }}</p>
-            <hr class="my-4">
-            <p>专业的量化因子挖掘、评估和优化平台，帮助您构建高质量的量化交易策略。</p>
-            <a class="btn btn-primary btn-lg" href="{{ url_for('main.factor_mining') }}" role="button">
-                🚀 开始因子挖掘
-            </a>
-        </div>
-    </div>
-</div>
-
-<div class="row mt-5">
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body text-center">
-                <div style="font-size: 3rem; color: var(--primary-color); margin-bottom: 1rem;">⚙️</div>
-                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">因子构建</h5>
-                <p class="card-text">构建技术因子、统计因子、机器学习因子等多种类型的量化因子。</p>
-                <a href="{{ url_for('main.factor_mining') }}" class="btn btn-outline-primary">
-                    开始挖掘
-                </a>
+        <div class="card p-5" style="border-left: 4px solid var(--brand-color);">
+            <div class="d-flex align-items-center mb-3">
+                <h1 class="display-5 mb-0" style="font-weight: 800; letter-spacing: 2px;">{{ config.title|upper }}</h1>
             </div>
-        </div>
-    </div>
-    
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body text-center">
-                <div style="font-size: 3rem; color: var(--success-color); margin-bottom: 1rem;">📈</div>
-                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">时序评估</h5>
-                <p class="card-text">使用IC、IR、胜率等多种指标全面评估因子的时序有效性和稳定性。</p>
-                <a href="{{ url_for('main.factor_evaluation') }}" class="btn btn-outline-success">
-                    开始评估
+            <p class="lead text-muted">{{ config.description }}</p>
+            <hr style="border-color: var(--border-color); margin: 2rem 0;">
+            <p class="mb-4">高级量化因子挖掘、评估与优化平台。专为稳健的策略开发而构建。</p>
+            <div class="d-flex gap-3 mt-4">
+                <a class="btn btn-primary" href="{{ url_for('main.ts_mining') }}" style="font-size: 1rem; padding: 0.75rem 2rem;">
+                    <i class="fas fa-rocket me-2"></i> 时序挖掘
                 </a>
-            </div>
-        </div>
-    </div>
-    
-    <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-body text-center">
-                <div style="font-size: 3rem; color: var(--info-color); margin-bottom: 1rem;">📚</div>
-                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">因子库</h5>
-                <p class="card-text">管理和查看所有已挖掘的因子，使用行情数据进行评估和分析。</p>
-                <a href="{{ url_for('main.factor_library') }}" class="btn btn-outline-info">
-                    进入因子库
+                <a class="btn btn-primary" href="{{ url_for('main.cs_mining') }}" style="font-size: 1rem; padding: 0.75rem 2rem; background: rgba(168, 85, 247, 0.1) !important; color: #c084fc !important; border-color: rgba(168, 85, 247, 0.3) !important;">
+                    <i class="fas fa-dna me-2"></i> 截面挖掘
                 </a>
             </div>
         </div>
     </div>
 </div>
 
-<div class="row mt-5">
+<div class="row g-4">
+    <!-- Factor Construction -->
     <div class="col-md-4">
         <div class="card h-100">
-            <div class="card-body text-center">
-                <div style="font-size: 3rem; color: #6f42c1; margin-bottom: 1rem;">📊</div>
-                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">截面评估</h5>
-                <p class="card-text">截面因子评估，分析因子在横截面上的收益预测能力。</p>
-                <a href="{{ url_for('main.cross_sectional_evaluation') }}" class="btn btn-outline-primary" style="color: #6f42c1; border-color: #6f42c1;">
-                    开始评估
-                </a>
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-cogs fa-fw fa-2x" style="color: var(--text-secondary);"></i>
+                    <h5 class="card-title mb-0 ms-3">因子挖掘</h5>
+                </div>
+                <p class="card-text text-muted small">使用高级算法挖掘和生成量化因子，支持技术指标与统计学习。</p>
+                <div class="mt-4 d-flex gap-2">
+                    <a href="{{ url_for('main.ts_mining') }}" class="btn btn-sm w-100" style="border-color: var(--border-color);">时序模式</a>
+                    <a href="{{ url_for('main.cs_mining') }}" class="btn btn-sm w-100" style="border-color: var(--border-color);">截面模式</a>
+                </div>
             </div>
         </div>
     </div>
     
+    <!-- Time-Series Evaluation -->
     <div class="col-md-4">
         <div class="card h-100">
-            <div class="card-body text-center">
-                <div style="font-size: 3rem; color: #e83e8c; margin-bottom: 1rem;">🤖</div>
-                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">模型训练</h5>
-                <p class="card-text">使用机器学习模型预测未来时间步标签，支持LightGBM、XGBoost等算法。</p>
-                <a href="{{ url_for('main.model_training') }}" class="btn btn-outline-primary" style="color: #e83e8c; border-color: #e83e8c;">
-                    开始训练
-                </a>
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-chart-line fa-fw fa-2x" style="color: var(--accent-green);"></i>
+                    <h5 class="card-title mb-0 ms-3">时序评估</h5>
+                </div>
+                <p class="card-text text-muted small">通过 IC、IR 及胜率等指标评估因子在时间序列上的有效性与稳定性。</p>
+                <div class="mt-4">
+                    <a href="{{ url_for('main.factor_evaluation') }}" class="btn btn-success btn-sm w-100">开始评估</a>
+                </div>
             </div>
         </div>
     </div>
-    
+
+    <!-- Cross-Sectional Evaluation -->
     <div class="col-md-4">
         <div class="card h-100">
-            <div class="card-body text-center">
-                <div style="font-size: 3rem; color: var(--warning-color); margin-bottom: 1rem;">📥</div>
-                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">数据下载</h5>
-                <p class="card-text">从交易所下载历史行情数据，支持现货、期货等多种交易类型。</p>
-                <a href="{{ url_for('main.data_download') }}" class="btn btn-outline-warning">
-                    开始下载
-                </a>
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-layer-group fa-fw fa-2x" style="color: #c084fc;"></i>
+                    <h5 class="card-title mb-0 ms-3">截面评估</h5>
+                </div>
+                <p class="card-text text-muted small">在横截面上分析因子对多资产的预测能力，以及因子的相关性。</p>
+                <div class="mt-4">
+                    <a href="{{ url_for('main.cross_sectional_evaluation') }}" class="btn btn-sm w-100" style="color: #c084fc; border-color: rgba(168, 85, 247, 0.3); background: rgba(168, 85, 247, 0.1);">开始评估</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Factor Library -->
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-database fa-fw fa-2x" style="color: #00bfff;"></i>
+                    <h5 class="card-title mb-0 ms-3">因子库</h5>
+                </div>
+                <p class="card-text text-muted small">统一管理和查看所有已挖掘和入库的量化因子，随时调用进行分析。</p>
+                <div class="mt-4">
+                    <a href="{{ url_for('main.factor_library') }}" class="btn btn-sm w-100" style="color: #00bfff; border-color: rgba(0, 191, 255, 0.3); background: rgba(0, 191, 255, 0.1);">浏览因子库</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Model Training -->
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-brain fa-fw fa-2x" style="color: #f472b6;"></i>
+                    <h5 class="card-title mb-0 ms-3">模型训练</h5>
+                </div>
+                <p class="card-text text-muted small">整合优质因子，训练用于实际交易的预测性机器学习模型。</p>
+                <div class="mt-4">
+                    <a href="{{ url_for('main.model_training') }}" class="btn btn-sm w-100" style="color: #f472b6; border-color: rgba(244, 114, 182, 0.3); background: rgba(244, 114, 182, 0.1);">开始训练</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Management -->
+    <div class="col-md-4">
+        <div class="card h-100">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <i class="fas fa-server fa-fw fa-2x" style="color: #fbbf24;"></i>
+                    <h5 class="card-title mb-0 ms-3">数据管理</h5>
+                </div>
+                <p class="card-text text-muted small">从交易所下载历史行情数据，以及在本地查看与管理数据文件。</p>
+                <div class="mt-4 d-flex gap-2">
+                    <a href="{{ url_for('main.data_download') }}" class="btn btn-sm w-100" style="color: #fbbf24; border-color: rgba(251, 191, 36, 0.3); background: rgba(251, 191, 36, 0.1);">数据下载</a>
+                    <a href="{{ url_for('main.data_viewer') }}" class="btn btn-sm w-100" style="border-color: var(--border-color);">查看数据</a>
+                </div>
             </div>
         </div>
     </div>
 </div>
-
-<div class="row mt-5">
-    <div class="col-md-4 offset-md-4">
-        <div class="card h-100">
-            <div class="card-body text-center">
-                <div style="font-size: 3rem; color: var(--secondary-color); margin-bottom: 1rem;">📁</div>
-                <h5 class="card-title d-flex justify-content-center align-items-center" style="text-align: center !important; width: 100%; margin: 0 auto;">数据查看</h5>
-                <p class="card-text">查看和管理本地数据文件，进行数据分析和可视化。</p>
-                <a href="{{ url_for('main.data_viewer') }}" class="btn btn-outline-secondary">
-                    查看数据
-                </a>
-            </div>
-        </div>
-    </div>
-</div>
-
 {% endblock %} 

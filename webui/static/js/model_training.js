@@ -9,6 +9,18 @@ let cachedLabelTypes = [];
 let predictLocalDataRows = [];
 let historySearchDebounceTimer = null;
 
+function _saveTrainingSession(sid) {
+    try { sessionStorage.setItem('trainingSessionId', sid); } catch(e) {}
+}
+
+function _clearTrainingSession() {
+    try { sessionStorage.removeItem('trainingSessionId'); } catch(e) {}
+}
+
+function _loadTrainingSession() {
+    try { return sessionStorage.getItem('trainingSessionId'); } catch(e) { return null; }
+}
+
 function safeNumber(value, fallback) {
     return Number.isFinite(value) ? value : (fallback !== undefined ? fallback : 0);
 }
@@ -27,6 +39,7 @@ document.addEventListener('DOMContentLoaded', function() {
     initializePage();
     loadFactors();
     loadTrainingHistory();
+    _tryResumeTrainingSession();
 });
 
 async function initializePage() {
@@ -40,12 +53,13 @@ async function initializePage() {
     onModelTypeChange();
     onLabelTypeChange();
     onLossFunctionChange();
-    setTimeout(() => refreshLocalData(), 200);
+    // 与截面评估页保持一致：首次进入即强制刷新，避免读取过期缓存
+    setTimeout(() => refreshLocalData(true), 200);
 }
 
 function bindEventListeners() {
-    document.getElementById('exchangeSelect').addEventListener('change', refreshLocalData);
-    document.getElementById('tradeTypeSelect').addEventListener('change', refreshLocalData);
+    document.getElementById('exchangeSelect').addEventListener('change', () => refreshLocalData(true));
+    document.getElementById('tradeTypeSelect').addEventListener('change', () => refreshLocalData(true));
     document.getElementById('symbolSelect').addEventListener('change', onSymbolChange);
     document.getElementById('timeframeSelect').addEventListener('change', onTimeframeChange);
     document.getElementById('factorSearch').addEventListener('input', filterFactors);
@@ -85,8 +99,11 @@ async function loadModelsFromApi() {
                 cachedModels.forEach(m => {
                     const opt = document.createElement('option');
                     opt.value = m.id;
-                    opt.textContent = m.name;
+                    opt.textContent = m.name + (m.available === false ? ' (未安装)' : '');
                     opt.title = m.description || '';
+                    if (m.available === false) {
+                        opt.style.color = '#999';
+                    }
                     sel.appendChild(opt);
                 });
                 if (currentVal && cachedModels.some(m => m.id === currentVal)) {
@@ -196,6 +213,7 @@ function updateSymbolSelect() {
 function onSymbolChange() {
     const symbol = document.getElementById('symbolSelect').value;
     const tfSel = document.getElementById('timeframeSelect');
+    const prevTimeframe = tfSel.value;
 
     const rows = localDataRows.filter(r => r.symbol === symbol);
     const timeframes = [...new Set(rows.map(r => r.timeframe))].sort((a, b) => timeframeToMinutes(a) - timeframeToMinutes(b));
@@ -208,7 +226,10 @@ function onSymbolChange() {
         tfSel.appendChild(opt);
     });
 
-    if (timeframes.length === 1) {
+    if (prevTimeframe && timeframes.includes(prevTimeframe)) {
+        tfSel.value = prevTimeframe;
+        onTimeframeChange();
+    } else if (timeframes.length === 1) {
         tfSel.value = timeframes[0];
         onTimeframeChange();
     }
@@ -219,20 +240,43 @@ function onTimeframeChange() {
     const timeframe = document.getElementById('timeframeSelect').value;
     if (!symbol || !timeframe) return;
 
-    const row = localDataRows.find(r => r.symbol === symbol && r.timeframe === timeframe);
-    if (!row) {
+    const matchedRows = localDataRows.filter(r => r.symbol === symbol && r.timeframe === timeframe);
+    if (!matchedRows.length) {
         console.warn('未找到匹配数据:', symbol, timeframe, '可用行数:', localDataRows.length);
         return;
     }
 
-    document.getElementById('filePath').value = row.file_path;
+    const preferredRow = matchedRows.reduce((best, cur) => {
+        if (!best) return cur;
+        const bestPoints = Number(best.data_points) || 0;
+        const curPoints = Number(cur.data_points) || 0;
+        return curPoints > bestPoints ? cur : best;
+    }, null);
+    document.getElementById('filePath').value = preferredRow?.file_path || '';
 
-    const start = row.date_range?.start;
-    const end = row.date_range?.end;
-    if (start && end) {
-        updateDateRange(start, end);
+    const startCandidates = matchedRows
+        .map(r => r.date_range?.start)
+        .filter(Boolean)
+        .map(s => ({ raw: s, ts: parseDateTimestamp(s) }))
+        .filter(v => Number.isFinite(v.ts));
+    const endCandidates = matchedRows
+        .map(r => r.date_range?.end)
+        .filter(Boolean)
+        .map(s => ({ raw: s, ts: parseDateTimestamp(s) }))
+        .filter(v => Number.isFinite(v.ts));
+
+    if (startCandidates.length && endCandidates.length) {
+        const minStart = startCandidates.reduce((a, b) => (a.ts <= b.ts ? a : b));
+        const maxEnd = endCandidates.reduce((a, b) => (a.ts >= b.ts ? a : b));
+        updateDateRange(minStart.raw, maxEnd.raw);
     } else {
-        console.warn('日期范围缺失:', row);
+        const start = preferredRow?.date_range?.start;
+        const end = preferredRow?.date_range?.end;
+        if (start && end) {
+            updateDateRange(start, end);
+        } else {
+            console.warn('日期范围缺失:', matchedRows);
+        }
     }
 }
 
@@ -625,9 +669,112 @@ function onModelTypeChange() {
                 </div>
             </div>
         `;
+    } else if (modelType === 'tsfm') {
+        container.innerHTML = `
+            <div class="alert alert-info py-2 mb-3">
+                <small><i class="fas fa-info-circle me-1"></i>
+                <strong>TSFM特性：</strong>直接预测原始价格序列（Close/Open/High/Low/Volume等），无需标签类型/损失函数选择。
+                自动使用数据文件中的所有数值列（含 metrics/funding/mark/index/liquidations/macro/sentiment 等并表字段）。
+                若要引入因子库特征，请在左侧开启因子选择并勾选对应因子。
+                </small>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">预训练模型</label>
+                    <select class="form-select" id="paramPretrainedModelId">
+                        <option value="ibm-granite/granite-timeseries-ttm-r2" selected>Granite TTM R2 (推荐)</option>
+                        <option value="ibm-granite/granite-timeseries-ttm-r1">Granite TTM R1</option>
+                    </select>
+                    <small class="text-muted">IBM Granite时序基础模型</small>
+                </div>
+                <div class="col-md-6 mb-3">
+                    <label class="form-label">解码器模式 (decoder_mode)</label>
+                    <select class="form-select" id="paramDecoderMode">
+                        <option value="default" selected>通道独立 (默认)</option>
+                        <option value="mix_channel">通道混合 (学习Volume↔Close关联)</option>
+                    </select>
+                    <small class="text-muted">mix_channel让模型学习指标间关联</small>
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">上下文长度 (context_length)</label>
+                    <input type="number" class="form-control" id="paramContextLength" value="512" min="64" max="2048" step="64" readonly style="background-color:#f8f9fa;">
+                    <small class="text-muted">预训练模型固定值，不可修改</small>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">预测长度 (forecast_length)</label>
+                    <input type="number" class="form-control" id="paramForecastLength" value="96" min="1" max="512" step="1">
+                    <small class="text-muted">预测未来N个时间步 (TSFM专用)</small>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">微调轮数 (epochs)</label>
+                    <input type="number" class="form-control" id="paramNumTrainEpochs" value="10" min="1" max="100">
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">批量大小 (batch_size)</label>
+                    <input type="number" class="form-control" id="paramBatchSize" value="32" min="4" max="256" step="4">
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">学习率</label>
+                    <input type="number" class="form-control" id="paramLearningRate" value="0.001" min="0.00001" max="0.1" step="0.0001">
+                    <small class="text-muted">少样本微调建议1e-3</small>
+                </div>
+                <div class="col-md-4 mb-3">
+                    <label class="form-label">权重衰减 (weight_decay)</label>
+                    <input type="number" class="form-control" id="paramWeightDecay" value="0.01" min="0" max="0.1" step="0.001">
+                </div>
+            </div>
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <div class="form-check form-switch">
+                        <input class="form-check-input" type="checkbox" id="paramFreezeBackbone" checked>
+                        <label class="form-check-label" for="paramFreezeBackbone">冻结骨干 (Few-shot微调)</label>
+                    </div>
+                    <small class="text-muted">冻结骨干防止过拟合，仅训练预测头</small>
+                </div>
+            </div>
+        `;
     }
 
     _restoreParams(modelType);
+
+    const taskTypeSel = document.getElementById('taskTypeSelect');
+    const factorSection = document.getElementById('factorSelectionSection');
+    const predictStepContainer = document.getElementById('predictStepContainer');
+    const labelTypeContainer = document.getElementById('labelTypeContainer');
+    const lossFunctionContainer = document.getElementById('lossFunctionContainer');
+    const lossParamsContainer = document.getElementById('lossParamsContainer');
+    
+    if (modelType === 'tsfm') {
+        const tsfmModel = cachedModels.find(m => m.id === 'tsfm');
+        if (tsfmModel && tsfmModel.available === false) {
+            const container = document.getElementById('modelParamsContainer');
+            container.innerHTML = `
+                <div class="alert alert-warning py-2 mb-0">
+                    <i class="fas fa-exclamation-triangle me-1"></i>
+                    TSFM依赖未安装。请在conda test环境中执行:
+                    <code>pip install tsfm_public transformers torch</code>
+                </div>
+            `;
+        }
+        taskTypeSel.value = 'regression';
+        taskTypeSel.disabled = true;
+        if (factorSection) factorSection.style.display = '';
+        if (predictStepContainer) predictStepContainer.style.display = 'none';
+        if (labelTypeContainer) labelTypeContainer.style.display = 'none';
+        if (lossFunctionContainer) lossFunctionContainer.style.display = 'none';
+        if (lossParamsContainer) lossParamsContainer.style.display = 'none';
+    } else {
+        taskTypeSel.disabled = false;
+        if (factorSection) factorSection.style.display = '';
+        if (predictStepContainer) predictStepContainer.style.display = '';
+        if (labelTypeContainer) labelTypeContainer.style.display = '';
+        if (lossFunctionContainer) lossFunctionContainer.style.display = '';
+    }
+    onLossFunctionChange();
 }
 
 function onTaskTypeChange() {
@@ -688,8 +835,17 @@ function onLossFunctionChange() {
         if (lossSel.value === 'log_loss') {
             lossSel.value = 'mse';
         }
+        const modelType = document.getElementById('modelTypeSelect').value;
         const hintEl = document.getElementById('lossFunctionHint');
-        if (hintEl) hintEl.style.display = 'none';
+        if (modelType === 'tsfm' && lossSel.value !== 'mae') {
+            lossSel.value = 'mae';
+            if (hintEl) {
+                hintEl.textContent = 'TSFM模型推荐使用MAE损失，对极端行情(插针)更鲁棒';
+                hintEl.style.display = 'inline';
+            }
+        } else {
+            if (hintEl) hintEl.style.display = 'none';
+        }
         const lossFn = lossSel.value;
         if (lossFn === 'direction_aware_mse') {
             paramsContainer.style.display = 'block';
@@ -697,6 +853,18 @@ function onLossFunctionChange() {
                 <div class="mb-2">
                     <label class="form-label small">λ (方向错误放大系数)</label>
                     <input type="number" class="form-control form-control-sm" id="lossLambda" value="2.0" min="0.5" max="10" step="0.5">
+                </div>
+            `;
+        } else if (lossFn === 'mse_hinge') {
+            paramsContainer.style.display = 'block';
+            paramsContent.innerHTML = `
+                <div class="mb-2">
+                    <label class="form-label small">α (MSE权重)</label>
+                    <input type="number" class="form-control form-control-sm" id="lossAlpha" value="1.0" min="0" max="5" step="0.1">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label small">β (铰链损失权重)</label>
+                    <input type="number" class="form-control form-control-sm" id="lossBeta" value="1.0" min="0" max="5" step="0.1">
                 </div>
             `;
         } else if (lossFn === 'composite') {
@@ -784,6 +952,25 @@ function getModelParams() {
         const md = document.getElementById('paramMaxDepth');
         if (nEst) params.n_estimators = parseInt(nEst.value) || 200;
         if (md && md.value) params.max_depth = parseInt(md.value);
+    } else if (modelType === 'tsfm') {
+        const pm = document.getElementById('paramPretrainedModelId');
+        const dm = document.getElementById('paramDecoderMode');
+        const cl = document.getElementById('paramContextLength');
+        const fl = document.getElementById('paramForecastLength');
+        const ne = document.getElementById('paramNumTrainEpochs');
+        const bs = document.getElementById('paramBatchSize');
+        const lr = document.getElementById('paramLearningRate');
+        const wd = document.getElementById('paramWeightDecay');
+        const fb = document.getElementById('paramFreezeBackbone');
+        if (pm) params.pretrained_model_id = pm.value;
+        if (dm) params.decoder_mode = dm.value;
+        if (cl) params.context_length = parseInt(cl.value) || 512;
+        if (fl) params.forecast_length = parseInt(fl.value) || 96;
+        if (ne) params.num_train_epochs = parseInt(ne.value) || 10;
+        if (bs) params.per_device_train_batch_size = parseInt(bs.value) || 32;
+        if (lr) params.learning_rate = parseFloat(lr.value) || 1e-3;
+        if (wd) params.weight_decay = parseFloat(wd.value) || 0.01;
+        if (fb) params.freeze_backbone = fb.checked;
     }
 
     return params;
@@ -796,6 +983,11 @@ function getLossParams() {
     if (lossFn === 'direction_aware_mse') {
         const el = document.getElementById('lossLambda');
         params.lambda = el ? parseFloat(el.value) || 2.0 : 2.0;
+    } else if (lossFn === 'mse_hinge') {
+        const alpha = document.getElementById('lossAlpha');
+        const beta = document.getElementById('lossBeta');
+        params.alpha = alpha ? parseFloat(alpha.value) || 1.0 : 1.0;
+        params.beta = beta ? parseFloat(beta.value) || 1.0 : 1.0;
     } else if (lossFn === 'composite') {
         const alpha = document.getElementById('lossAlpha');
         const beta = document.getElementById('lossBeta');
@@ -848,6 +1040,11 @@ function validateTrainingInputs() {
         alert('数据集划分比例异常（总和应接近 1），请检查输入');
         return false;
     }
+    const timeoutSeconds = parseInt(document.getElementById('timeoutSeconds').value, 10);
+    if (!Number.isFinite(timeoutSeconds) || timeoutSeconds < 0 || timeoutSeconds > 86400 || (timeoutSeconds > 0 && timeoutSeconds < 60)) {
+        alert('训练超时必须为0（不超时）或60-86400秒');
+        return false;
+    }
 
     const modelType = document.getElementById('modelTypeSelect').value;
     const modelParams = getModelParams();
@@ -873,6 +1070,19 @@ function validateTrainingInputs() {
     } else if (modelType === 'random_forest') {
         if (modelParams.n_estimators && (modelParams.n_estimators < 10 || modelParams.n_estimators > 5000)) {
             alert('树数量必须在10-5000之间');
+            return false;
+        }
+    } else if (modelType === 'tsfm') {
+        if (modelParams.forecast_length && (modelParams.forecast_length < 1 || modelParams.forecast_length > 512)) {
+            alert('预测长度必须在1-512之间');
+            return false;
+        }
+        if (modelParams.num_train_epochs && (modelParams.num_train_epochs < 1 || modelParams.num_train_epochs > 100)) {
+            alert('微调轮数必须在1-100之间');
+            return false;
+        }
+        if (modelParams.per_device_train_batch_size && (modelParams.per_device_train_batch_size < 4 || modelParams.per_device_train_batch_size > 256)) {
+            alert('批量大小必须在4-256之间');
             return false;
         }
     }
@@ -903,6 +1113,40 @@ function _resetTrainingButtons() {
     }
 }
 
+async function _tryResumeTrainingSession() {
+    const savedSid = _loadTrainingSession();
+    if (savedSid) {
+        try {
+            const resp = await fetch(`/api/training/status/${savedSid}`);
+            const data = await resp.json();
+            if (data.success && (data.status === 'pending' || data.status === 'running')) {
+                trainingSessionId = savedSid;
+                _enterTrainingUI();
+                document.getElementById('trainingProgressSection').style.display = 'block';
+                document.getElementById('trainingResultsSection').style.display = 'none';
+                startStatusPolling();
+                return;
+            }
+        } catch(e) {}
+        _clearTrainingSession();
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/training/active-sessions');
+        const data = await resp.json();
+        if (data.success && data.sessions && data.sessions.length > 0) {
+            const s = data.sessions[0];
+            trainingSessionId = s.session_id;
+            _saveTrainingSession(s.session_id);
+            _enterTrainingUI();
+            document.getElementById('trainingProgressSection').style.display = 'block';
+            document.getElementById('trainingResultsSection').style.display = 'none';
+            startStatusPolling();
+        }
+    } catch(e) {}
+}
+
 function _enterTrainingUI() {
     const startBtn = document.getElementById('startTrainingBtn');
     const cancelBtn = document.getElementById('cancelTrainingBtn');
@@ -919,6 +1163,7 @@ function _enterTrainingUI() {
 async function startTraining() {
     if (!validateTrainingInputs()) return;
 
+    const modelType = document.getElementById('modelTypeSelect').value;
     const filePath = document.getElementById('filePath').value;
     const factorIds = getSelectedFactorIds();
 
@@ -926,20 +1171,23 @@ async function startTraining() {
     const testR = parseFloat(document.getElementById('testRatio').value) || 0.1;
     const valR = parseFloat(document.getElementById('valRatio').value) || 0.1;
     const total = trainR + testR + valR;
+    const timeoutInput = parseInt(document.getElementById('timeoutSeconds').value, 10);
+    const timeoutSeconds = Number.isFinite(timeoutInput) ? timeoutInput : 0;
 
     const payload = {
         file_path: filePath,
-        start_date: document.getElementById('startDate').value || null,
-        end_date: document.getElementById('endDate').value || null,
+        start_date: document.getElementById('startDateInput').value || document.getElementById('startDate').value || null,
+        end_date: document.getElementById('endDateInput').value || document.getElementById('endDate').value || null,
         factor_ids: factorIds,
         label_type: document.getElementById('labelTypeSelect').value,
         predict_step: parseInt(document.getElementById('predictStep').value) || 1,
-        model_type: document.getElementById('modelTypeSelect').value,
-        task_type: document.getElementById('taskTypeSelect').value,
+        model_type: modelType,
+        task_type: modelType === 'tsfm' ? 'regression' : document.getElementById('taskTypeSelect').value,
         loss_function: document.getElementById('lossFunctionSelect').value,
         train_ratio: trainR / total,
         test_ratio: testR / total,
         val_ratio: valR / total,
+        timeout_seconds: timeoutSeconds,
         model_params: getModelParams(),
         loss_params: getLossParams(),
     };
@@ -959,12 +1207,15 @@ async function startTraining() {
 
         if (data.success) {
             trainingSessionId = data.session_id;
+            _saveTrainingSession(data.session_id);
             startStatusPolling();
         } else {
+            _clearTrainingSession();
             alert('启动训练失败: ' + (data.error || '未知错误'));
             _resetTrainingButtons();
         }
     } catch (e) {
+        _clearTrainingSession();
         alert('请求失败: ' + e.message);
         _resetTrainingButtons();
     }
@@ -1048,15 +1299,18 @@ async function checkTrainingStatus() {
 
         if (data.status === 'completed') {
             clearInterval(statusCheckInterval);
+            _clearTrainingSession();
             await showTrainingResults(trainingSessionId);
             _resetTrainingButtons();
             loadTrainingHistory();
         } else if (data.status === 'failed') {
             clearInterval(statusCheckInterval);
+            _clearTrainingSession();
             alert('训练失败: ' + (data.message || '未知错误'));
             _resetTrainingButtons();
         } else if (data.status === 'cancelled') {
             clearInterval(statusCheckInterval);
+            _clearTrainingSession();
             _resetTrainingButtons();
         }
     } catch (e) {
@@ -1099,24 +1353,24 @@ function displayResultsData(results) {
             <div class="col-md-3">
                 <div class="card bg-primary text-white text-center">
                     <div class="card-body">
-                        <h4>${formatPercent(metrics.val?.accuracy, 1)}</h4>
-                        <p class="mb-0">验证集准确率</p>
+                        <h4>${formatPercent(metrics.test?.accuracy, 1)}</h4>
+                        <p class="mb-0">测试集准确率</p>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card bg-success text-white text-center">
                     <div class="card-body">
-                        <h4>${formatNumber(metrics.val?.f1, 4)}</h4>
-                        <p class="mb-0">验证集F1</p>
+                        <h4>${formatNumber(metrics.test?.f1, 4)}</h4>
+                        <p class="mb-0">测试集F1</p>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card bg-info text-white text-center">
                     <div class="card-body">
-                        <h4>${formatNumber(metrics.val?.auc, 4)}</h4>
-                        <p class="mb-0">验证集AUC</p>
+                        <h4>${formatNumber(metrics.test?.auc, 4)}</h4>
+                        <p class="mb-0">测试集AUC</p>
                     </div>
                 </div>
             </div>
@@ -1134,24 +1388,24 @@ function displayResultsData(results) {
             <div class="col-md-3">
                 <div class="card bg-primary text-white text-center">
                     <div class="card-body">
-                        <h4>${formatNumber(metrics.val?.rmse, 6)}</h4>
-                        <p class="mb-0">验证集RMSE</p>
+                        <h4>${formatNumber(metrics.test?.rmse, 6)}</h4>
+                        <p class="mb-0">测试集RMSE</p>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card bg-success text-white text-center">
                     <div class="card-body">
-                        <h4>${formatPercent(metrics.val?.direction_accuracy, 1)}</h4>
-                        <p class="mb-0">验证集方向准确率</p>
+                        <h4>${formatPercent(metrics.test?.direction_accuracy, 1)}</h4>
+                        <p class="mb-0">测试集方向准确率</p>
                     </div>
                 </div>
             </div>
             <div class="col-md-3">
                 <div class="card bg-info text-white text-center">
                     <div class="card-body">
-                        <h4>${formatNumber(metrics.val?.r2, 4)}</h4>
-                        <p class="mb-0">验证集R²</p>
+                        <h4>${formatNumber(metrics.test?.r2, 4)}</h4>
+                        <p class="mb-0">测试集R²</p>
                     </div>
                 </div>
             </div>
@@ -1381,11 +1635,11 @@ async function loadTrainingHistory() {
         tbody.innerHTML = '';
         history.forEach(h => {
             const labelNames = { 'log_return': '对数收益率', 'direction': '收益方向', 'composite': '综合' };
-            const modelNames = { 'lightgbm': 'LightGBM', 'xgboost': 'XGBoost', 'logistic_regression': '逻辑回归', 'random_forest': '随机森林' };
-            const lossNames = { 'mse': 'MSE', 'direction_aware_mse': '方向感知MSE', 'composite': '复合损失', 'magnitude_weighted': '幅度加权', 'log_loss': '对数损失' };
+            const modelNames = { 'lightgbm': 'LightGBM', 'xgboost': 'XGBoost', 'logistic_regression': '逻辑回归', 'random_forest': '随机森林', 'tsfm': 'TSFM (Granite TTM)' };
+            const lossNames = { 'mse': 'MSE', 'mae': 'MAE', 'mse_hinge': 'MSE+铰链', 'direction_aware_mse': '方向感知MSE', 'composite': '复合损失', 'magnitude_weighted': '幅度加权', 'log_loss': '对数损失' };
 
             let coreMetric = '-';
-            const m = h.metrics?.val || {};
+            const m = h.metrics?.test || {};
             if (h.label_type === 'direction') {
                 coreMetric = Number.isFinite(m.accuracy) ? (m.accuracy * 100).toFixed(1) + '%' : '-';
             } else if (Number.isFinite(m.direction_accuracy)) {
@@ -1441,8 +1695,8 @@ async function viewModelDetail(modelId) {
         const dataInfo = d.data_info || {};
 
         const labelNames = { 'log_return': '对数收益率', 'direction': '收益方向', 'composite': '综合' };
-        const modelNames = { 'lightgbm': 'LightGBM', 'xgboost': 'XGBoost', 'logistic_regression': '逻辑回归', 'random_forest': '随机森林' };
-        const lossNames = { 'mse': 'MSE', 'direction_aware_mse': '方向感知MSE', 'composite': '复合损失', 'magnitude_weighted': '幅度加权', 'log_loss': '对数损失' };
+        const modelNames = { 'lightgbm': 'LightGBM', 'xgboost': 'XGBoost', 'logistic_regression': '逻辑回归', 'random_forest': '随机森林', 'tsfm': 'TSFM (Granite TTM)' };
+        const lossNames = { 'mse': 'MSE', 'mae': 'MAE', 'direction_aware_mse': '方向感知MSE', 'composite': '复合损失', 'magnitude_weighted': '幅度加权', 'log_loss': '对数损失' };
 
         let html = `
             <div class="row mb-3">
@@ -1477,6 +1731,23 @@ async function viewModelDetail(modelId) {
 
         if (d.loss_function_note) {
             html += `<div class="alert alert-warning py-2 mb-3"><small>${escapeHtml(d.loss_function_note)}</small></div>`;
+        }
+
+        if (d.model_type === 'tsfm' && d.model_params) {
+            const mp = d.model_params;
+            html += `<h6>TSFM模型参数</h6><table class="table table-sm">`;
+            if (mp.pretrained_model_id) html += `<tr><td>预训练模型</td><td>${escapeHtml(mp.pretrained_model_id)}</td></tr>`;
+            if (mp.context_length) html += `<tr><td>上下文长度</td><td>${mp.context_length}</td></tr>`;
+            if (mp.forecast_length) html += `<tr><td>预测长度</td><td>${mp.forecast_length}</td></tr>`;
+            if (mp.num_train_epochs) html += `<tr><td>微调轮数</td><td>${mp.num_train_epochs}</td></tr>`;
+            if (mp.per_device_train_batch_size) html += `<tr><td>批量大小</td><td>${mp.per_device_train_batch_size}</td></tr>`;
+            if (mp.learning_rate) html += `<tr><td>学习率</td><td>${mp.learning_rate}</td></tr>`;
+            if (mp.weight_decay) html += `<tr><td>权重衰减</td><td>${mp.weight_decay}</td></tr>`;
+            html += `<tr><td>冻结骨干</td><td>${mp.freeze_backbone ? '是 (Few-shot)' : '否 (全量微调)'}</td></tr>`;
+            if (mp.decoder_mode) html += `<tr><td>解码器模式</td><td>${escapeHtml(mp.decoder_mode)}</td></tr>`;
+            if (mp.trainable_params) html += `<tr><td>可训练参数</td><td>${mp.trainable_params.toLocaleString()}</td></tr>`;
+            if (mp.total_params) html += `<tr><td>总参数量</td><td>${mp.total_params.toLocaleString()}</td></tr>`;
+            html += `</table>`;
         }
 
         html += `<h6>评估指标</h6><div class="row"><div class="col-md-6"><small class="text-muted">测试集</small>`;

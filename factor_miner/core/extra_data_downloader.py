@@ -34,6 +34,7 @@ import io
 import logging
 import time
 import zipfile
+import math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -53,6 +54,9 @@ _METRICS_DIR = Path("data/binance/futures_metrics")
 _FUNDING_DIR = Path("data/binance/futures_funding")
 _MARK_DIR = Path("data/binance/futures_markprice")
 _INDEX_DIR = Path("data/binance/futures_indexprice")
+_LIQUIDATIONS_DIR = Path("data/binance/futures_liquidations")
+_MACRO_DIR = Path("data/binance/futures_macro")
+_SENTIMENT_DIR = Path("data/binance/futures_sentiment")
 
 # 归档（Binance Vision）相关常量
 _VISION_BASE = "https://data.binance.vision/data/futures/um"
@@ -133,17 +137,41 @@ class ExtraDataDownloader(DataDownloader):
 
     @classmethod
     def _ensure_dirs(cls) -> None:
-        for d in (_METRICS_DIR, _FUNDING_DIR, _MARK_DIR, _INDEX_DIR):
+        for d in (
+            _METRICS_DIR,
+            _FUNDING_DIR,
+            _MARK_DIR,
+            _INDEX_DIR,
+            _LIQUIDATIONS_DIR,
+            _MACRO_DIR,
+            _SENTIMENT_DIR,
+        ):
             d.mkdir(parents=True, exist_ok=True)
 
     def _get_futures_exchange(self) -> Optional[ccxt.Exchange]:
         """拿一个期货口径的 ccxt 实例。"""
         try:
             exchange = self.get_exchange_instance(config_id=None, exchange_id="binance")
-            if exchange is None:
-                return None
-            exchange.load_markets()
-            return exchange
+            if exchange is not None:
+                try:
+                    exchange.load_markets()
+                    return exchange
+                except Exception as e:
+                    logger.warning(f"DataDownloader 方式初始化失败，尝试直连 binance: {e}")
+        except Exception:
+            pass
+        try:
+            # 兜底：直接初始化 ccxt.binance futures，绕过项目层配置差异
+            ex = ccxt.binance({
+                "enableRateLimit": True,
+                "timeout": 30000,
+                "options": {
+                    "defaultType": "future",
+                    "defaultSubType": "linear",
+                },
+            })
+            ex.load_markets()
+            return ex
         except Exception as e:
             logger.error(f"初始化期货交易所失败: {e}")
             return None
@@ -865,6 +893,301 @@ class ExtraDataDownloader(DataDownloader):
             base = s[:-4]
             return f"{base}/USDT:USDT"
         return s
+
+    def _parse_pandas_freq(self, timeframe: str) -> str:
+        tf = (timeframe or "1h").lower()
+        if tf.endswith("m"):
+            return f"{int(tf[:-1])}min"
+        if tf.endswith("h"):
+            return f"{int(tf[:-1])}h"
+        if tf.endswith("d"):
+            return f"{int(tf[:-1])}d"
+        return "1h"
+
+    # ------------------------------------------------------------------
+    # 4. Liquidations（大额清算）
+    # ------------------------------------------------------------------
+    def download_liquidations(
+        self,
+        symbol: str,
+        timeframe: str = "1h",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        progress_callback=None,
+    ) -> Dict:
+        """下载/聚合清算事件（公开接口不可得时降级为清算压力代理指标）。"""
+        try:
+            self._ensure_dirs()
+            fapi_symbol = self._to_fapi_symbol(symbol)
+            save_path = _LIQUIDATIONS_DIR / f"{self._safe_symbol(symbol)}-{timeframe}-liquidations.feather"
+
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.utcnow()
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else end_dt - timedelta(days=7)
+            if start_dt >= end_dt:
+                return ExtraDownloadResult(success=False, error="时间范围无效").to_dict()
+
+            exchange = self._get_futures_exchange()
+            if exchange is None:
+                return ExtraDownloadResult(success=False, error="无法初始化币安期货接口").to_dict()
+
+            # Binance 历史清算明细属于签名接口，公网上通常不可直接拉全量历史。
+            # 这里采用公开 OHLCV 的“清算压力代理”作为兜底：
+            # liquidation_proxy = abs(ret) * volume（极端波动+大成交量近似强平压力）
+            ccxt_symbol = self._to_ccxt_unified_symbol(symbol)
+            since = int(start_dt.timestamp() * 1000)
+            end_ms = int(end_dt.timestamp() * 1000)
+            tf_minutes = self._TIMEFRAME_TO_MINUTES.get((timeframe or "1h").lower(), 60)
+            tf_ms = tf_minutes * 60 * 1000
+            rows = []
+            cursor = since
+            loops = 0
+            total = max(1, math.ceil((end_ms - since) / (tf_ms * 1000)))
+            while cursor < end_ms:
+                try:
+                    batch = exchange.fetch_ohlcv(ccxt_symbol, timeframe, since=cursor, limit=1000)
+                except Exception as e:
+                    logger.warning(f"拉取 OHLCV 失败（liquidation proxy）: {e}")
+                    batch = []
+                if not batch:
+                    break
+                rows.extend(batch)
+                last_ts = int(batch[-1][0])
+                if last_ts <= cursor:
+                    break
+                cursor = last_ts + tf_ms
+                loops += 1
+                if progress_callback:
+                    progress_callback(min(99, int(loops * 100 / total)), f"[liquidations] 代理序列分片 {loops}/{total}")
+                time.sleep(getattr(exchange, "rateLimit", 200) / 1000)
+
+            if not rows:
+                return ExtraDownloadResult(success=False, error="未获取到可用于构造清算代理的数据").to_dict()
+
+            o = pd.DataFrame(rows, columns=["ts", "open", "high", "low", "close", "volume"])
+            o["date"] = pd.to_datetime(o["ts"], unit="ms")
+            o["close"] = pd.to_numeric(o["close"], errors="coerce")
+            o["volume"] = pd.to_numeric(o["volume"], errors="coerce")
+            o["ret"] = o["close"].pct_change().fillna(0.0)
+            o["liq_proxy"] = (o["ret"].abs() * o["volume"]).fillna(0.0)
+            o["long_liquidation_value"] = o["liq_proxy"].where(o["ret"] < 0, 0.0)
+            o["short_liquidation_value"] = o["liq_proxy"].where(o["ret"] > 0, 0.0)
+            o["liquidation_count"] = (o["liq_proxy"] > 0).astype(int)
+            df = o[["date", "long_liquidation_value", "short_liquidation_value", "liquidation_count"]].copy()
+            freq = self._parse_pandas_freq(timeframe)
+            agg = (
+                df.set_index("date")
+                .resample(freq)
+                .agg({
+                    "long_liquidation_value": "sum",
+                    "short_liquidation_value": "sum",
+                    "liquidation_count": "sum",
+                })
+                .fillna(0.0)
+                .reset_index()
+            )
+            agg["liquidations"] = agg["long_liquidation_value"] + agg["short_liquidation_value"]
+            return self._merge_and_save(agg, save_path).to_dict()
+        except Exception as e:
+            logger.exception("下载 liquidations 失败")
+            return ExtraDownloadResult(success=False, error=str(e)).to_dict()
+
+    # ------------------------------------------------------------------
+    # 5. Macro / Sentiment（yfinance + coingecko）
+    # ------------------------------------------------------------------
+    def _download_yfinance_close(self, ticker_map: Dict[str, str], start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
+        import yfinance as yf
+
+        tickers = list(ticker_map.values())
+        raw = pd.DataFrame()
+        max_1h_days = 730
+        for interval in ("1h", "1d"):
+            _start = start_dt
+            if interval == "1h" and (end_dt - start_dt).days > max_1h_days:
+                _start = end_dt - timedelta(days=max_1h_days)
+            for attempt in range(3):
+                try:
+                    raw = yf.download(
+                        tickers=tickers,
+                        start=_start.strftime("%Y-%m-%d"),
+                        end=end_dt.strftime("%Y-%m-%d"),
+                        interval=interval,
+                        auto_adjust=False,
+                        progress=False,
+                        group_by="ticker",
+                        threads=True,
+                    )
+                except Exception as e:
+                    logger.warning(f"yfinance 下载失败 interval={interval} attempt={attempt+1}: {e}")
+                    raw = pd.DataFrame()
+                if raw is not None and len(raw) > 0:
+                    break
+                if attempt < 2:
+                    time.sleep(2 * (attempt + 1))
+            if raw is not None and len(raw) > 0:
+                break
+        if raw is None or len(raw) == 0:
+            return pd.DataFrame()
+
+        out = pd.DataFrame(index=raw.index)
+        for col_name, ticker in ticker_map.items():
+            series = None
+            if isinstance(raw.columns, pd.MultiIndex):
+                for pattern in [
+                    (ticker, "Close"), ("Close", ticker),
+                    (ticker, "close"), ("close", ticker),
+                ]:
+                    if pattern in raw.columns:
+                        series = raw[pattern]
+                        break
+                if series is None:
+                    level0_vals = set(raw.columns.get_level_values(0))
+                    level1_vals = set(raw.columns.get_level_values(1))
+                    if ticker in level0_vals and "Close" in level1_vals:
+                        series = raw.xs("Close", level=1, axis=1).get(ticker)
+                    elif "Close" in level0_vals and ticker in level1_vals:
+                        series = raw.xs(ticker, level=1, axis=1).get("Close")
+            else:
+                if "Close" in raw.columns and len(tickers) == 1:
+                    series = raw["Close"]
+                elif ticker in raw.columns:
+                    series = raw[ticker]
+            if series is not None:
+                out[col_name] = pd.to_numeric(series, errors="coerce")
+        out = out.reset_index().rename(columns={"Datetime": "date", "Date": "date"})
+        if "date" not in out.columns and len(out.columns) > 0:
+            out = out.rename(columns={out.columns[0]: "date"})
+        out["date"] = pd.to_datetime(out["date"], errors="coerce")
+        return out.dropna(subset=["date"])
+
+    def _download_stablecoin_supply_ratio(self, start_dt: datetime, end_dt: datetime) -> pd.DataFrame:
+        """用 CoinGecko 市值序列构造 stablecoin_supply_ratio = usdt_mcap / btc_mcap。"""
+        def _market_caps(coin_id: str):
+            url = f"https://api.coingecko.com/api/v3/coins/{coin_id}/market_chart"
+            # 天数过大时 hourly 不稳定，先尝试 hourly，失败则降级 daily。
+            days = max(1, (end_dt - start_dt).days + 3)
+            for interval in ("hourly", "daily"):
+                try:
+                    params = {"vs_currency": "usd", "days": str(days), "interval": interval}
+                    resp = self._http_session.get(url, params=params, timeout=30)
+                    resp.raise_for_status()
+                    j = resp.json() or {}
+                    m = j.get("market_caps") or []
+                    df = pd.DataFrame(m, columns=["ts", "mcap"])
+                    if not df.empty:
+                        return df
+                except Exception as e:
+                    logger.warning(f"CoinGecko {coin_id} 拉取失败 interval={interval}: {e}")
+                    continue
+            return pd.DataFrame(columns=["ts", "mcap"])
+
+        usdt = _market_caps("tether")
+        btc = _market_caps("bitcoin")
+        if usdt.empty or btc.empty:
+            return pd.DataFrame()
+        usdt["date"] = pd.to_datetime(usdt["ts"], unit="ms")
+        btc["date"] = pd.to_datetime(btc["ts"], unit="ms")
+        merged = usdt[["date", "mcap"]].merge(
+            btc[["date", "mcap"]],
+            on="date",
+            how="inner",
+            suffixes=("_usdt", "_btc"),
+        )
+        merged["stablecoin_supply_ratio"] = merged["mcap_usdt"] / merged["mcap_btc"].replace(0, pd.NA)
+        merged = merged[(merged["date"] >= pd.Timestamp(start_dt)) & (merged["date"] < pd.Timestamp(end_dt))]
+        return merged[["date", "stablecoin_supply_ratio"]].dropna()
+
+    def _resample_and_ffill(self, df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        freq = self._parse_pandas_freq(timeframe)
+        out = (
+            df.set_index("date")
+            .sort_index()
+            .resample(freq)
+            .last()
+            .ffill()
+            .reset_index()
+        )
+        return out
+
+    def download_macro_factors(
+        self,
+        symbol: str = "",
+        timeframe: str = "1h",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        progress_callback=None,
+    ) -> Dict:
+        try:
+            self._ensure_dirs()
+            save_path = _MACRO_DIR / f"{timeframe}-macro.feather"
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.utcnow()
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else end_dt - timedelta(days=365)
+            ticker_map = {
+                "dxy": "DX-Y.NYB",
+                "spx": "^GSPC",
+                "ixic": "^IXIC",
+                "gold": "GC=F",
+                "us10y_yield": "^TNX",
+            }
+            if progress_callback:
+                progress_callback(15, "正在下载宏观行情 (yfinance)...")
+            df = self._download_yfinance_close(ticker_map, start_dt, end_dt)
+            if df.empty:
+                return ExtraDownloadResult(success=False, error="宏观数据下载为空").to_dict()
+            if "us10y_yield" in df.columns:
+                df["us10y_yield"] = pd.to_numeric(df["us10y_yield"], errors="coerce") / 100.0
+            if progress_callback:
+                progress_callback(70, "正在按时间框架重采样并前向填充...")
+            df = self._resample_and_ffill(df, timeframe)
+            if progress_callback:
+                progress_callback(95, "正在保存宏观因子...")
+            return self._merge_and_save(df, save_path).to_dict()
+        except Exception as e:
+            logger.exception("下载 macro 失败")
+            return ExtraDownloadResult(success=False, error=str(e)).to_dict()
+
+    def download_sentiment_factors(
+        self,
+        symbol: str = "",
+        timeframe: str = "1h",
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        progress_callback=None,
+    ) -> Dict:
+        try:
+            self._ensure_dirs()
+            save_path = _SENTIMENT_DIR / f"{timeframe}-sentiment.feather"
+            end_dt = datetime.strptime(end_date, "%Y-%m-%d") if end_date else datetime.utcnow()
+            start_dt = datetime.strptime(start_date, "%Y-%m-%d") if start_date else end_dt - timedelta(days=365)
+
+            if progress_callback:
+                progress_callback(10, "正在下载 VIX...")
+            vix_df = self._download_yfinance_close({"vix": "^VIX"}, start_dt, end_dt)
+            if progress_callback:
+                progress_callback(45, "正在下载稳定币购买力代理（USDT/BTC 市值比）...")
+            stable_df = self._download_stablecoin_supply_ratio(start_dt, end_dt)
+
+            parts = []
+            if not vix_df.empty:
+                parts.append(vix_df[["date", "vix"]])
+            if not stable_df.empty:
+                parts.append(stable_df[["date", "stablecoin_supply_ratio"]])
+            if not parts:
+                return ExtraDownloadResult(success=False, error="情绪数据下载为空").to_dict()
+            merged = parts[0]
+            for p in parts[1:]:
+                merged = merged.merge(p, on="date", how="outer")
+
+            if progress_callback:
+                progress_callback(80, "正在按时间框架重采样并前向填充...")
+            merged = self._resample_and_ffill(merged, timeframe)
+            if progress_callback:
+                progress_callback(95, "正在保存情绪因子...")
+            return self._merge_and_save(merged, save_path).to_dict()
+        except Exception as e:
+            logger.exception("下载 sentiment 失败")
+            return ExtraDownloadResult(success=False, error=str(e)).to_dict()
 
     @staticmethod
     def _merge_multi_on_date(dfs: List[pd.DataFrame]) -> pd.DataFrame:

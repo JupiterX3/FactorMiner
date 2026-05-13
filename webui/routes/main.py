@@ -60,6 +60,12 @@ def cross_sectional_evaluation():
     config = current_app.config['FRONTEND_CONFIG']
     return render_template('cross_sectional_evaluation.html', config=config)
 
+@bp.route('/realtime-scan')
+def realtime_scan():
+    """截面实时扫描页面"""
+    config = current_app.config['FRONTEND_CONFIG']
+    return render_template('realtime_scan.html', config=config)
+
 @bp.route('/method-comparison')
 def method_comparison():
     """方法对比页面：walk-forward 对照实验（equal_weight / ic_weight / max_icir_weight）"""
@@ -72,8 +78,20 @@ def factor_mining():
     config = current_app.config['FRONTEND_CONFIG']
     return render_template('factor_mining.html', config=config)
 
+@bp.route('/mining/ts')
+def ts_mining():
+    """时序挖掘页面（拆分自因子挖掘）"""
+    config = current_app.config['FRONTEND_CONFIG']
+    return render_template('mining/ts_mining.html', config=config)
+
+@bp.route('/mining/cs')
+def cs_mining():
+    """截面挖掘页面（GP/RL，拆分自因子挖掘）"""
+    config = current_app.config['FRONTEND_CONFIG']
+    return render_template('mining/cs_mining.html', config=config)
+
 @bp.route('/model-training')
 def model_training():
     """模型训练页面"""
     config = current_app.config['FRONTEND_CONFIG']
-    return render_template('model_training.html', config=config) 
+    return render_template('model_training.html', config=config)

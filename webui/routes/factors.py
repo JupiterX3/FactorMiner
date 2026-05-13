@@ -4,7 +4,9 @@
 """
 
 import json
+import re
 import pandas as pd
+import numpy as np
 from datetime import datetime
 from pathlib import Path
 from flask import Blueprint, request, jsonify
@@ -12,11 +14,13 @@ import math
 import threading
 import time
 import uuid
-from factor_miner.core.factor_evaluator import FactorEvaluator, CrossSectionalEvaluator
+from factor_miner.core.factor_evaluator import FactorEvaluator, FactorStatistics, CrossSectionalEvaluator
+from factor_miner.core.factor_catalog import FactorCatalogService
+from factor_miner.core.factor_repository import FactorRepository
 from factor_miner.core.factor_engine import get_global_engine
+from factor_miner.core.data_loader import DataLoader
 from factor_miner.core.evaluation_io import (
     save_evaluation_results as core_save_evaluation_results,
-    load_evaluations as core_load_evaluations,
 )
 
 # 每个评估/组合/相关性请求使用独立的 threading.Event，
@@ -27,6 +31,7 @@ _cs_cancel_events: dict = {}
 _cs_cancel_lock = threading.Lock()
 _cs_active_executors: dict = {}
 _cs_executor_lock = threading.Lock()
+_shutdown_event = threading.Event()
 
 
 def _get_cancel_event(request_id: str) -> threading.Event:
@@ -104,6 +109,16 @@ def _force_stop_executor(executor) -> None:
                 continue
     except Exception:
         pass
+
+
+def trigger_global_shutdown():
+    """外部信号（如 SIGINT）调用：取消所有评估并停止所有执行器"""
+    _shutdown_event.set()
+    _set_cancel('')
+    for _, ex in _pop_all_active_executors():
+        _force_stop_executor(ex)
+
+
 # from factor_miner.core.factor_storage import get_global_storage
 
 
@@ -156,131 +171,90 @@ def list_factors():
             if _factor_list_cache["payload"] is not None and now_ts < _factor_list_cache["expires_at"]:
                 return jsonify(_factor_list_cache["payload"])
 
-        # v4：动态扫描 factorlib 下所有一级分类目录
-        factors = []
-        known_groups = []
-        if FACTOR_LIBRARY_DIR.exists():
-            for child in FACTOR_LIBRARY_DIR.iterdir():
-                if not child.is_dir():
-                    continue
-                # 跳过归档 / 备份目录
-                if child.name.startswith(('.', '_')) or (
-                    '_archived_' in child.name or '_deprecated' in child.name or '_backup' in child.name
-                ):
-                    continue
-                def_dir = child / "definitions"
-                if not def_dir.is_dir():
-                    continue
-                known_groups.append(child.name)
-                for file in def_dir.glob("*.json"):
-                    try:
-                        with open(file, 'r', encoding='utf-8') as f:
-                            data = json.load(f)
-                        data['source'] = child.name
-                        factors.append(data)
-                    except Exception as e:
-                        print(f"❌ 读取因子文件失败 {file}: {e}")
-                        continue
-
-        # 处理因子数据
+        # 第 2 阶段接入点：因子发现与评估聚合改由 Catalog 统一提供。
+        # 这里仍保留列表页现有响应结构，避免一次性改动前端。
+        catalog = FactorCatalogService()
+        known_groups = catalog.repository.list_source_groups()
         processed_factors = []
-        for data in factors:
+        for summary in catalog.list_factors():
             try:
-                comp = data.get('computation_data', {})
+                factor_def = catalog.get_factor(summary.factor_id)
+                if factor_def is None:
+                    continue
+
+                comp_artifacts = factor_def.artifacts
+                computation_data = {
+                    'function_file': comp_artifacts.function_file,
+                    'formula_file': comp_artifacts.formula_file,
+                    'formula': comp_artifacts.formula_inline,
+                    'algorithm_name': comp_artifacts.algorithm_name,
+                    'proxy_key': comp_artifacts.proxy_key,
+                    'factor_name': comp_artifacts.factor_name,
+                    'entry_point': comp_artifacts.entry_point,
+                    **(comp_artifacts.extra or {}),
+                }
+
                 formula_preview = None
-                if data.get('computation_type') == 'formula':
-                    formula_preview = comp.get('formula') or None
-                elif data.get('computation_type') == 'function':
-                    formula_preview = comp.get('function_code') or None
+                if factor_def.computation_type == 'formula':
+                    formula_preview = comp_artifacts.formula_inline or None
+                elif factor_def.computation_type == 'function':
+                    formula_preview = computation_data.get('function_code') or None
 
-                # 聚合评估均值（核心IO）
-                evaluated = False
-                eval_count = 0
-                avg_metrics = {}
-                last_evaluated_at = None
-                try:
-                    eval_payload = core_load_evaluations(data.get('factor_id'))
-                    evaluations = (eval_payload or {}).get('evaluations') or []
-                    eval_count = len(evaluations)
-                    if eval_count > 0:
-                        evaluated = True
-                        keys = ['ic_pearson', 'ic_spearman', 'icir',
-                                'win_rate', 'sharpe_ratio', 'long_short_return']
-                        sums = {k: 0.0 for k in keys}
-                        counts = {k: 0 for k in keys}
-                        for ev in evaluations:
-                            res = (ev or {}).get('results') or {}
-                            for k in keys:
-                                v = res.get(k)
-                                if isinstance(v, (int, float)):
-                                    sums[k] += float(v)
-                                    counts[k] += 1
-                            last_evaluated_at = (ev or {}).get(
-                                'evaluated_at') or last_evaluated_at
-                        for k in keys:
-                            avg_metrics[k] = (
-                                sums[k] / counts[k]) if counts[k] > 0 else None
-                except Exception:
-                    pass
+                agg = summary.evaluation_aggregation
+                avg_metrics = agg.avg_metrics or {}
 
-                # 数值安全处理，避免NaN进入JSON
-                def _safe_num(x):
-                    return float(x) if isinstance(x, (int, float)) and math.isfinite(x) else None
-                avg_metrics_clean = {}
-                for k, v in (avg_metrics or {}).items():
-                    avg_metrics_clean[k] = _safe_num(v)
+                category = factor_def.source_group
+                subcategory = (factor_def.factor_kind or '').lower()
+                traits = factor_def.traits.to_dict()
+                factor_id_lower = factor_def.factor_id.lower()
+                factor_name_lower = factor_def.name.lower()
 
-                category = data.get('category', '')
-                subcategory = (data.get('subcategory') or '').lower()
-                factor_id = data.get('factor_id', '').lower()
-                factor_name = data.get('name', '').lower()
-
-                # 事件因子识别（首选 subcategory，否则 fallback 到关键字）
-                is_event_factor = subcategory == 'event'
+                is_event_factor = bool(traits.get('is_event')) or subcategory == 'event'
                 if not is_event_factor and category == 'pattern':
                     is_event_factor = True
                 if not is_event_factor:
                     event_keywords = ['cross', 'gap', 'breakout',
                                       'breakdown', 'signal', 'event', 'direction']
                     for keyword in event_keywords:
-                        if keyword in factor_id or keyword in factor_name:
+                        if keyword in factor_id_lower or keyword in factor_name_lower:
                             is_event_factor = True
                             break
 
-                # v4：data_requirement 直接取一级分类目录名
-                # 一级分类就是数据来源（basic_kline / derivatives / funding / ...）
                 data_requirement = category if category in known_groups else 'basic_kline'
-                # 事件因子单独打标（前端用于排除截面评估）
                 if is_event_factor:
                     data_requirement = 'event_factor'
-                # 挖掘因子统一归类（方便前端筛选挖掘库）
                 if subcategory == 'mined':
                     data_requirement = 'mined_factor'
 
                 processed_factors.append({
-                    'id': data.get('factor_id'),
-                    'name': data.get('name'),
-                    'description': data.get('description'),
-                    'type': data.get('category'),
-                    'subcategory': data.get('subcategory', ''),
-                    'source': data.get('source'),
+                    'id': factor_def.factor_id,
+                    'name': factor_def.name,
+                    'description': factor_def.description,
+                    'type': category,
+                    'subcategory': factor_def.factor_kind,
+                    'source': factor_def.source_group,
                     'data_requirement': data_requirement,
-                    'created_at': data.get('metadata', {}).get('created_at'),
-                    'is_window': data.get('metadata', {}).get('is_window'),
-                    'min_warmup_bars': data.get('metadata', {}).get('min_warmup_bars'),
-                    'source_family': data.get('metadata', {}).get('source_family'),
-                    'computation_type': data.get('computation_type'),
+                    'created_at': factor_def.metadata.get('created_at'),
+                    'is_window': traits.get('is_window', factor_def.metadata.get('is_window')),
+                    'min_warmup_bars': traits.get('min_warmup_bars', factor_def.metadata.get('min_warmup_bars')),
+                    'source_family': factor_def.metadata.get('source_family'),
+                    'computation_type': factor_def.computation_type,
                     'formula': formula_preview,
-                    'evaluated': evaluated,
-                    'evaluations_count': eval_count,
-                    'avg_metrics': avg_metrics_clean,
-                    'last_evaluated_at': last_evaluated_at,
-                    'ic': _safe_num((avg_metrics or {}).get('ic_pearson')),
-                    'ir': _safe_num((avg_metrics or {}).get('icir')),
-                    'sharpe': _safe_num((avg_metrics or {}).get('sharpe_ratio')),
+                    'evaluated': agg.evaluated,
+                    'evaluations_count': agg.eval_count,
+                    'avg_metrics': avg_metrics,
+                    'last_evaluated_at': agg.last_evaluated_at,
+                    'ic': avg_metrics.get('ic_pearson'),
+                    'rank_ic': avg_metrics.get('ic_spearman'),
+                    'icir': avg_metrics.get('icir'),
+                    'pos_ic_ratio': avg_metrics.get('ic_positive_ratio'),
+                    'long_short_return': avg_metrics.get('long_short_return'),
+                    'win_rate': avg_metrics.get('win_rate'),
+                    'ir': avg_metrics.get('icir'),
+                    'sharpe': avg_metrics.get('sharpe_ratio'),
                 })
             except Exception as e:
-                print(f"❌ 处理因子数据失败 {data.get('factor_id', 'unknown')}: {e}")
+                print(f"❌ Catalog 读取因子失败 {summary.factor_id}: {e}")
                 continue
 
         response_payload = {
@@ -548,57 +522,34 @@ def export_factor(factor_id):
 
 
 def _find_factor_definition_file(factor_id: str):
-    """
-    v4 辅助：在所有一级分类目录下查找因子定义文件。
-
-    优先一级分类白名单（DEFAULT_SOURCE_GROUPS），再兜底扫描其它合法目录；
-    归档/备份目录会被忽略。
-    """
-    excluded = ('_archived_', '_deprecated', '_backup')
-    # 先按已知顺序找，速度更快
-    preferred = ['basic_kline', 'derivatives', 'funding']
-    for group in preferred:
-        f = FACTOR_LIBRARY_DIR / group / "definitions" / f"{factor_id}.json"
-        if f.exists():
-            return f
-    if not FACTOR_LIBRARY_DIR.exists():
-        return None
-    for child in FACTOR_LIBRARY_DIR.iterdir():
-        if not child.is_dir():
-            continue
-        name = child.name
-        if name in preferred or name.startswith(('.', '_')):
-            continue
-        if any(tok in name for tok in excluded):
-            continue
-        f = child / "definitions" / f"{factor_id}.json"
-        if f.exists():
-            return f
-    return None
+    from factor_miner.core.factor_repository import FactorRepository
+    repo = FactorRepository()
+    return repo.find_definition_file(factor_id)
 
 
 def _find_factor_function_file(factor_id: str):
-    """v4 辅助：在所有一级分类目录下查找因子函数源码。"""
-    excluded = ('_archived_', '_deprecated', '_backup')
-    preferred = ['basic_kline', 'derivatives', 'funding']
-    for group in preferred:
-        f = FACTOR_LIBRARY_DIR / group / "functions" / f"{factor_id}.py"
-        if f.exists():
-            return f
-    if not FACTOR_LIBRARY_DIR.exists():
+    from factor_miner.core.factor_repository import FactorRepository
+    from factor_miner.core.factor_executor import FactorExecutor
+    repo = FactorRepository()
+    factor_def = repo.load_definition(factor_id)
+    if factor_def is None:
         return None
-    for child in FACTOR_LIBRARY_DIR.iterdir():
-        if not child.is_dir():
-            continue
-        name = child.name
-        if name in preferred or name.startswith(('.', '_')):
-            continue
-        if any(tok in name for tok in excluded):
-            continue
-        f = child / "functions" / f"{factor_id}.py"
-        if f.exists():
-            return f
+    executor = FactorExecutor(repo)
+    if factor_def.artifacts.function_file:
+        resolved = executor._resolve_artifact_path(factor_def.artifacts.function_file)
+        if resolved is not None and resolved.exists():
+            return resolved
     return None
+
+
+_repo_instance = None
+
+
+def _get_repo():
+    global _repo_instance
+    if _repo_instance is None:
+        _repo_instance = FactorRepository()
+    return _repo_instance
 
 
 @bp.route('/batch_delete', methods=['POST'])
@@ -610,19 +561,19 @@ def batch_delete_factors():
         if not factor_ids:
             return jsonify({'success': False, 'message': '未选择要删除的因子'})
 
-        from factor_miner.core.factor_storage import get_global_storage
-        storage = get_global_storage()
+        from factor_miner.core.factor_lifecycle import FactorLifecycleService
+        lifecycle = FactorLifecycleService()
 
         deleted = []
         failed = []
         for fid in factor_ids:
             try:
-                ok = storage.delete_factor(fid)
-                if ok:
+                result = lifecycle.delete_factor(fid, cascade=True)
+                if result.success:
                     deleted.append(fid)
                 else:
                     failed.append(fid)
-            except Exception as e:
+            except Exception:
                 failed.append(fid)
 
         with _factor_list_cache_lock:
@@ -645,7 +596,8 @@ def batch_delete_factors():
 def get_evaluations(factor_id: str):
     """获取某因子的历史评估记录（多结果结构）"""
     try:
-        payload = core_load_evaluations(factor_id)
+        catalog = FactorCatalogService()
+        payload = catalog.repository.load_evaluations(factor_id)
         return jsonify({'success': True, 'factor_id': payload.get('factor_id', factor_id), 'evaluations': payload.get('evaluations', [])})
     except Exception as e:
         return jsonify({'success': False, 'message': f'获取评估历史失败: {str(e)}'})
@@ -672,6 +624,12 @@ def batch_evaluate():
     trade_type = payload.get('trade_type', 'futures')
     request_id = str(payload.get('request_id')
                      or '').strip() or _LEGACY_CANCEL_ID
+    n_groups = payload.get('n_groups', 5)
+    predict_step = payload.get('predict_step', 1)
+    min_coverage = payload.get('min_coverage', 0.3)
+    min_sample = payload.get('min_sample', 30)
+    transaction_cost = payload.get('transaction_cost', 0.0)
+    ic_decay_max_lag = payload.get('ic_decay_max_lag', 5)
 
     if not factor_ids or not symbols or not timeframes or not start_date or not end_date:
         return jsonify({'success': False, 'message': '缺少必要参数（factor_ids/symbols/timeframes/start_date/end_date）'})
@@ -731,13 +689,22 @@ def batch_evaluate():
                     mask = factor_values.notna() & returns.notna()
                     factor_values = factor_values[mask]
                     returns = returns[mask]
-                    if len(factor_values) < 30:
+                    coverage = len(factor_values) / len(market_data) if len(market_data) > 0 else 0
+                    if coverage < min_coverage:
                         return {
                             'factor_id': factor_id, 'symbol': symbol, 'timeframe': timeframe,
-                            'success': False, 'message': f'数据不足：样本数 {len(factor_values)} < 30'
+                            'success': False, 'message': f'覆盖率不足：{coverage:.1%} < {min_coverage:.1%}'
                         }
-                    eval_res = evaluator.evaluate_single_factor(
-                        factor=factor_values, returns=returns, factor_name=factor_id)
+                    if len(factor_values) < min_sample:
+                        return {
+                            'factor_id': factor_id, 'symbol': symbol, 'timeframe': timeframe,
+                            'success': False, 'message': f'数据不足：样本数 {len(factor_values)} < {min_sample}'
+                        }
+                    eval_res = evaluator.stats.comprehensive_factor_analysis(
+                        factor=factor_values, returns=returns, factor_name=factor_id,
+                        ic_decay_max_lag=ic_decay_max_lag, n_groups=n_groups)
+                    if transaction_cost > 0 and 'long_short_return' in eval_res:
+                        eval_res['long_short_return_net'] = eval_res['long_short_return'] - transaction_cost
                     return {
                         'factor_id': factor_id, 'symbol': symbol, 'timeframe': timeframe,
                         'success': True, 'results': eval_res
@@ -750,6 +717,7 @@ def batch_evaluate():
 
             max_workers = min(total_tasks, os.cpu_count() or 4, 8)
             executor = ThreadPoolExecutor(max_workers=max_workers)
+            _register_active_executor(request_id, executor)
             try:
                 futures = {}
                 for factor_id in factor_ids:
@@ -762,6 +730,11 @@ def batch_evaluate():
                 for future in as_completed(futures):
                     if cancel_event.is_set():
                         break
+                    if _shutdown_event.is_set():
+                        for f in futures:
+                            f.cancel()
+                        _force_stop_executor(executor)
+                        raise GeneratorExit("服务关闭")
                     result = future.result()
                     all_results.append(result)
                     completed_count += 1
@@ -777,15 +750,18 @@ def batch_evaluate():
                 cancel_event.set()
                 for f in futures:
                     f.cancel()
+                _pop_active_executor(request_id)
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise
             except KeyboardInterrupt:
                 cancel_event.set()
                 for f in futures:
                     f.cancel()
+                _pop_active_executor(request_id)
                 executor.shutdown(wait=False, cancel_futures=True)
                 raise
             else:
+                _pop_active_executor(request_id)
                 executor.shutdown(wait=True)
 
             elapsed = time.time() - t0
@@ -816,6 +792,79 @@ def batch_evaluate():
             'Connection': 'keep-alive',
         }
     )
+
+
+@bp.route('/rolling-ic', methods=['POST'])
+def rolling_ic():
+    """计算单个因子的滚动 IC 时序"""
+    try:
+        data = request.get_json()
+        factor_id = data.get('factor_id')
+        symbol = data.get('symbol')
+        timeframe = data.get('timeframe')
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        exchange = data.get('exchange', 'binance')
+        trade_type = data.get('trade_type', 'futures')
+        window = data.get('window', 60)
+
+        if not all([factor_id, symbol, timeframe, start_date, end_date]):
+            return jsonify({'success': False, 'message': '缺少必要参数'})
+
+        engine = get_global_engine()
+        market_data = load_local_market_data(
+            symbol, timeframe, start_date, end_date, exchange, trade_type)
+
+        if market_data is None or market_data.empty:
+            return jsonify({'success': False, 'message': '无法加载市场数据'})
+
+        factor_values = engine.compute_single_factor(factor_id, market_data)
+        if factor_values is None:
+            return jsonify({'success': False, 'message': '因子计算失败'})
+
+        market_data = market_data.sort_index()
+        market_data['returns'] = market_data['close'].pct_change()
+
+        if hasattr(factor_values, 'columns'):
+            try:
+                factor_values = factor_values.iloc[:, 0]
+            except Exception:
+                factor_values = factor_values.squeeze()
+
+        factor_values = factor_values.reindex(market_data.index)
+        returns = market_data['returns']
+        mask = factor_values.notna() & returns.notna()
+        factor_values = factor_values[mask]
+        returns = returns[mask]
+
+        if len(factor_values) < window + 10:
+            return jsonify({'success': False, 'message': f'数据不足：需要至少 {window+10} 个样本'})
+
+        lagged_factor = factor_values.shift(1)
+        valid_mask = lagged_factor.notna() & returns.notna()
+        lagged_factor = lagged_factor[valid_mask]
+        returns_aligned = returns[valid_mask]
+
+        if len(lagged_factor) < window + 10:
+            return jsonify({'success': False, 'message': f'数据不足：需要至少 {window+10} 个有效样本'})
+
+        stats_obj = FactorStatistics()
+        rolling_ic_series = stats_obj.calculate_rolling_ic(
+            lagged_factor, returns_aligned, window=window)
+
+        valid_mask = rolling_ic_series.notna()
+        dates = rolling_ic_series.index[valid_mask].strftime('%Y-%m-%d %H:%M:%S').tolist()
+        ic_values = rolling_ic_series[valid_mask].tolist()
+
+        return jsonify({
+            'success': True,
+            'dates': dates,
+            'rolling_ic': ic_values,
+            'window': window
+        })
+
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'滚动IC计算失败: {str(e)}'})
 
 
 @bp.route('/cross_sectional_evaluate', methods=['POST'])
@@ -1063,10 +1112,10 @@ def cross_sectional_evaluate():
 
     base_timeframe = str(base_timeframe or '1h').lower()
     factor_timeframe = str(factor_timeframe or base_timeframe).lower()
-    if factor_bar_mode not in ('completed', 'intrabar', 'intrabar_strict'):
+    if factor_bar_mode not in ('completed', 'intrabar', 'intrabar_strict', 'offset_resample'):
         return jsonify({
             'success': False,
-            'message': '参数 factor_bar_mode 仅支持 completed / intrabar / intrabar_strict'
+            'message': '参数 factor_bar_mode 仅支持 completed / intrabar / intrabar_strict / offset_resample'
         }), 400
 
     # 解析 oos_start_date：要求严格落在 (start_date, end_date) 内
@@ -1131,6 +1180,34 @@ def cross_sectional_evaluate():
             total = len(factor_ids)
             logger.info(f"开始截面评估，共 {total} 个因子")
 
+            # 根据因子 metadata.requires_extras 汇总本轮要 join 的额外数据。
+            # 细粒度：metrics（OI/LSR 等 5m feather）、funding、basis（mark+index 派生基差）。
+            # 兼容旧标记 derivatives → metrics+basis；未知 token 记 debug 日志并跳过。
+            _VALID_EXTRA_KINDS = frozenset({'metrics', 'funding', 'basis', 'mark', 'index'})
+            _LEGACY_DERIVATIVES_EXPAND = frozenset({'metrics', 'basis'})
+            _extras_include = set()
+            for _fid in factor_ids:
+                try:
+                    _fdef = _get_repo().load_definition(_fid)
+                    if not _fdef or not _fdef.metadata:
+                        continue
+                    for _req in (_fdef.metadata.get('requires_extras') or []):
+                        if _req == 'derivatives':
+                            _extras_include.update(_LEGACY_DERIVATIVES_EXPAND)
+                        elif _req in _VALID_EXTRA_KINDS:
+                            _extras_include.add(_req)
+                        else:
+                            logger.debug(
+                                "截面评估: 因子 %s 的 requires_extras 含未知项 %r，已忽略",
+                                _fid, _req,
+                            )
+                except Exception:
+                    pass
+            _extras_include = sorted(_extras_include) if _extras_include else None
+            logger.info(f"截面评估额外数据 include={_extras_include}")
+
+            _data_loader = DataLoader()
+
             yield _sse_event('progress', {
                 'phase': 'loading',
                 'message': f'正在加载 {len(symbols)} 个币种的市场数据...',
@@ -1150,6 +1227,11 @@ def cross_sectional_evaluate():
                         symbol, base_timeframe, start_date, end_date, exchange, trade_type
                     )
                     if md is not None and not md.empty:
+                        if _extras_include:
+                            md = _data_loader.join_extras(
+                                md, symbol, interval=base_timeframe,
+                                include=_extras_include,
+                            )
                         return (symbol, md)
                 except Exception as e:
                     logger.warning(f"加载 {symbol} 失败: {e}")
@@ -1285,12 +1367,13 @@ def cross_sectional_evaluate():
                 'oos_enabled': oos_enabled,
             })
 
-            def _run_single_slice(factor_id, slice_data_dict):
+            def _run_single_slice(factor_id, slice_data_dict, eval_start_date=None):
                 """在给定的 data_dict 切片上跑一次截面评估，返回统一结构。"""
                 t0 = time.time()
                 try:
                     result = cs_evaluator.evaluate_cross_sectional(
-                        slice_data_dict, factor_id, engine, timeframe=base_timeframe
+                        slice_data_dict, factor_id, engine, timeframe=base_timeframe,
+                        eval_start_date=eval_start_date,
                     )
                     elapsed = time.time() - t0
                     if result.get('success'):
@@ -1357,7 +1440,7 @@ def cross_sectional_evaluate():
                         'oos_enabled': True,
                         'is': is_res,
                     }
-                oos_res = _run_single_slice(factor_id, data_dict_oos)
+                oos_res = _run_single_slice(factor_id, data_dict, eval_start_date=oos_start_dt)
 
                 combined = {
                     'factor_id': factor_id,
@@ -1491,6 +1574,13 @@ def cross_sectional_evaluate():
                         logger.info("检测到取消信号，停止评估循环...")
                         break
 
+                    if _shutdown_event.is_set():
+                        logger.info("检测到全局关闭信号，停止评估循环...")
+                        for f in pending:
+                            f.cancel()
+                        _force_stop_executor(executor)
+                        raise GeneratorExit("服务关闭")
+
                     if not done:
                         now = time.time()
                         if now - heartbeat_ts >= max(heartbeat_interval_sec, 1.0):
@@ -1533,6 +1623,21 @@ def cross_sectional_evaluate():
                             'message': f'已完成 {completed_count}/{total}: {factor_id}'
                             + (f' ({result.get("elapsed", "?")}s)' if result.get('elapsed') else '')
                         })
+
+                        if result.get('success'):
+                            try:
+                                save_evaluation_results(factor_id, result, {
+                                    'evaluation_type': 'cross_sectional',
+                                    'timeframe': base_timeframe,
+                                    'n_groups': n_groups,
+                                    'normalize_method': normalize_method,
+                                    'predict_step': predict_step,
+                                    'sample_step': sample_step,
+                                    'oos_enabled': oos_enabled,
+                                    'oos_start_date': str(oos_start_dt) if oos_start_dt is not None else None,
+                                })
+                            except Exception as save_ex:
+                                logger.warning(f"持久化因子 {factor_id} 截面评估结果失败: {save_ex}")
             except GeneratorExit:
                 logger.info("截面评估被中断（GeneratorExit），正在取消所有待处理任务...")
                 cancel_event.set()
@@ -1696,9 +1801,18 @@ def calculate_factor_values(factor_info, market_data):
 
 
 def save_evaluation_results(factor_id, results, metadata):
-    """转调核心层的评估结果保存"""
+    """转调核心层的评估结果保存，并刷新索引缓存"""
     try:
         core_save_evaluation_results(factor_id, results, metadata)
+        with _factor_list_cache_lock:
+            _factor_list_cache["payload"] = None
+            _factor_list_cache["expires_at"] = 0.0
+        try:
+            catalog = FactorCatalogService()
+            catalog.invalidate_index_cache()
+            catalog.update_index_entry(factor_id)
+        except Exception:
+            pass
     except Exception as e:
         print(f"保存评估结果失败: {e}")
 
@@ -1904,6 +2018,9 @@ def ensemble_backtest():
         min_valid_count = payload.get('min_valid_count', 30)
         min_group_size = payload.get('min_group_size', 5)
         treat_zero_as_invalid = payload.get('treat_zero_as_invalid', True)
+        enable_data_cleaning = payload.get('enable_data_cleaning', False)
+        remove_zero_volume = payload.get('remove_zero_volume', True)
+        liquidity_filter_ratio = payload.get('liquidity_filter_ratio', 0.5)
         request_id = str(payload.get('request_id')
                          or '').strip() or _LEGACY_CANCEL_ID
 
@@ -1994,19 +2111,46 @@ def ensemble_backtest():
         engine = get_global_engine()
         data_dict = {}
 
+        _VALID_EXTRA_KINDS_ENS = frozenset({'metrics', 'funding', 'basis', 'mark', 'index'})
+        _LEGACY_DERIVATIVES_EXPAND_ENS = frozenset({'metrics', 'basis'})
+        _extras_include_ens = set()
+        for _fid in factor_ids:
+            try:
+                _fdef = _get_repo().load_definition(_fid)
+                if not _fdef or not _fdef.metadata:
+                    continue
+                for _req in (_fdef.metadata.get('requires_extras') or []):
+                    if _req == 'derivatives':
+                        _extras_include_ens.update(_LEGACY_DERIVATIVES_EXPAND_ENS)
+                    elif _req in _VALID_EXTRA_KINDS_ENS:
+                        _extras_include_ens.add(_req)
+            except Exception:
+                pass
+        _extras_include_ens = sorted(_extras_include_ens) if _extras_include_ens else []
+        _data_loader_ens = DataLoader()
+
         from concurrent.futures import ThreadPoolExecutor, as_completed
         load_workers = min(len(symbols), 8)
+
+        def _load_symbol_ens(sym):
+            try:
+                md = load_local_market_data(sym, timeframe, start_date, end_date, exchange, trade_type)
+                if md is not None and not md.empty:
+                    if _extras_include_ens:
+                        md = _data_loader_ens.join_extras(md, sym, interval=timeframe, include=_extras_include_ens)
+                    return (sym, md)
+            except Exception as e:
+                print(f"加载 {sym} 失败: {e}")
+            return (sym, None)
+
         with ThreadPoolExecutor(max_workers=load_workers) as loader:
-            load_futures = {
-                loader.submit(load_local_market_data, s, timeframe, start_date, end_date, exchange, trade_type): s
-                for s in symbols
-            }
+            load_futures = {loader.submit(_load_symbol_ens, s): s for s in symbols}
             for future in as_completed(load_futures):
                 sym = load_futures[future]
                 try:
-                    md = future.result()
+                    sym_key, md = future.result()
                     if md is not None and not md.empty:
-                        data_dict[sym] = md
+                        data_dict[sym_key] = md
                 except Exception as e:
                     print(f"加载 {sym} 失败: {e}")
 
@@ -2029,8 +2173,13 @@ def ensemble_backtest():
             min_valid_count=min_valid_count,
             min_group_size=min_group_size,
             treat_zero_as_invalid=treat_zero_as_invalid,
+            enable_data_cleaning=enable_data_cleaning,
+            remove_zero_volume=remove_zero_volume,
+            liquidity_filter_ratio=liquidity_filter_ratio,
         )
 
+        # prepare_cross_sectional_data 已在内部对因子施加 trade_shift（信号延迟），
+        # 返回的 factor_value 是已延迟的值，后续无需再 shift。
         all_factors = {}
         for factor_id in factor_ids:
             if cancel_event.is_set():
@@ -2247,10 +2396,12 @@ def ensemble_backtest():
             min_valid_count=min_valid_count,
             min_group_size=min_group_size,
             treat_zero_as_invalid=treat_zero_as_invalid,
+            transaction_cost=transaction_cost,
+            enable_data_cleaning=False,
         )
         ic_results = cs_evaluator.calculate_cross_sectional_ic(cs_data)
         returns_results = cs_evaluator.calculate_cross_sectional_returns(
-            cs_data, timeframe=timeframe, transaction_cost=transaction_cost)
+            cs_data, timeframe=timeframe)
 
         performance_summary = {
             'CROSS_SECTIONAL_LS': {
@@ -2378,6 +2529,9 @@ def factor_correlation():
         min_valid_count = payload.get('min_valid_count', 30)
         min_group_size = payload.get('min_group_size', 5)
         treat_zero_as_invalid = payload.get('treat_zero_as_invalid', True)
+        enable_data_cleaning = payload.get('enable_data_cleaning', False)
+        remove_zero_volume = payload.get('remove_zero_volume', True)
+        liquidity_filter_ratio = payload.get('liquidity_filter_ratio', 0.5)
         request_id = str(payload.get('request_id')
                          or '').strip() or _LEGACY_CANCEL_ID
 
@@ -2424,19 +2578,46 @@ def factor_correlation():
         engine = get_global_engine()
         data_dict = {}
 
+        _VALID_EXTRA_KINDS = frozenset({'metrics', 'funding', 'basis', 'mark', 'index'})
+        _LEGACY_DERIVATIVES_EXPAND = frozenset({'metrics', 'basis'})
+        _extras_include = set()
+        for _fid in factor_ids:
+            try:
+                _fdef = _get_repo().load_definition(_fid)
+                if not _fdef or not _fdef.metadata:
+                    continue
+                for _req in (_fdef.metadata.get('requires_extras') or []):
+                    if _req == 'derivatives':
+                        _extras_include.update(_LEGACY_DERIVATIVES_EXPAND)
+                    elif _req in _VALID_EXTRA_KINDS:
+                        _extras_include.add(_req)
+            except Exception:
+                pass
+        _extras_include = sorted(_extras_include) if _extras_include else []
+        _data_loader = DataLoader()
+
         from concurrent.futures import ThreadPoolExecutor, as_completed
         load_workers = min(len(symbols), 8)
+
+        def _load_symbol_corr(sym):
+            try:
+                md = load_local_market_data(sym, timeframe, start_date, end_date, exchange, trade_type)
+                if md is not None and not md.empty:
+                    if _extras_include:
+                        md = _data_loader.join_extras(md, sym, interval=timeframe, include=_extras_include)
+                    return (sym, md)
+            except Exception:
+                pass
+            return (sym, None)
+
         with ThreadPoolExecutor(max_workers=load_workers) as loader:
-            load_futures = {
-                loader.submit(load_local_market_data, s, timeframe, start_date, end_date, exchange, trade_type): s
-                for s in symbols
-            }
+            load_futures = {loader.submit(_load_symbol_corr, s): s for s in symbols}
             for future in as_completed(load_futures):
                 sym = load_futures[future]
                 try:
-                    md = future.result()
+                    sym_key, md = future.result()
                     if md is not None and not md.empty:
-                        data_dict[sym] = md
+                        data_dict[sym_key] = md
                 except Exception:
                     continue
 
@@ -2461,6 +2642,9 @@ def factor_correlation():
             min_valid_count=min_valid_count,
             min_group_size=min_group_size,
             treat_zero_as_invalid=treat_zero_as_invalid,
+            enable_data_cleaning=enable_data_cleaning,
+            remove_zero_volume=remove_zero_volume,
+            liquidity_filter_ratio=liquidity_filter_ratio,
         )
 
         # rows: list of DataFrame[date, symbol, factor_id -> value]
@@ -2632,6 +2816,9 @@ def factor_ic_correlation():
         min_group_size = payload.get('min_group_size', 5)
         treat_zero_as_invalid = payload.get('treat_zero_as_invalid', True)
         n_ic_segments = payload.get('n_ic_segments', 4)
+        enable_data_cleaning = payload.get('enable_data_cleaning', False)
+        remove_zero_volume = payload.get('remove_zero_volume', True)
+        liquidity_filter_ratio = payload.get('liquidity_filter_ratio', 0.5)
         request_id = str(payload.get('request_id')
                          or '').strip() or _LEGACY_CANCEL_ID
 
@@ -2683,19 +2870,46 @@ def factor_ic_correlation():
         engine = get_global_engine()
         data_dict = {}
 
+        _VALID_EXTRA_KINDS_IC = frozenset({'metrics', 'funding', 'basis', 'mark', 'index'})
+        _LEGACY_DERIVATIVES_EXPAND_IC = frozenset({'metrics', 'basis'})
+        _extras_include_ic = set()
+        for _fid in factor_ids:
+            try:
+                _fdef = _get_repo().load_definition(_fid)
+                if not _fdef or not _fdef.metadata:
+                    continue
+                for _req in (_fdef.metadata.get('requires_extras') or []):
+                    if _req == 'derivatives':
+                        _extras_include_ic.update(_LEGACY_DERIVATIVES_EXPAND_IC)
+                    elif _req in _VALID_EXTRA_KINDS_IC:
+                        _extras_include_ic.add(_req)
+            except Exception:
+                pass
+        _extras_include_ic = sorted(_extras_include_ic) if _extras_include_ic else []
+        _data_loader_ic = DataLoader()
+
         from concurrent.futures import ThreadPoolExecutor, as_completed
         load_workers = min(len(symbols), 8)
+
+        def _load_symbol_ic_corr(sym):
+            try:
+                md = load_local_market_data(sym, timeframe, start_date, end_date, exchange, trade_type)
+                if md is not None and not md.empty:
+                    if _extras_include_ic:
+                        md = _data_loader_ic.join_extras(md, sym, interval=timeframe, include=_extras_include_ic)
+                    return (sym, md)
+            except Exception:
+                pass
+            return (sym, None)
+
         with ThreadPoolExecutor(max_workers=load_workers) as loader:
-            load_futures = {
-                loader.submit(load_local_market_data, s, timeframe, start_date, end_date, exchange, trade_type): s
-                for s in symbols
-            }
+            load_futures = {loader.submit(_load_symbol_ic_corr, s): s for s in symbols}
             for future in as_completed(load_futures):
                 sym = load_futures[future]
                 try:
-                    md = future.result()
+                    sym_key, md = future.result()
                     if md is not None and not md.empty:
-                        data_dict[sym] = md
+                        data_dict[sym_key] = md
                 except Exception:
                     continue
 
@@ -2719,6 +2933,9 @@ def factor_ic_correlation():
             min_group_size=min_group_size,
             treat_zero_as_invalid=treat_zero_as_invalid,
             n_ic_segments=n_ic_segments,
+            enable_data_cleaning=enable_data_cleaning,
+            remove_zero_volume=remove_zero_volume,
+            liquidity_filter_ratio=liquidity_filter_ratio,
         )
 
         # 收集每个因子的 Rank IC 时序 -> Series(index=date, values=rank_ic)
@@ -3215,6 +3432,7 @@ def method_comparison_stream():
                 min_valid_count=min_valid_count,
                 min_group_size=min_group_size,
                 treat_zero_as_invalid=treat_zero_as_invalid,
+                enable_data_cleaning=False,
             )
 
             factor_panels = {}
@@ -3767,3 +3985,461 @@ def calculate_function_factor(factor_info, market_data, parameters):
         import traceback
         traceback.print_exc()
         return None
+
+
+@bp.route('/realtime_scan', methods=['POST'])
+def realtime_scan():
+    """
+    截面实时扫描：基于交易所实时数据计算因子并组合，返回当前做多/做空推荐列表。
+    支持 completed 和 offset_resample 两种因子K线模式。
+    """
+    payload = request.get_json() or {}
+    factor_ids = payload.get('factor_ids') or []
+    symbols = payload.get('symbols') or []
+    base_timeframe = payload.get('base_timeframe') or '15m'
+    factor_timeframe = payload.get('factor_timeframe') or '1h'
+    factor_bar_mode = str(payload.get('factor_bar_mode', 'completed')).lower()
+    if factor_bar_mode not in ('completed', 'offset_resample'):
+        factor_bar_mode = 'completed'
+    data_source = 'realtime'
+    realtime_limit = int(payload.get('realtime_limit', 200))
+    combine_mode = str(payload.get('combine_mode', 'average')).lower()
+    normalize_method = str(payload.get('normalize_method', 'rank_centered')).lower()
+    min_valid_count = int(payload.get('min_valid_count', 10))
+    long_count = int(payload.get('long_count', 5))
+    short_count = int(payload.get('short_count', 5))
+    factor_weights = payload.get('factor_weights') or {}
+    factor_directions = payload.get('factor_directions') or {}
+    outlier_method = str(payload.get('outlier_method', 'none')).lower()
+    outlier_mad_n = float(payload.get('outlier_mad_n', 5.0))
+    max_lookback = int(payload.get('max_lookback', 200))
+    exchange = payload.get('exchange', 'binance')
+    trade_type = payload.get('trade_type', 'futures')
+
+    if not factor_ids or not symbols or len(symbols) < 2:
+        return jsonify({'success': False, 'message': '需要至少1个因子和2个币种'}), 400
+
+    try:
+        engine = get_global_engine()
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'引擎初始化失败: {e}'}), 500
+
+    _VALID_EXTRA_KINDS = frozenset({'metrics', 'funding', 'basis', 'mark', 'index'})
+    _LEGACY_DERIVATIVES_EXPAND = frozenset({'metrics', 'basis'})
+    _extras_include = set()
+    for _fid in factor_ids:
+        try:
+            _fdef = _get_repo().load_definition(_fid)
+            if not _fdef or not _fdef.metadata:
+                continue
+            for _req in (_fdef.metadata.get('requires_extras') or []):
+                if _req == 'derivatives':
+                    _extras_include.update(_LEGACY_DERIVATIVES_EXPAND)
+                elif _req in _VALID_EXTRA_KINDS:
+                    _extras_include.add(_req)
+        except Exception:
+            pass
+    _extras_include = sorted(_extras_include) if _extras_include else []
+
+    data_dict = {}
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import os
+
+    def _parse_tf_to_timedelta(tf: str):
+        try:
+            s = str(tf or '').strip().lower()
+            m = re.fullmatch(r'(\d+)\s*([mhdw])', s)
+            if not m:
+                return None
+            n = int(m.group(1))
+            u = m.group(2)
+            if u == 'm':
+                return pd.Timedelta(minutes=n)
+            if u == 'h':
+                return pd.Timedelta(hours=n)
+            if u == 'd':
+                return pd.Timedelta(days=n)
+            if u == 'w':
+                return pd.Timedelta(weeks=n)
+            return None
+        except Exception:
+            return None
+
+    def _normalize_utc_index(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return df
+        x = df.copy()
+        idx = pd.to_datetime(x.index, errors='coerce')
+        try:
+            if getattr(idx, 'tz', None) is None:
+                idx = idx.tz_localize('UTC')
+            else:
+                idx = idx.tz_convert('UTC')
+        except Exception:
+            pass
+        x.index = idx
+        x = x[x.index.notna()].sort_index()
+        return x
+
+    def _clip_to_completed_base_bars(df: pd.DataFrame, tf: str) -> pd.DataFrame:
+        """
+        以“基础K线开盘时间索引”口径截断：
+        now=04:11、base=1h 时，仅保留开盘时间 < 04:00 的K线（即最新可用为03:00-04:00）。
+        """
+        if df is None or df.empty:
+            return df
+        delta = _parse_tf_to_timedelta(tf)
+        if delta is None:
+            return df
+        now_utc = pd.Timestamp.now(tz='UTC')
+        last_completed_open = now_utc.floor(delta)
+        clipped = df[df.index < last_completed_open].copy()
+        return clipped
+
+    def _is_fresh_enough(df: pd.DataFrame, tf: str) -> bool:
+        """
+        要求至少包含“最近一根已完成基础K线”的开盘时间。
+        """
+        if df is None or df.empty:
+            return False
+        delta = _parse_tf_to_timedelta(tf)
+        if delta is None:
+            return True
+        now_utc = pd.Timestamp.now(tz='UTC')
+        last_completed_open = now_utc.floor(delta) - delta
+        try:
+            return pd.to_datetime(df.index.max(), utc=True) >= last_completed_open
+        except Exception:
+            return False
+
+    from factor_miner.core.realtime_data_fetcher import fetch_realtime_data, _create_exchange
+
+    _shared_exchange = _create_exchange(exchange)
+
+    def _load_symbol(sym):
+        try:
+            md = fetch_realtime_data(
+                sym, base_timeframe, realtime_limit,
+                include=_extras_include, exchange_id=exchange,
+                exchange=_shared_exchange,
+            )
+            if md is not None and not md.empty:
+                return (sym, md)
+        except Exception as e:
+            logger.warning(f"实时获取 {sym} 失败: {e}")
+        return (sym, None)
+
+    load_workers = min(len(symbols), os.cpu_count() or 4, 8)
+    with ThreadPoolExecutor(max_workers=load_workers) as loader:
+        futures = {loader.submit(_load_symbol, s): s for s in symbols}
+        for future in as_completed(futures):
+            sym, md = future.result()
+            if md is not None:
+                data_dict[sym] = md
+
+    if _shared_exchange is not None:
+        if hasattr(_shared_exchange, 'close'):
+            _shared_exchange.close()
+
+    # 统一按“仅已完成基础K线”截断，并执行新鲜度校验。
+    aligned_data_dict = {}
+    stale_symbols = []
+    for sym, md in data_dict.items():
+        md_norm = _normalize_utc_index(md)
+        md_clip = _clip_to_completed_base_bars(md_norm, base_timeframe)
+        if md_clip is None or md_clip.empty:
+            stale_symbols.append(sym)
+            continue
+        if not _is_fresh_enough(md_clip, base_timeframe):
+            stale_symbols.append(sym)
+            continue
+        aligned_data_dict[sym] = md_clip
+    data_dict = aligned_data_dict
+
+    if len(data_dict) < 2:
+        stale_msg = f"，新鲜度不足币种: {len(stale_symbols)}" if stale_symbols else ""
+        return jsonify({'success': False, 'message': f'有效币种不足2个（加载{len(data_dict)}个）{stale_msg}'}), 400
+
+    evaluator = CrossSectionalEvaluator(
+        n_groups=5,
+        normalize_method=normalize_method,
+        predict_step=1,
+        sample_step=1,
+        base_timeframe=base_timeframe,
+        factor_timeframe=factor_timeframe,
+        factor_bar_mode=factor_bar_mode,
+        max_lookback=max_lookback,
+        min_coverage=0.1,
+        min_valid_count=max(2, min_valid_count),
+        min_group_size=2,
+        treat_zero_as_invalid=False,
+        enable_outlier_treatment=(outlier_method != 'none'),
+        outlier_method=outlier_method,
+        outlier_mad_n=outlier_mad_n,
+    )
+
+    factor_values_map = {}
+    for sym, md in data_dict.items():
+        factor_values_map[sym] = {}
+        for fid in factor_ids:
+            try:
+                md_sorted = md.copy().sort_index()
+                use_same_tf = factor_timeframe == base_timeframe
+                if use_same_tf:
+                    factor_raw = evaluator._to_series(engine.compute_single_factor(fid, md_sorted))
+                    factor_on_base = factor_raw
+                elif factor_bar_mode == 'offset_resample':
+                    factor_on_base = evaluator._build_offset_resampled_factor_series(
+                        md_sorted, fid, engine
+                    )
+                else:
+                    factor_input = evaluator._resample_ohlcv_completed(md_sorted, factor_timeframe)
+                    if factor_input is None or factor_input.empty:
+                        factor_on_base = None
+                    else:
+                        factor_raw = evaluator._to_series(engine.compute_single_factor(fid, factor_input))
+                        factor_on_base = factor_raw.reindex(md_sorted.index, method='ffill') if factor_raw is not None else None
+
+                if factor_on_base is not None and not factor_on_base.empty:
+                    val = factor_on_base.iloc[-1]
+                    factor_values_map[sym][fid] = float(val) if math.isfinite(val) else None
+                else:
+                    factor_values_map[sym][fid] = None
+            except Exception:
+                factor_values_map[sym][fid] = None
+
+    factor_scores_map = {sym: {} for sym in data_dict}
+    factor_ranks_map = {sym: {} for sym in data_dict}
+    factor_coverage = {}
+
+    for fid in factor_ids:
+        direction = int(factor_directions.get(fid, 1))
+        vals = {}
+        for sym in data_dict:
+            v = factor_values_map[sym].get(fid)
+            if v is not None and math.isfinite(v):
+                vals[sym] = v
+        factor_coverage[fid] = len(vals)
+
+        if len(vals) < min_valid_count:
+            continue
+
+        sym_list = sorted(vals.keys())
+        val_array = np.array([vals[s] for s in sym_list], dtype=float)
+
+        if outlier_method == 'mad' and len(val_array) >= 3:
+            med = np.median(val_array)
+            mad = np.median(np.abs(val_array - med))
+            if mad > 0:
+                val_array = np.clip(val_array, med - outlier_mad_n * mad, med + outlier_mad_n * mad)
+        elif outlier_method == 'winsor' and len(val_array) >= 3:
+            lo = np.quantile(val_array, 0.01)
+            hi = np.quantile(val_array, 0.99)
+            if lo < hi:
+                val_array = np.clip(val_array, lo, hi)
+
+        n = len(val_array)
+        if normalize_method == 'rank_centered':
+            ranks = pd.Series(val_array).rank(method='average').values
+            scores = 2 * (ranks - 1) / (n - 1) - 1
+        elif normalize_method == 'rank':
+            ranks = pd.Series(val_array).rank(method='average').values
+            scores = (ranks - 1) / (n - 1)
+        else:
+            scores = val_array.astype(float, copy=True)
+
+        if direction == -1:
+            if normalize_method == 'rank_centered':
+                scores = -scores
+            elif normalize_method == 'rank':
+                scores = 1 - scores
+            else:
+                scores = -scores
+
+        raw_ranks = pd.Series(val_array).rank(method='average', ascending=False).values
+        for i, sym in enumerate(sym_list):
+            factor_scores_map[sym][fid] = float(scores[i])
+            factor_ranks_map[sym][fid] = int(raw_ranks[i])
+
+    composite_scores = {}
+    for sym in data_dict:
+        active = [f for f in factor_ids if f in factor_scores_map.get(sym, {})]
+        if not active:
+            composite_scores[sym] = float('nan')
+            continue
+        if combine_mode == 'weighted':
+            weights = np.array([float(factor_weights.get(f, 1.0) or 0.0) for f in active], dtype=float)
+            total_w = float(np.sum(np.abs(weights)))
+            if total_w <= 0:
+                composite_scores[sym] = float(np.mean([factor_scores_map[sym][f] for f in active]))
+            else:
+                weights = weights / total_w
+                composite_scores[sym] = float(sum(factor_scores_map[sym][f] * w for f, w in zip(active, weights)))
+        else:
+            composite_scores[sym] = float(np.mean([factor_scores_map[sym][f] for f in active]))
+
+    def _sort_key(sym):
+        v = composite_scores[sym]
+        return (0 if math.isfinite(v) else 1, -v if math.isfinite(v) else 0.0)
+
+    sorted_symbols = sorted(data_dict.keys(), key=_sort_key)
+
+    results = []
+    for rank, sym in enumerate(sorted_symbols, 1):
+        results.append({
+            'symbol': sym,
+            'composite_score': round(composite_scores[sym], 4) if math.isfinite(composite_scores[sym]) else None,
+            'rank': rank,
+            'factor_values': {k: round(v, 4) if v is not None and math.isfinite(v) else None for k, v in factor_values_map.get(sym, {}).items()},
+            'factor_scores': {k: round(v, 4) if math.isfinite(v) else None for k, v in factor_scores_map.get(sym, {}).items()},
+            'factor_ranks': {k: v for k, v in factor_ranks_map.get(sym, {}).items()},
+        })
+
+    long_list = results[:long_count]
+    short_list = results[-short_count:][::-1] if short_count > 0 else []
+
+    return jsonify({
+        'success': True,
+        'long': long_list,
+        'short': short_list,
+        'all_ranked': results,
+        'total_candidates': len(results),
+        'factor_coverage': factor_coverage,
+        'n_symbols_loaded': len(data_dict),
+        'data_source': data_source,
+        'stale_symbols_dropped': len(stale_symbols) if data_source == 'realtime' else 0,
+        'scan_time': pd.Timestamp.now(tz='Asia/Shanghai').strftime('%Y-%m-%d %H:%M:%S'),
+    })
+
+
+_EXPORTS_DIR = Path(__file__).parent.parent / "static" / "exports"
+_VALID_EXTRA_KINDS = frozenset({'metrics', 'funding', 'basis', 'mark', 'index', 'onchain'})
+_LEGACY_DERIVATIVES_EXPAND = frozenset({'metrics', 'basis'})
+
+
+def _resolve_factor_data_requirements(factor_ids: list) -> dict:
+    result = {}
+    for fid in factor_ids:
+        try:
+            fdef = _get_repo().load_definition(fid)
+            if not fdef or not fdef.metadata:
+                continue
+            raw_reqs = fdef.metadata.get('requires_extras') or []
+            expanded = set()
+            for r in raw_reqs:
+                if r == 'derivatives':
+                    expanded.update(_LEGACY_DERIVATIVES_EXPAND)
+                elif r in _VALID_EXTRA_KINDS:
+                    expanded.add(r)
+            if expanded:
+                result[fid] = sorted(expanded)
+        except Exception:
+            pass
+    return result
+
+
+def _embed_factor_definitions(factor_ids: list) -> dict:
+    repo = _get_repo()
+    result = {}
+    for fid in factor_ids:
+        try:
+            fdef = repo.load_definition(fid)
+            if not fdef:
+                continue
+
+            artifacts_dict = fdef.artifacts.to_dict() if fdef.artifacts else {}
+            computation_type = fdef.computation_type
+            computation_data = artifacts_dict.copy()
+
+            if computation_type == 'formula':
+                formula_text = (fdef.artifacts.formula_inline or '').strip()
+                if not formula_text or formula_text.startswith('#'):
+                    func_file = fdef.artifacts.function_file
+                    if not func_file:
+                        for group in repo.list_source_groups():
+                            candidate = repo.storage_dir / group / 'functions' / f'{fid}.py'
+                            if candidate.exists():
+                                func_file = str(candidate.relative_to(repo.storage_dir))
+                                break
+                    if func_file:
+                        try:
+                            func_code = repo.load_text_artifact(func_file)
+                            computation_type = 'function'
+                            computation_data['function_code'] = func_code
+                            computation_data['function_file'] = func_file
+                            computation_data['entry_point'] = fdef.artifacts.entry_point or 'calculate'
+                        except Exception:
+                            pass
+
+            if computation_type == 'function' and 'function_code' not in computation_data:
+                func_file = fdef.artifacts.function_file
+                if func_file:
+                    try:
+                        func_code = repo.load_text_artifact(func_file)
+                        computation_data['function_code'] = func_code
+                    except Exception:
+                        pass
+
+            defn = {
+                'factor_id': fdef.factor_id,
+                'name': fdef.name,
+                'description': fdef.description,
+                'source_group': fdef.source_group,
+                'factor_kind': fdef.factor_kind,
+                'computation_type': computation_type,
+                'computation_data': computation_data,
+                'parameters': fdef.parameters or {},
+                'dependencies': fdef.dependencies or [],
+                'output_type': fdef.output_type or 'series',
+                'metadata': fdef.metadata or {},
+            }
+            result[fid] = defn
+        except Exception:
+            pass
+    return result
+
+
+@bp.route('/save_scan_config', methods=['POST'])
+def save_scan_config():
+    payload = request.get_json() or {}
+    config = payload.get('config')
+    if not config or not isinstance(config, dict):
+        return jsonify({'success': False, 'message': '缺少 config 对象'}), 400
+
+    meta = config.get('_meta', {})
+    if meta.get('type') != 'realtime_scan_config':
+        return jsonify({'success': False, 'message': 'config._meta.type 必须为 realtime_scan_config'}), 400
+
+    factor_ids = config.get('factor_ids') or []
+    resolved = _resolve_factor_data_requirements(factor_ids)
+    if resolved:
+        existing = config.get('factor_data_requirements') or {}
+        existing.update(resolved)
+        config['factor_data_requirements'] = existing
+
+    embedded = _embed_factor_definitions(factor_ids)
+    if embedded:
+        config['factor_definitions'] = embedded
+
+    if config.get('_meta', {}).get('version', 1) < 3:
+        config.setdefault('_meta', {})['version'] = 3
+
+    _EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    ts = pd.Timestamp.now(tz='Asia/Shanghai').strftime('%Y%m%d-%H%M%S')
+    filename = f"scan_config_{ts}.json"
+    filepath = _EXPORTS_DIR / filename
+
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+        logger.info(f"扫描配置已保存到服务端: {filepath}")
+        return jsonify({
+            'success': True,
+            'path': str(filepath),
+            'filename': filename,
+            'config': config,
+        })
+    except Exception as e:
+        logger.error(f"保存扫描配置失败: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500

@@ -57,6 +57,11 @@ FEATURES_CONFIG = [
     {"name": "close_open_diff", "desc": "收盘-开盘差"},
     {"name": "volume_price_corr", "desc": "量价相关"},
     {"name": "ma_deviation", "desc": "均线偏离"},
+    {"name": "basis", "desc": "基差(mark-index)", "source": "derivatives"},
+    {"name": "oi_change", "desc": "持仓量变化率", "source": "metrics"},
+    {"name": "lsr_spread", "desc": "散户-大户多空比差", "source": "metrics"},
+    {"name": "taker_imbalance", "desc": "主动买入失衡", "source": "kline"},
+    {"name": "funding_rate", "desc": "资金费率", "source": "funding"},
 ]
 
 CONSTANTS_POOL = [0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 60.0, -1.0, 0.01, 0.1]
@@ -354,6 +359,32 @@ class FeatureEngine:
         features['close_open_diff'] = (c - o) / (o + 1e-8)
         features['volume_price_corr'] = features['returns'].rolling(20, min_periods=2).corr(v.pct_change())
         features['ma_deviation'] = (c - c.rolling(20, min_periods=1).mean()) / (c.rolling(20, min_periods=1).std() + 1e-8)
+
+        if 'basis' in data.columns:
+            features['basis'] = data['basis'].fillna(0)
+        else:
+            features['basis'] = pd.Series(0.0, index=data.index)
+
+        if 'open_interest' in data.columns:
+            features['oi_change'] = data['open_interest'].pct_change(12).fillna(0)
+        else:
+            features['oi_change'] = pd.Series(0.0, index=data.index)
+
+        if 'lsr_global_account' in data.columns and 'lsr_top_account' in data.columns:
+            features['lsr_spread'] = (data['lsr_global_account'] - data['lsr_top_account']).fillna(0)
+        else:
+            features['lsr_spread'] = pd.Series(0.0, index=data.index)
+
+        if 'taker_buy_base' in data.columns and 'volume' in data.columns:
+            vol = data['volume'].replace(0, np.nan)
+            features['taker_imbalance'] = (data['taker_buy_base'] / vol - 0.5).fillna(0)
+        else:
+            features['taker_imbalance'] = pd.Series(0.0, index=data.index)
+
+        if 'funding_rate' in data.columns:
+            features['funding_rate'] = data['funding_rate'].fillna(0)
+        else:
+            features['funding_rate'] = pd.Series(0.0, index=data.index)
 
         for key in features:
             features[key] = features[key].replace([np.inf, -np.inf], np.nan).fillna(0)

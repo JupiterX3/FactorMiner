@@ -25,6 +25,7 @@
 import json
 import logging
 import hashlib
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional
 from dataclasses import dataclass, asdict
@@ -32,13 +33,16 @@ from datetime import datetime
 import importlib.util
 import pandas as pd  # noqa: F401 - 历史接口签名保留
 
+from .factor_schema import FactorDefinition as UnifiedFactorDefinition
+from .factor_schema import FactorArtifacts, FactorTraits, normalize_definition
+
 logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------------
 # 一级分类枚举（仅做校验与 fallback 用；物理上是动态扫描）
 # -----------------------------------------------------------------------------
-KNOWN_SOURCE_GROUPS = ("basic_kline", "derivatives", "funding")
+KNOWN_SOURCE_GROUPS = ("basic_kline", "derivatives", "funding", "onchain")
 
 
 @dataclass
@@ -162,80 +166,65 @@ class TransparentFactorStorage:
         return "basic_kline"
 
     # ------------------------------------------------------------------
-    # 计算入口
+    # 计算入口（兼容包装层，代理到 FactorExecutor）
     # ------------------------------------------------------------------
     def compute_factor(self, factor_id: str, data: 'pd.DataFrame', **kwargs) -> Optional['pd.Series']:
-        factor_def = self.load_factor_definition(factor_id)
-        if not factor_def:
-            raise ValueError(f"因子不存在: {factor_id}")
-
-        params = factor_def.parameters.copy()
-        params.update(kwargs)
-
+        warnings.warn(
+            "TransparentFactorStorage.compute_factor() is deprecated, use FactorExecutor.compute()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from .factor_executor import FactorExecutor
+        executor = FactorExecutor()
         try:
-            if factor_def.computation_type == "function":
-                return self._compute_function_factor(factor_def, data, params)
-            elif factor_def.computation_type in ("formula", "ml_model"):
-                # formula 与 ml_model（算法代理）统一由 factor_engine 处理
-                raise NotImplementedError(
-                    f"computation_type={factor_def.computation_type} "
-                    f"由 factor_engine 处理，不应在 storage 层计算"
-                )
-            else:
-                raise ValueError(
-                    f"不支持的计算类型: {factor_def.computation_type}；"
-                    f"v4 支持 function / formula / ml_model(算法代理)"
-                )
+            return executor.compute(factor_id, data, **kwargs)
+        except ValueError:
+            raise
         except Exception as e:
             logger.error(f"计算因子失败 {factor_id}: {e}")
             return None
 
-    def _compute_function_factor(
-        self, factor_def: FactorDefinition, data: 'pd.DataFrame', params: Dict
-    ) -> 'pd.Series':
-        comp_data = factor_def.computation_data
-        func_rel = comp_data.get("function_file")
-        if not func_rel:
-            raise ValueError(f"因子 {factor_def.factor_id} 缺少 function_file")
-
-        # 允许绝对路径或相对 storage_dir；找不到时遍历所有一级目录 functions/
-        func_file = self.storage_dir / func_rel
-        if not func_file.exists():
-            fname = Path(func_rel).name
-            for fdir in self._functions_dirs():
-                candidate = fdir / fname
-                if candidate.exists():
-                    func_file = candidate
-                    break
-        if not func_file.exists():
-            raise FileNotFoundError(f"找不到因子函数文件: {func_rel}")
-
-        entry_point = comp_data.get("entry_point", "calculate")
-        spec = importlib.util.spec_from_file_location(
-            f"factor_{factor_def.factor_id}", func_file
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-
-        if not hasattr(module, entry_point):
-            raise ValueError(f"函数中未找到入口点: {entry_point}")
-        func = getattr(module, entry_point)
-        return func(data, **params)
-
     # ------------------------------------------------------------------
     # 定义读写
     # ------------------------------------------------------------------
-    def load_factor_definition(self, factor_id: str) -> Optional[FactorDefinition]:
+    def _load_factor_definition_dict(self, factor_id: str) -> Optional[Dict]:
+        for d in self._definitions_dirs():
+            def_file = d / f"{factor_id}.json"
+            if def_file.exists():
+                with open(def_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        return None
+
+    def load_factor_definition(self, factor_id: str) -> Optional["UnifiedFactorDefinition"]:
         try:
-            for d in self._definitions_dirs():
-                def_file = d / f"{factor_id}.json"
-                if def_file.exists():
-                    with open(def_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    return FactorDefinition(**data)
+            data = self._load_factor_definition_dict(factor_id)
+            if data is not None:
+                return normalize_definition(data, known_source_groups=self.list_source_groups())
             return None
         except Exception as e:
             logger.error(f"加载因子定义失败: {e}")
+            return None
+
+    def load_normalized_factor_definition(
+        self, factor_id: str
+    ) -> Optional[UnifiedFactorDefinition]:
+        """
+        加载统一 schema 的因子定义（第一阶段接入点）。
+
+        注意：
+        - `load_factor_definition()` 继续返回历史的 storage 层定义对象，避免影响旧链路；
+        - 新代码可逐步迁移到本方法，拿到 `factor_schema.py` 中的统一定义。
+        """
+        try:
+            data = self._load_factor_definition_dict(factor_id)
+            if data is None:
+                return None
+            return normalize_definition(
+                data,
+                known_source_groups=self.list_source_groups(),
+            )
+        except Exception as e:
+            logger.error(f"加载统一因子定义失败: {e}")
             return None
 
     def list_factors(self) -> List[str]:
@@ -266,22 +255,14 @@ class TransparentFactorStorage:
         return factors
 
     def delete_factor(self, factor_id: str) -> bool:
-        try:
-            removed = False
-            for d in self._definitions_dirs():
-                def_file = d / f"{factor_id}.json"
-                if def_file.exists():
-                    def_file.unlink()
-                    removed = True
-            for d in self._functions_dirs():
-                fn_file = d / f"{factor_id}.py"
-                if fn_file.exists():
-                    fn_file.unlink()
-                    removed = True
-            return removed
-        except Exception as e:
-            logger.error(f"删除因子失败: {e}")
-            return False
+        warnings.warn(
+            "TransparentFactorStorage.delete_factor() is deprecated, use FactorLifecycleService.delete_factor()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        lifecycle = self._get_lifecycle()
+        result = lifecycle.delete_factor(factor_id, cascade=True)
+        return result.success
 
     def _save_factor_definition(self, factor_def: FactorDefinition) -> bool:
         try:
@@ -298,8 +279,12 @@ class TransparentFactorStorage:
             return False
 
     # ------------------------------------------------------------------
-    # 便捷 API
+    # 便捷 API（兼容包装层，内部代理到 FactorLifecycleService）
     # ------------------------------------------------------------------
+    def _get_lifecycle(self):
+        from .factor_lifecycle import FactorLifecycleService
+        return FactorLifecycleService()
+
     def save_function_factor(
         self,
         factor_id: str,
@@ -312,69 +297,109 @@ class TransparentFactorStorage:
         imports: List[str] = None,
         parameters: Dict = None,
     ) -> bool:
-        """
-        保存函数类因子；category 应为一级分类目录名（basic_kline/derivatives/funding）。
-        """
-        try:
-            group = self._group_for_category(category)
-            functions_dir = self.storage_dir / group / "functions"
-            functions_dir.mkdir(parents=True, exist_ok=True)
+        warnings.warn(
+            "TransparentFactorStorage.save_function_factor() is deprecated, use FactorLifecycleService.save_factor()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        group = self._group_for_category(category)
+        func_rel_path = f"{group}/functions/{factor_id}.py"
 
-            func_file = functions_dir / f"{factor_id}.py"
-            with open(func_file, 'w', encoding='utf-8') as f:
-                if imports:
-                    for imp in imports:
-                        f.write(f"{imp}\n")
-                    f.write("\n")
-                f.write(function_code)
+        unified_def = UnifiedFactorDefinition(
+            factor_id=factor_id,
+            name=name,
+            description=description,
+            source_group=group,
+            factor_kind=subcategory or "technical",
+            computation_type="function",
+            artifacts=FactorArtifacts(
+                function_file=func_rel_path,
+                entry_point=entry_point,
+                extra={"function_code": function_code, "imports": imports or []},
+            ),
+            parameters=parameters or {},
+            traits=FactorTraits(is_mined=subcategory == "mined"),
+        )
+        artifacts_map = {func_rel_path: function_code}
+        result = self._get_lifecycle().save_factor(
+            unified_def, artifacts=artifacts_map, overwrite=True, validate=True
+        )
+        return result.success
 
-            factor_def = FactorDefinition(
-                factor_id=factor_id,
-                name=name,
-                description=description,
-                category=group,
-                subcategory=subcategory,
-                computation_type="function",
-                computation_data={
-                    "function_file": str(func_file.relative_to(self.storage_dir)),
-                    "function_code": function_code,
-                    "entry_point": entry_point,
-                    "imports": imports or [],
-                },
-                parameters=parameters or {},
-            )
-            return self._save_factor_definition(factor_def)
-        except Exception as e:
-            logger.error(f"保存因子失败: {e}")
-            return False
-
-    # 兼容老名字：save_technical_factor 现在就是 save_function_factor
     def save_technical_factor(self, *args, **kwargs) -> bool:
+        warnings.warn(
+            "TransparentFactorStorage.save_technical_factor() is deprecated, use FactorLifecycleService.save_factor()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         kwargs.setdefault("category", "basic_kline")
         kwargs.setdefault("subcategory", "technical")
         return self.save_function_factor(*args, **kwargs)
 
-    # 兼容老名字：挖掘因子
     def save_minactor_factor(
         self, factor_id: str, name: str,
-        function_code: str,
+        function_code: str = "",
         description: str = "",
         subcategory: str = "mined",
         entry_point: str = "calculate",
         imports: List[str] = None,
         parameters: Dict = None,
+        algorithm_name: str = None,
+        category: str = "basic_kline",
+        performance_metrics: Dict = None,
+        **extra_kwargs,
     ) -> bool:
-        return self.save_function_factor(
-            factor_id=factor_id,
-            name=name,
-            function_code=function_code,
-            description=description,
-            category="basic_kline",
-            subcategory=subcategory,
-            entry_point=entry_point,
-            imports=imports,
-            parameters=parameters,
+        warnings.warn(
+            "TransparentFactorStorage.save_minactor_factor() is deprecated, use FactorLifecycleService.save_factor()",
+            DeprecationWarning,
+            stacklevel=2,
         )
+        group = self._group_for_category(category)
+        is_proxy = bool(algorithm_name) and not function_code
+
+        if is_proxy:
+            unified_def = UnifiedFactorDefinition(
+                factor_id=factor_id,
+                name=name,
+                description=description,
+                source_group=group,
+                factor_kind=subcategory or "mined",
+                computation_type="algorithm_proxy",
+                artifacts=FactorArtifacts(
+                    algorithm_name=algorithm_name,
+                    proxy_key=algorithm_name,
+                    entry_point=entry_point,
+                ),
+                parameters=parameters or {},
+                traits=FactorTraits(is_mined=True),
+                metadata=performance_metrics or {},
+            )
+            result = self._get_lifecycle().save_factor(
+                unified_def, overwrite=True, validate=True
+            )
+        else:
+            func_rel_path = f"{group}/functions/{factor_id}.py"
+            unified_def = UnifiedFactorDefinition(
+                factor_id=factor_id,
+                name=name,
+                description=description,
+                source_group=group,
+                factor_kind=subcategory or "mined",
+                computation_type="function",
+                artifacts=FactorArtifacts(
+                    function_file=func_rel_path,
+                    entry_point=entry_point,
+                    extra={"function_code": function_code, "imports": imports or []},
+                ),
+                parameters=parameters or {},
+                traits=FactorTraits(is_mined=True),
+                metadata=performance_metrics or {},
+            )
+            artifacts_map = {func_rel_path: function_code} if function_code else {}
+            result = self._get_lifecycle().save_factor(
+                unified_def, artifacts=artifacts_map, overwrite=True, validate=True
+            )
+        return result.success
 
     # ------------------------------------------------------------------
     # 评估与挖掘历史
@@ -382,36 +407,33 @@ class TransparentFactorStorage:
     def save_evaluation(
         self, factor_id: str, evaluation_data: Dict, source: str = None
     ) -> bool:
-        """
-        保存评估结果到因子所在一级分类的 evaluations/ 目录。
+        warnings.warn(
+            "TransparentFactorStorage.save_evaluation() is deprecated, use FactorRepository.save_evaluations()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        from .factor_catalog import FactorCatalogService
+        from .factor_repository import FactorRepository
 
-        `source` 参数兼容旧实现（historically: 'technicals'/'minactors'），
-        但现在以 factor 的实际分类目录为准。
-        """
         try:
-            factor_def = self.load_factor_definition(factor_id)
-            group = self._group_for_category(
-                factor_def.category if factor_def else ""
-            )
-            eval_dir = self.storage_dir / group / "evaluations"
-            eval_dir.mkdir(parents=True, exist_ok=True)
-            eval_file = eval_dir / f"{factor_id}.json"
+            repo = FactorRepository()
+            catalog = FactorCatalogService(repo)
+            factor_def = catalog.get_factor(factor_id)
+            source_group = factor_def.source_group if factor_def else "basic_kline"
 
-            existing = {}
-            if eval_file.exists():
-                with open(eval_file, 'r', encoding='utf-8') as f:
-                    existing = json.load(f)
-            evaluations = existing.get('evaluations', [])
+            payload = repo.load_evaluations(factor_id)
+            evaluations = payload.get("evaluations", [])
             evaluations.append(
                 {
-                    'evaluated_at': datetime.now().isoformat(),
-                    'results': evaluation_data,
+                    "evaluated_at": datetime.now().isoformat(),
+                    "results": evaluation_data,
                 }
             )
-            existing['evaluations'] = evaluations
+            payload["evaluations"] = evaluations
+            repo.save_evaluations(factor_id, payload, source_group)
 
-            with open(eval_file, 'w', encoding='utf-8') as f:
-                json.dump(existing, f, ensure_ascii=False, indent=2)
+            catalog.invalidate_index_cache()
+            catalog.update_index_entry(factor_id)
             return True
         except Exception as e:
             logger.error(f"保存评估失败: {e}")

@@ -14,7 +14,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 ROOT = Path(__file__).parent.parent
 FACTORLIB = ROOT / "factorlib"
@@ -29,6 +29,7 @@ def _write_factor(
     function_code: str,
     parameters: Dict | None = None,
     imports: List[str] | None = None,
+    requires_extras: Optional[List[str]] = None,
 ) -> None:
     def_dir = FACTORLIB / group / "definitions"
     fn_dir = FACTORLIB / group / "functions"
@@ -41,7 +42,19 @@ def _write_factor(
     with open(fn_path, "w", encoding="utf-8") as f:
         f.write(header + "\n\n" + function_code.strip() + "\n")
 
-    # 写 JSON
+    # 写 JSON（requires_extras：截面评估用于决定 join 哪些额外 feather；空列表不写该字段）
+    if requires_extras is None and group == "funding":
+        requires_extras = ["funding"]
+    elif requires_extras is None:
+        requires_extras = []
+
+    meta = {
+        "created_at": datetime.now().isoformat(),
+        "source_family": group,
+    }
+    if requires_extras:
+        meta["requires_extras"] = requires_extras
+
     def_path = def_dir / f"{factor_id}.json"
     payload = {
         "factor_id": factor_id,
@@ -59,11 +72,7 @@ def _write_factor(
         "parameters": parameters or {},
         "dependencies": [],
         "output_type": "series",
-        "metadata": {
-            "created_at": datetime.now().isoformat(),
-            "source_family": group,
-            "requires_extras": [group],
-        },
+        "metadata": meta,
     }
     with open(def_path, "w", encoding="utf-8") as f:
         json.dump(payload, f, ensure_ascii=False, indent=2)
@@ -304,6 +313,15 @@ FUNDING_FACTORS = [
 ]
 
 
+def _deriv_requires_extras(factor_id: str) -> List[str]:
+    """与 webui 截面评估 join_extras 对齐：metrics / basis；纯 OHLCV 列因子返回空列表。"""
+    if factor_id in ("taker_buy_ratio", "taker_buy_imbalance_zscore"):
+        return []
+    if factor_id.startswith("basis_"):
+        return ["basis"]
+    return ["metrics"]
+
+
 def main() -> None:
     for spec in DERIV_FACTORS:
         _write_factor(
@@ -314,6 +332,7 @@ def main() -> None:
             subcategory=spec["subcategory"],
             function_code=spec["code"],
             parameters=spec.get("parameters"),
+            requires_extras=_deriv_requires_extras(spec["factor_id"]),
         )
     for spec in FUNDING_FACTORS:
         _write_factor(

@@ -153,12 +153,7 @@ class DataLoader:
             
             print(f"成功加载数据: {data.shape[0]} 条记录")
             return data
-            
-            # 添加技术指标
-            data = self._add_technical_indicators(data)
-            
-            return data
-            
+
         except Exception as e:
             print(f"获取币安数据失败: {e}")
             return pd.DataFrame()
@@ -166,6 +161,155 @@ class DataLoader:
     # ------------------------------------------------------------------
     # 额外数据列 join（metrics / funding / mark / index）
     # ------------------------------------------------------------------
+    @staticmethod
+    def _left_join_on_date(main_df: pd.DataFrame, extra_df: pd.DataFrame,
+                           how: str = 'left') -> pd.DataFrame:
+        if extra_df is None or extra_df.empty:
+            return main_df
+        if main_df is None or main_df.empty:
+            return main_df
+
+        def _normalize_dt_index(idx) -> pd.DatetimeIndex:
+            dt_idx = pd.to_datetime(idx, errors='coerce')
+            # 统一到 UTC-naive，避免 tz-aware 与 tz-naive 之间 reindex 报 dtype 不可比较
+            try:
+                if getattr(dt_idx, 'tz', None) is not None:
+                    dt_idx = dt_idx.tz_convert('UTC').tz_localize(None)
+            except Exception:
+                try:
+                    dt_idx = dt_idx.tz_localize(None)
+                except Exception:
+                    pass
+            return dt_idx
+
+        extra = extra_df.copy()
+        if 'date' in extra.columns:
+            extra['date'] = pd.to_datetime(extra['date'], errors='coerce')
+            extra = extra.set_index('date')
+
+        # 临时将主表索引和 extra 索引都规范化到同一时区口径进行对齐，
+        # 完成后恢复主表原始索引，避免影响调用方。
+        original_main_index = main_df.index
+        main = main_df.copy()
+        main.index = _normalize_dt_index(main.index)
+        extra.index = _normalize_dt_index(extra.index)
+
+        extra = extra[extra.index.notna()]
+        extra = extra[~extra.index.duplicated(keep='last')].sort_index()
+
+        aligned = extra.reindex(main.index, method='ffill')
+        for col in aligned.columns:
+            main[col] = aligned[col]
+
+        main.index = original_main_index
+        return main
+
+    def join_extras(
+        self,
+        df: pd.DataFrame,
+        symbol: str,
+        interval: str = '1h',
+        include: Optional[List[str]] = None,
+    ) -> pd.DataFrame:
+        """
+        向已有 DataFrame 按 date 索引左连接额外数据列（metrics / funding / mark / index / basis / macro / sentiment）。
+
+        适用于已经通过 load_local_market_data 等方式加载了基础 OHLCV 的场景，
+        只需追加衍生品 / 资金费率等额外列即可。
+
+        Args:
+            df: 基础 OHLCV DataFrame（需有 DatetimeIndex）。
+            symbol: 交易对，如 ``BTC_USDT``。
+            interval: K 线周期，用于定位 mark / index / macro / sentiment 文件。
+            include: 要 join 的额外数据类别，支持 ``'metrics'``、``'funding'``、
+                     ``'mark'``、``'index'``、``'basis'``（快捷：自动含 mark+index 并派生）、
+                     ``'macro'``（全局宏观因子 DXY/SPX/IXIC/Gold/10Y）、
+                     ``'sentiment'``（全局情绪因子 VIX/稳定币购买力）。
+                     默认 None 等价于 ``['metrics', 'funding', 'basis']``。
+
+        Returns:
+            追加了额外列的 df（原地修改并返回）。找不到的额外文件不会报错，只是对应列缺失。
+        """
+        if df is None or df.empty:
+            return df
+
+        include = include if include is not None else ['metrics', 'funding', 'basis']
+
+        safe_symbol = symbol if symbol.endswith('_USDT_USDT') else (
+            f"{symbol}_USDT_USDT" if '_USDT' not in symbol else f"{symbol}_USDT"
+        )
+
+        project_root = Path(__file__).parent.parent.parent
+        base_dir = project_root / "data" / "binance"
+
+        # 1. metrics（归档固定 5m 粒度，由 _left_join_on_date ffill 到目标周期）
+        if 'metrics' in include:
+            metrics_path = base_dir / "futures_metrics" / (
+                f"{safe_symbol}-5m-metrics.feather"
+            )
+            if metrics_path.exists():
+                try:
+                    df = self._left_join_on_date(df, pd.read_feather(metrics_path))
+                except Exception as e:
+                    print(f"join metrics 失败: {e}")
+
+        # 2. funding（事件级，需要 ffill 到 K 线）
+        if 'funding' in include:
+            funding_path = base_dir / "futures_funding" / f"{safe_symbol}-funding.feather"
+            if funding_path.exists():
+                try:
+                    df = self._left_join_on_date(df, pd.read_feather(funding_path))
+                except Exception as e:
+                    print(f"join funding 失败: {e}")
+
+        # 3. mark / index / basis
+        want_basis = 'basis' in include
+        need_mark = 'mark' in include or want_basis
+        need_index = 'index' in include or want_basis
+        if need_mark:
+            mark_path = base_dir / "futures_markprice" / (
+                f"{safe_symbol}-{interval}-mark.feather"
+            )
+            if mark_path.exists():
+                try:
+                    df = self._left_join_on_date(df, pd.read_feather(mark_path))
+                except Exception as e:
+                    print(f"join mark 失败: {e}")
+        if need_index:
+            index_path = base_dir / "futures_indexprice" / (
+                f"{safe_symbol}-{interval}-index.feather"
+            )
+            if index_path.exists():
+                try:
+                    df = self._left_join_on_date(df, pd.read_feather(index_path))
+                except Exception as e:
+                    print(f"join index 失败: {e}")
+        if want_basis and 'index_close' in df.columns:
+            if 'mark_close' in df.columns:
+                df['basis'] = (df['mark_close'] - df['index_close']) / df['index_close']
+            elif 'close' in df.columns:
+                df['basis'] = (df['close'] - df['index_close']) / df['index_close']
+
+        # 5. macro（全局数据，不含 symbol）
+        if 'macro' in include:
+            macro_path = base_dir / "futures_macro" / f"{interval}-macro.feather"
+            if macro_path.exists():
+                try:
+                    df = self._left_join_on_date(df, pd.read_feather(macro_path))
+                except Exception as e:
+                    print(f"join macro 失败: {e}")
+
+        # 6. sentiment（全局数据，不含 symbol）
+        if 'sentiment' in include:
+            sentiment_path = base_dir / "futures_sentiment" / f"{interval}-sentiment.feather"
+            if sentiment_path.exists():
+                try:
+                    df = self._left_join_on_date(df, pd.read_feather(sentiment_path))
+                except Exception as e:
+                    print(f"join sentiment 失败: {e}")
+
+        return df
+
     def load_with_extras(
         self,
         symbol: str,
@@ -195,78 +339,7 @@ class DataLoader:
         if base is None or base.empty:
             return pd.DataFrame()
 
-        safe_symbol = symbol if symbol.endswith('_USDT_USDT') else (
-            f"{symbol}_USDT_USDT" if '_USDT' not in symbol else f"{symbol}_USDT"
-        )
-
-        project_root = Path(__file__).parent.parent.parent
-        base_dir = project_root / "data" / "binance"
-
-        def _left_join_on_date(main_df: pd.DataFrame, extra_df: pd.DataFrame,
-                               how: str = 'left') -> pd.DataFrame:
-            if extra_df is None or extra_df.empty:
-                return main_df
-            extra = extra_df.copy()
-            if 'date' in extra.columns:
-                extra['date'] = pd.to_datetime(extra['date'], errors='coerce')
-                if getattr(extra['date'].dt, 'tz', None) is not None:
-                    extra['date'] = extra['date'].dt.tz_localize(None)
-                extra = extra.set_index('date')
-            if getattr(extra.index, 'tz', None) is not None:
-                extra.index = extra.index.tz_localize(None)
-            # 以 main 索引为左基，精确对齐；缺失位置用向前填充（对 5min→1h 对齐友好）
-            extra = extra[~extra.index.duplicated(keep='last')].sort_index()
-            aligned = extra.reindex(main_df.index, method='ffill')
-            for col in aligned.columns:
-                main_df[col] = aligned[col]
-            return main_df
-
-        # 1. metrics
-        if 'metrics' in include:
-            metrics_path = base_dir / "futures_metrics" / (
-                f"{safe_symbol}-{interval}-metrics.feather"
-            )
-            if metrics_path.exists():
-                try:
-                    base = _left_join_on_date(base, pd.read_feather(metrics_path))
-                except Exception as e:
-                    print(f"join metrics 失败: {e}")
-
-        # 2. funding（事件级，需要 ffill 到 K 线）
-        if 'funding' in include:
-            funding_path = base_dir / "futures_funding" / f"{safe_symbol}-funding.feather"
-            if funding_path.exists():
-                try:
-                    base = _left_join_on_date(base, pd.read_feather(funding_path))
-                except Exception as e:
-                    print(f"join funding 失败: {e}")
-
-        # 3. mark / index / basis
-        want_basis = 'basis' in include
-        need_mark = 'mark' in include or want_basis
-        need_index = 'index' in include or want_basis
-        if need_mark:
-            mark_path = base_dir / "futures_markprice" / (
-                f"{safe_symbol}-{interval}-mark.feather"
-            )
-            if mark_path.exists():
-                try:
-                    base = _left_join_on_date(base, pd.read_feather(mark_path))
-                except Exception as e:
-                    print(f"join mark 失败: {e}")
-        if need_index:
-            index_path = base_dir / "futures_indexprice" / (
-                f"{safe_symbol}-{interval}-index.feather"
-            )
-            if index_path.exists():
-                try:
-                    base = _left_join_on_date(base, pd.read_feather(index_path))
-                except Exception as e:
-                    print(f"join index 失败: {e}")
-        if want_basis and 'index_close' in base.columns and 'close' in base.columns:
-            base['basis'] = (base['close'] - base['index_close']) / base['index_close']
-
-        return base
+        return self.join_extras(base, symbol, interval=interval, include=include)
 
     def _get_local_exchange_data(self,
                                   symbol: str,

@@ -1,6 +1,7 @@
 """
 时序因子训练模型API路由
 支持决策树(LightGBM/XGBoost)、逻辑回归等模型
+支持TSFM(IBM Granite TTM)时序基础模型微调
 支持回归/分类方式预测未来时间步标签
 损失函数参考 audit/损失函数说明.md
 """
@@ -29,6 +30,12 @@ from sklearn.metrics import (
     roc_auc_score, log_loss
 )
 
+try:
+    from tsfm_public import TimeSeriesPreprocessor, TinyTimeMixerForPrediction
+    TSFM_AVAILABLE = True
+except ImportError:
+    TSFM_AVAILABLE = False
+
 bp = Blueprint('training_api', __name__, url_prefix='/api/training')
 
 logger = logging.getLogger(__name__)
@@ -45,7 +52,7 @@ VALID_MODEL_ID_PATTERN = re.compile(r'^[A-Za-z0-9_.-]+$')
 TRAINING_SESSION_TTL_SECONDS = 30 * 60
 TRAINING_MAX_SESSIONS = 50
 DEFAULT_MAX_CONCURRENT_TRAININGS = 1
-DEFAULT_TRAINING_TIMEOUT_SECONDS = 30 * 60
+DEFAULT_TRAINING_TIMEOUT_SECONDS = 0
 
 
 _EXCHANGE_NAMES = frozenset({'binance', 'okx', 'bybit', 'huobi', 'kucoin', 'gate', 'bitget'})
@@ -164,8 +171,12 @@ def _assert_training_alive(session_id):
         if session.get('cancel_requested'):
             raise TrainingCancelled("用户已取消训练")
         start_ts = session.get('start_ts')
-        timeout_seconds = float(session.get('timeout_seconds') or DEFAULT_TRAINING_TIMEOUT_SECONDS)
-    if start_ts and (time.time() - start_ts) > timeout_seconds:
+        raw_timeout = session.get('timeout_seconds')
+        if raw_timeout is None:
+            timeout_seconds = float(DEFAULT_TRAINING_TIMEOUT_SECONDS)
+        else:
+            timeout_seconds = float(raw_timeout)
+    if timeout_seconds > 0 and start_ts and (time.time() - start_ts) > timeout_seconds:
         raise TimeoutError(f"训练超时（>{int(timeout_seconds)}秒）")
 
 
@@ -206,6 +217,201 @@ def _load_feather_data(file_path, start_date=None, end_date=None):
             logger.warning("数据时间索引存在重复，自动去重(keep=first)")
             df = df[~df.index.duplicated(keep='first')]
     return df
+
+
+def _normalize_dt_index(idx):
+    dt_idx = pd.to_datetime(idx, errors='coerce')
+    try:
+        if getattr(dt_idx, 'tz', None) is not None:
+            dt_idx = dt_idx.tz_convert('UTC').tz_localize(None)
+    except Exception:
+        try:
+            dt_idx = dt_idx.tz_localize(None)
+        except Exception:
+            pass
+    return dt_idx
+
+
+def _infer_symbol_timeframe_from_feather_path(file_path: str):
+    """
+    约定主 K 线 feather 命名类似:
+        BTC_USDT_USDT-1h-futures.feather
+    取最后倒数第二段为 timeframe，前面合并为 symbol。
+    """
+    try:
+        stem = Path(file_path).stem
+        parts = stem.split('-')
+        if len(parts) < 3:
+            return None, None
+        timeframe = parts[-2]
+        symbol_raw = '-'.join(parts[:-2])
+        return symbol_raw, timeframe
+    except Exception:
+        return None, None
+
+
+def _infer_exchange_trade_from_feather_path(file_path: str):
+    """从文件路径中推断 exchange / trade_type。"""
+    try:
+        p = Path(file_path).resolve()
+        parts = [x.lower() for x in p.parts]
+        exchange = None
+        trade_type = None
+        for i, seg in enumerate(parts):
+            if seg in _EXCHANGE_NAMES:
+                exchange = seg
+                if i + 1 < len(parts) and parts[i + 1] in _TRADE_TYPE_NAMES:
+                    trade_type = parts[i + 1]
+                break
+        return exchange, trade_type
+    except Exception:
+        return None, None
+
+
+def _extra_symbol_candidates(symbol_raw: str):
+    """从主数据文件符号推测额外数据文件的 safe_symbol。"""
+    if not symbol_raw:
+        return []
+    cands = [symbol_raw]
+    # 常见主文件为 BTC_USDT_USDT，额外数据为 BTC_USDT
+    if symbol_raw.endswith('_USDT_USDT'):
+        cands.append(symbol_raw[:-len('_USDT')])
+    # 也兼容其它写法：如果包含多余的 _USDT，可尝试只保留一个 _USDT
+    if cands[-1] != symbol_raw and '_USDT_USDT' in symbol_raw:
+        cands.append(symbol_raw.replace('_USDT_USDT', '_USDT', 1))
+    # 去重保持顺序
+    out = []
+    seen = set()
+    for s in cands:
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        out.append(s)
+    return out
+
+
+def _left_join_extra_numeric_columns(main_df: pd.DataFrame, extra_df: pd.DataFrame, source_prefix: str = "extra"):
+    """
+    按主表 DatetimeIndex 左连接额外数据的数值列，并用 forward fill 对齐。
+    返回 (main_df, added_columns)。
+    """
+    if main_df is None or main_df.empty:
+        return main_df, []
+    if extra_df is None or extra_df.empty:
+        return main_df, []
+
+    main = main_df
+    main_index = main.index
+    main_dt_index = _normalize_dt_index(main_index)
+
+    extra = extra_df.copy()
+    if 'date' in extra.columns:
+        extra['date'] = pd.to_datetime(extra['date'], errors='coerce')
+        extra = extra.set_index('date')
+    elif isinstance(extra.index, pd.DatetimeIndex):
+        extra.index = _normalize_dt_index(extra.index)
+    else:
+        # 无法定位时间列，跳过
+        return main_df, []
+
+    extra.index = _normalize_dt_index(extra.index)
+    extra = extra[~extra.index.duplicated(keep='last')].sort_index()
+    extra_numeric = extra.select_dtypes(include=[np.number])
+    if extra_numeric.empty:
+        return main_df, []
+
+    aligned = extra_numeric.reindex(main_dt_index, method='ffill')
+    added = []
+    renamed = {}
+    for col in aligned.columns:
+        target_col = col
+        if target_col in main.columns:
+            base = f"extra_{source_prefix}_{col}"
+            target_col = base
+            idx = 1
+            while target_col in main.columns:
+                target_col = f"{base}_{idx}"
+                idx += 1
+            renamed[col] = target_col
+        if target_col not in main.columns:
+            added.append(target_col)
+        main[target_col] = aligned[col].values
+    return main, added, renamed
+
+
+def _try_join_extra_files_for_tsfm(df: pd.DataFrame, file_path: str):
+    """
+    TSFM训练前自动把额外数据(feather)并入主数据df，确保控制变量能被TSFM看到。
+    只在能推断出 symbol/timeframe 且对应文件存在时才会 join。
+    """
+    symbol_raw, timeframe = _infer_symbol_timeframe_from_feather_path(file_path)
+    if not symbol_raw or not timeframe:
+        return df, {'extra_files': [], 'extra_columns': []}
+
+    exchange, trade_type = _infer_exchange_trade_from_feather_path(file_path)
+    trade_prefix = 'futures' if trade_type in (None, '', 'futures', 'swap') else trade_type
+    data_root = _get_allowed_data_root()
+    root = data_root / (exchange or 'binance')
+    safe_symbols = _extra_symbol_candidates(symbol_raw)
+    if not safe_symbols:
+        return df, {'extra_files': [], 'extra_columns': [], 'renamed_columns': {}}
+
+    candidates = [
+        (
+            'metrics',
+            lambda ss: [
+                root / f'{trade_prefix}_metrics' / f'{ss}-{timeframe}-metrics.feather',
+                root / f'{trade_prefix}_metrics' / f'{ss}-5m-metrics.feather',
+            ],
+        ),
+        ('funding', lambda ss: [root / f'{trade_prefix}_funding' / f'{ss}-funding.feather']),
+        ('mark', lambda ss: [root / f'{trade_prefix}_markprice' / f'{ss}-{timeframe}-mark.feather']),
+        ('index', lambda ss: [root / f'{trade_prefix}_indexprice' / f'{ss}-{timeframe}-index.feather']),
+        ('liquidations', lambda ss: [root / f'{trade_prefix}_liquidations' / f'{ss}-{timeframe}-liquidations.feather']),
+        ('macro', lambda ss: [root / f'{trade_prefix}_macro' / f'{ss}-{timeframe}-macro.feather']),
+        ('sentiment', lambda ss: [root / f'{trade_prefix}_sentiment' / f'{ss}-{timeframe}-sentiment.feather']),
+    ]
+
+    extra_files = []
+    extra_columns = []
+    renamed_columns = {}
+    out = df
+    for ss in safe_symbols:
+        for dt_name, p_fn in candidates:
+            p_list = p_fn(ss)
+            picked = None
+            for p in p_list:
+                if p.exists():
+                    picked = p
+                    break
+            if picked is None:
+                continue
+            try:
+                extra_df = pd.read_feather(picked)
+                out, added_cols, renamed_map = _left_join_extra_numeric_columns(out, extra_df, source_prefix=dt_name)
+                extra_files.append(str(picked))
+                extra_columns.extend(added_cols)
+                if renamed_map:
+                    renamed_columns[str(picked)] = renamed_map
+            except Exception as e:
+                logger.warning(f"TSFM并入额外数据失败 {picked}: {e}")
+
+    if 'mark_close' in out.columns and 'index_close' in out.columns and 'basis' not in out.columns:
+        out['basis'] = (out['mark_close'] - out['index_close']) / out['index_close']
+        extra_columns.append('basis')
+    elif 'index_close' in out.columns and 'close' in out.columns and 'basis' not in out.columns:
+        out['basis'] = (out['close'] - out['index_close']) / out['index_close']
+        extra_columns.append('basis')
+
+    # 去重保持顺序
+    uniq_cols = []
+    seen = set()
+    for c in extra_columns:
+        if c in seen:
+            continue
+        seen.add(c)
+        uniq_cols.append(c)
+    return out, {'extra_files': extra_files, 'extra_columns': uniq_cols, 'renamed_columns': renamed_columns}
 
 
 def _sanitize_feature_names(columns):
@@ -269,26 +475,28 @@ def _build_label(df, label_type, predict_step=1):
         future_close = close.shift(-predict_step)
         ret = future_close / close - 1
         label = pd.Series(np.nan, index=ret.index, dtype=float)
-        label[ret > 0] = 1.0
+        label[ret >= 0] = 1.0
         label[ret < 0] = 0.0
         label.name = f'direction_{predict_step}'
     elif label_type == 'composite':
         future_close = close.shift(-predict_step)
         log_ret = np.log(future_close / close)
-        direction = (log_ret > 0).astype(int)
-        label = log_ret * (1 + direction)
+        label = np.sign(log_ret) * np.abs(log_ret) ** 0.5
         label.name = f'composite_{predict_step}'
     else:
         raise ValueError(f"不支持的标签类型: {label_type}")
     return label
 
 
-def _split_data_chronological(df, train_ratio=0.8, test_ratio=0.1, val_ratio=0.1):
+def _split_data_chronological(df, train_ratio=0.8, val_ratio=0.1):
     """按时间顺序 train → val → test 三段式切分。
 
     val 段位于中间，供 early stopping 使用；test 段位于最末，供最终评估。
     返回顺序与时间顺序一致：(train_df, val_df, test_df)。
+    test 集大小 = 1 - train_ratio - val_ratio。
     """
+    if train_ratio + val_ratio >= 1.0:
+        raise ValueError(f"train_ratio({train_ratio}) + val_ratio({val_ratio}) 必须 < 1.0")
     n = len(df)
     train_end = int(n * train_ratio)
     val_end = int(n * (train_ratio + val_ratio))
@@ -347,8 +555,25 @@ class MagnitudeWeightedDirectionLoss:
         return mse + mag_penalty
 
 
+class MSEHingeLoss:
+    @staticmethod
+    def compute(y_true, y_pred, alpha=1.0, beta=1.0):
+        y_true = np.asarray(y_true, dtype=np.float64)
+        y_pred = np.asarray(y_pred, dtype=np.float64)
+        mask = ~(np.isnan(y_true) | np.isnan(y_pred))
+        y_true = y_true[mask]
+        y_pred = y_pred[mask]
+        if len(y_true) == 0:
+            return 0.0
+        mse = np.mean((y_true - y_pred) ** 2)
+        hinge = np.mean(np.maximum(0.0, -y_true * y_pred))
+        return alpha * mse + beta * hinge
+
+
 LOSS_FUNCTIONS = {
     'mse': {'name': 'MSE', 'description': '均方误差', 'type': 'regression'},
+    'mae': {'name': 'MAE', 'description': '平均绝对误差，对极端值(插针)更鲁棒，推荐TSFM使用', 'type': 'regression'},
+    'mse_hinge': {'name': 'MSE+铰链损失', 'description': '评估指标: α·MSE + β·Hinge(方向错误惩罚)', 'type': 'regression'},
     'direction_aware_mse': {'name': '方向感知MSE', 'description': '评估指标: 方向错误时MSE放大(1+λ)倍', 'type': 'regression'},
     'composite': {'name': '复合损失(tanh)', 'description': '评估指标: MSE + tanh方向损失', 'type': 'regression'},
     'magnitude_weighted': {'name': '幅度加权方向损失', 'description': '评估指标: 大幅波动方向错误惩罚更重', 'type': 'regression'},
@@ -379,7 +604,7 @@ def _is_potential_leakage_feature(column_name):
         "future", "fwd", "forward", "next_",
         "target", "label", "return_t+",
         "pnl", "profit", "sharpe", "signal",
-        "predict", "pred_", "forecast", "alpha",
+        "predict", "pred_", "forecast",
     )
     if any(token in cl for token in leakage_tokens):
         return True
@@ -435,6 +660,793 @@ def _custom_eval_metric_magnitude_weighted(y_pred, dataset, lambda_=2.0):
     return 'mag_weighted_loss', loss, False
 
 
+def _custom_eval_metric_mse_hinge(y_pred, dataset, alpha=1.0, beta=1.0):
+    y_true = dataset.get_label()
+    y_pred = np.asarray(y_pred, dtype=np.float64)
+    y_true = np.asarray(y_true, dtype=np.float64)
+    mask = ~(np.isnan(y_true) | np.isnan(y_pred))
+    y_true = y_true[mask]
+    y_pred = y_pred[mask]
+    if len(y_true) == 0:
+        return 'mse_hinge_loss', 0.0, False
+    mse = np.mean((y_true - y_pred) ** 2)
+    hinge = np.mean(np.maximum(0.0, -y_true * y_pred))
+    loss = alpha * mse + beta * hinge
+    return 'mse_hinge_loss', loss, False
+
+
+def _train_tsfm_model(session_id, config, df, file_path):
+    if not TSFM_AVAILABLE:
+        raise ImportError(
+            "TSFM依赖未安装。请在conda test环境中执行: "
+            "pip install tsfm_public transformers torch"
+        )
+
+    from transformers import Trainer, TrainingArguments
+
+    label_type = config.get('label_type', 'log_return')
+    predict_step = config.get('predict_step', 1)
+    loss_function = config.get('loss_function', 'mae')
+    train_ratio = config.get('train_ratio', 0.8)
+    test_ratio = config.get('test_ratio', 0.1)
+    val_ratio = config.get('val_ratio', 0.1)
+    model_params = config.get('model_params', {})
+    start_date = config.get('start_date')
+    end_date = config.get('end_date')
+    factor_ids = config.get('factor_ids', [])
+
+    context_length = int(model_params.get('context_length', 512))
+    forecast_length = int(model_params.get('forecast_length', 96))
+    num_train_epochs = int(model_params.get('num_train_epochs', 10))
+    batch_size = int(model_params.get('per_device_train_batch_size', 32))
+    tsfm_lr = float(model_params.get('learning_rate', 1e-3))
+    tsfm_weight_decay = float(model_params.get('weight_decay', 0.01))
+    freeze_backbone = model_params.get('freeze_backbone', True)
+    decoder_mode = model_params.get('decoder_mode', 'default')
+    pretrained_model_id = model_params.get(
+        'pretrained_model_id', 'ibm-granite/granite-timeseries-ttm-r2'
+    )
+
+    with training_sessions_lock:
+        training_sessions[session_id]['progress'] = 10
+        training_sessions[session_id]['current_step'] = 'data_preparation'
+        training_sessions[session_id]['message'] = '正在准备TSFM数据...'
+
+    _assert_training_not_timeout(session_id)
+
+    merged_extra_meta = {'extra_files': [], 'extra_columns': []}
+    try:
+        # TSFM 训练前：自动并入额外数据文件（metrics/funding/mark/index/liquidations/macro/sentiment）
+        df, merged_extra_meta = _try_join_extra_files_for_tsfm(df, file_path)
+    except Exception as e:
+        logger.warning(f"TSFM并入额外数据失败：{e}")
+
+    # TSFM 训练前：如果用户选择了因子，先计算并作为控制变量输入
+    if factor_ids:
+        try:
+            from factor_miner.core.factor_engine import get_global_engine
+            engine = get_global_engine()
+            feature_df, failed_factors = _build_features(df, factor_ids, engine)
+            if feature_df is None or feature_df.empty:
+                reasons = "; ".join(
+                    f"{item['factor_id']}: {item['reason']}" for item in (failed_factors or [])[:5]
+                )
+                raise ValueError(
+                    "选中的因子未生成有效特征（TSFM）。"
+                    + (f"前5个失败原因: {reasons}" if reasons else "")
+                )
+            # feature_df index 对齐 df.index
+            for c in feature_df.columns:
+                if c not in df.columns:
+                    df[c] = feature_df[c]
+            if failed_factors:
+                with training_sessions_lock:
+                    training_sessions[session_id]['failed_factors'] = failed_factors
+        except Exception as e:
+            logger.warning(f"TSFM计算因子特征失败：{e}")
+
+    timestamp_col = None
+    for col in df.columns:
+        cl = col.lower()
+        if cl in ('open_time', 'opentime', 'time', 'date',
+                   'timestamp', 'datetime', 'close_time', 'closetime'):
+            timestamp_col = col
+            break
+
+    if timestamp_col is None:
+        if isinstance(df.index, pd.DatetimeIndex):
+            df = df.reset_index()
+            timestamp_col = df.columns[0]
+        else:
+            raise ValueError("数据中找不到时间戳列，TSFM模型需要时间戳列")
+
+    df = df.copy()
+    df[timestamp_col] = pd.to_datetime(df[timestamp_col], errors='coerce')
+    df = df.dropna(subset=[timestamp_col]).sort_values(timestamp_col).reset_index(drop=True)
+
+    col_mapping = {}
+    for col in df.columns:
+        cl = col.lower()
+        if cl == 'open':
+            col_mapping[col] = 'Open'
+        elif cl == 'high':
+            col_mapping[col] = 'High'
+        elif cl == 'low':
+            col_mapping[col] = 'Low'
+        elif cl == 'close':
+            col_mapping[col] = 'Close'
+        elif cl == 'volume':
+            col_mapping[col] = 'Volume'
+
+    tsfm_df = df.rename(columns=col_mapping)
+    tsfm_df = tsfm_df.rename(columns={timestamp_col: 'timestamp'})
+
+    if 'Close' not in tsfm_df.columns:
+        raise ValueError("数据中找不到Close列，TSFM模型需要Close列作为预测目标")
+
+    min_required = context_length + forecast_length
+    if len(tsfm_df) < min_required:
+        raise ValueError(
+            f"数据量不足: 需要至少{min_required}行(context={context_length}+forecast={forecast_length})，"
+            f"当前只有{len(tsfm_df)}行。请减小context_length/forecast_length或扩大数据范围"
+        )
+
+    with training_sessions_lock:
+        training_sessions[session_id]['progress'] = 20
+        training_sessions[session_id]['current_step'] = 'preprocessing'
+        training_sessions[session_id]['message'] = '正在初始化TSFM预处理器...'
+
+    _assert_training_not_timeout(session_id)
+
+    train_end = int(len(tsfm_df) * train_ratio)
+    val_end = int(len(tsfm_df) * (train_ratio + val_ratio))
+
+    # 先按训练集可用性筛列，避免tsfm_public在scaler阶段因“整列全缺失”报错
+    candidate_targets = ['Close']
+    if 'High' in tsfm_df.columns:
+        candidate_targets.append('High')
+    if 'Low' in tsfm_df.columns:
+        candidate_targets.append('Low')
+
+    numeric_cols = list(tsfm_df.select_dtypes(include=[np.number]).columns)
+    candidate_controls = []
+    for c in numeric_cols:
+        if c in candidate_targets:
+            continue
+        if _is_potential_leakage_feature(c):
+            continue
+        candidate_controls.append(c)
+
+    tsfm_train_raw = tsfm_df.iloc[:train_end].copy()
+    target_columns = []
+    for c in candidate_targets:
+        if tsfm_train_raw[c].notna().any():
+            target_columns.append(c)
+    if 'Close' not in target_columns:
+        raise ValueError("训练集Close列全为空，无法训练TSFM模型")
+
+    control_columns = []
+    dropped_all_missing = []
+    for c in candidate_controls:
+        if tsfm_train_raw[c].notna().any():
+            control_columns.append(c)
+        else:
+            dropped_all_missing.append(c)
+    if dropped_all_missing:
+        logger.warning("TSFM控制变量中训练集全缺失列已移除: %s", dropped_all_missing[:50])
+
+    factor_input_cols = [c for c in control_columns if c in set(factor_ids)]
+    extra_joined_cols = merged_extra_meta.get('extra_columns', [])
+    extra_input_cols = [c for c in control_columns if c in set(extra_joined_cols)]
+    dropped_factor_cols = [c for c in factor_ids if c not in factor_input_cols]
+    logger.info(
+        "TSFM输入列统计: targets=%s, controls=%s, 因子入模=%s/%s, 额外数据入模=%s/%s",
+        len(target_columns), len(control_columns),
+        len(factor_input_cols), len(factor_ids),
+        len(extra_input_cols), len(extra_joined_cols)
+    )
+    if dropped_factor_cols:
+        logger.warning("TSFM未入模因子列(可能全缺失/非数值/泄漏过滤): %s", dropped_factor_cols[:50])
+
+    used_columns = ['timestamp'] + target_columns + control_columns
+    tsfm_df_model = tsfm_df[used_columns].copy()
+
+    inf_cols = []
+    for c in target_columns + control_columns:
+        if c in tsfm_df_model.columns:
+            s = tsfm_df_model[c]
+            mask = np.isinf(s.values) if np.issubdtype(s.dtype, np.floating) else None
+            if mask is not None and mask.any():
+                inf_count = int(mask.sum())
+                inf_cols.append(f"{c}({inf_count})")
+    if inf_cols:
+        logger.warning("TSFM输入列含infinity值，已替换为NaN: %s", inf_cols[:50])
+    tsfm_df_model[target_columns + control_columns] = (
+        tsfm_df_model[target_columns + control_columns]
+        .replace([np.inf, -np.inf], np.nan)
+    )
+
+    all_nan_after_clean = []
+    for c in list(target_columns):
+        if not tsfm_df_model.iloc[:train_end][c].notna().any():
+            all_nan_after_clean.append(c)
+            target_columns.remove(c)
+    for c in list(control_columns):
+        if not tsfm_df_model.iloc[:train_end][c].notna().any():
+            all_nan_after_clean.append(c)
+            control_columns.remove(c)
+    if all_nan_after_clean:
+        logger.warning("TSFM清洗infinity后训练集全NaN列已移除: %s", all_nan_after_clean[:50])
+    if 'Close' not in target_columns:
+        raise ValueError("清洗infinity后Close列在训练集全为NaN，无法训练TSFM模型")
+    used_columns = ['timestamp'] + target_columns + control_columns
+    tsfm_df_model = tsfm_df_model[used_columns].copy()
+
+    tsfm_train = tsfm_df_model.iloc[:train_end].copy()
+    tsfm_val = tsfm_df_model.iloc[train_end:val_end].copy()
+    tsfm_test = tsfm_df_model.iloc[val_end:].copy()
+
+    if len(tsfm_train) < min_required:
+        raise ValueError(
+            f"训练集数据量不足: 需要至少{min_required}行，当前只有{len(tsfm_train)}行"
+        )
+
+    column_specifiers = {
+        'timestamp_column': 'timestamp',
+        'id_columns': [],
+        'target_columns': target_columns,
+        'control_columns': control_columns,
+    }
+
+    tsp = TimeSeriesPreprocessor(
+        **column_specifiers,
+        context_length=context_length,
+        prediction_length=forecast_length,
+        scaling=True,
+        scaler_type='standard',
+    )
+
+    from tsfm_public import get_datasets
+    import torch
+
+    split_config = {
+        "train": [0, train_end],
+        "valid": [train_end, val_end],
+        "test": [val_end, len(tsfm_df_model)],
+    }
+    train_dataset, val_dataset, test_dataset = get_datasets(
+        ts_preprocessor=tsp,
+        dataset=tsfm_df_model,
+        split_config=split_config,
+        stride=1,
+        use_frequency_token=False,
+        enable_padding=True,
+    )
+
+    class _TSFMDatasetFixMask(torch.utils.data.Dataset):
+        def __init__(self, dataset, forecast_len, context_len):
+            self.dataset = dataset
+            self.forecast_len = forecast_len
+            self.context_len = context_len
+
+        def __len__(self):
+            return len(self.dataset)
+
+        def __getitem__(self, idx):
+            item = self.dataset[idx]
+            for mask_key, target_len in [
+                ('future_observed_mask', self.forecast_len),
+                ('past_observed_mask', self.context_len),
+            ]:
+                if mask_key not in item:
+                    continue
+                m = item[mask_key]
+                if isinstance(m, torch.Tensor) and m.ndim >= 2 and m.shape[0] == 1 and target_len > 1:
+                    item[mask_key] = m.expand(target_len, *m.shape[1:]).contiguous()
+                elif isinstance(m, np.ndarray) and m.ndim >= 2 and m.shape[0] == 1 and target_len > 1:
+                    item[mask_key] = np.tile(m, (target_len, 1) + (1,) * (m.ndim - 2))
+            return item
+
+    if len(train_dataset) > 0:
+        sample = train_dataset[0]
+        sample_keys = list(sample.keys())
+        logger.info("TSFM训练样本键: %s", sample_keys)
+        for k in ('future_observed_mask', 'past_observed_mask'):
+            if k in sample:
+                s = sample[k]
+                logger.info("TSFM样本[%s] shape=%s dtype=%s", k, list(s.shape) if hasattr(s, 'shape') else type(s), s.dtype if hasattr(s, 'dtype') else '')
+
+    train_dataset = _TSFMDatasetFixMask(train_dataset, forecast_length, context_length)
+    val_dataset = _TSFMDatasetFixMask(val_dataset, forecast_length, context_length)
+    test_dataset = _TSFMDatasetFixMask(test_dataset, forecast_length, context_length)
+
+    with training_sessions_lock:
+        training_sessions[session_id]['progress'] = 35
+        training_sessions[session_id]['current_step'] = 'model_loading'
+        training_sessions[session_id]['message'] = f'正在加载预训练模型 {pretrained_model_id}...'
+        training_sessions[session_id]['data_info'] = {
+            'total_samples': len(tsfm_df_model),
+            'train_samples': len(tsfm_train),
+            'test_samples': len(tsfm_test),
+            'val_samples': len(tsfm_val),
+            'feature_count': len(target_columns) + len(control_columns),
+            'feature_names': target_columns + control_columns,
+            'factor_input_columns': factor_input_cols[:200],
+            'dropped_factor_columns': dropped_factor_cols[:200],
+            'extra_input_columns': extra_input_cols[:200],
+            'label_name': 'Close',
+            'train_range': (
+                f"{tsfm_train['timestamp'].iloc[0]} ~ {tsfm_train['timestamp'].iloc[-1]}"
+                if len(tsfm_train) > 0 else ""
+            ),
+            'test_range': (
+                f"{tsfm_test['timestamp'].iloc[0]} ~ {tsfm_test['timestamp'].iloc[-1]}"
+                if len(tsfm_test) > 0 else ""
+            ),
+            'val_range': (
+                f"{tsfm_val['timestamp'].iloc[0]} ~ {tsfm_val['timestamp'].iloc[-1]}"
+                if len(tsfm_val) > 0 else ""
+            ),
+            'extra_joined_columns': merged_extra_meta.get('extra_columns', []),
+            'extra_renamed_columns': merged_extra_meta.get('renamed_columns', {}),
+        }
+
+    _assert_training_not_timeout(session_id)
+
+    model = TinyTimeMixerForPrediction.from_pretrained(pretrained_model_id)
+
+    model_context_length = getattr(model.config, 'context_length', None)
+    if model_context_length is not None and context_length != model_context_length:
+        raise ValueError(
+            f"预训练模型 {pretrained_model_id} 的 context_length 固定为 {model_context_length}，"
+            f"不支持修改（修改会导致 patch/位置编码/MLP 权重维度不匹配）。"
+            f"请将 context_length 设为 {model_context_length}，或通过调整数据时间范围适配。"
+        )
+
+    model_pred_len = getattr(model.config, 'prediction_length', forecast_length)
+    if forecast_length != model_pred_len:
+        if forecast_length < model_pred_len:
+            model.config.prediction_filter_length = forecast_length
+            model.prediction_filter_length = forecast_length
+            if hasattr(model, 'head') and hasattr(model.head, 'prediction_filter_length'):
+                model.head.prediction_filter_length = forecast_length
+            logger.info(
+                "TSFM: 用户预测长度(%d) < 模型默认(%d)，已设置prediction_filter_length=%d截断输出",
+                forecast_length, model_pred_len, forecast_length,
+            )
+        else:
+            logger.warning(
+                "TSFM: 用户预测长度(%d) > 模型默认(%d)，模型只能预测%d步，结果可能不准确",
+                forecast_length, model_pred_len, model_pred_len,
+            )
+
+    def _fix_mask_hook(module, args, kwargs):
+        expected_pred_len = getattr(module.config, 'prediction_filter_length', None) or module.config.prediction_length
+        for mask_key, expected_len in [
+            ('future_observed_mask', expected_pred_len),
+            ('past_observed_mask', module.config.context_length),
+        ]:
+            mask = kwargs.get(mask_key)
+            if mask is not None and mask.ndim >= 2 and mask.shape[1] != expected_len:
+                if mask.shape[0] == expected_len:
+                    pass
+                elif mask.shape[1] == 1:
+                    kwargs[mask_key] = mask.repeat(1, expected_len, *(1,) * (mask.ndim - 2))
+                    logger.warning(
+                        "TSFM forward_hook: %s %s -> %s (repeat dim1 to match expected %d)",
+                        mask_key, list(mask.shape), list(kwargs[mask_key].shape), expected_len,
+                    )
+                elif mask.shape[1] > expected_len:
+                    kwargs[mask_key] = mask[:, :expected_len, ...]
+                    logger.warning(
+                        "TSFM forward_hook: %s %s -> %s (truncate dim1 to match expected %d)",
+                        mask_key, list(mask.shape), list(kwargs[mask_key].shape), expected_len,
+                    )
+        return args, kwargs
+
+    model.register_forward_pre_hook(_fix_mask_hook, with_kwargs=True)
+
+    if freeze_backbone and hasattr(model, 'backbone'):
+        for param in model.backbone.parameters():
+            param.requires_grad = False
+
+    if decoder_mode == 'mix_channel' and hasattr(model, 'config'):
+        try:
+            model.config.decoder_mode = 'mix_channel'
+        except Exception:
+            logger.warning("无法设置decoder_mode=mix_channel，将使用默认模式")
+
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in model.parameters())
+    logger.info(f"TSFM模型参数: 总计{total_params}, 可训练{trainable_params}")
+
+    with training_sessions_lock:
+        training_sessions[session_id]['progress'] = 45
+        training_sessions[session_id]['current_step'] = 'model_training'
+        training_sessions[session_id]['message'] = '正在微调TSFM模型...'
+
+    _assert_training_not_timeout(session_id)
+
+    temp_output_dir = MODELS_DIR / f"_tsfm_temp_{session_id[:8]}"
+    temp_output_dir.mkdir(parents=True, exist_ok=True)
+
+    from transformers import TrainerCallback
+
+    class _TSFMProgressCallback(TrainerCallback):
+        def __init__(self, sid, total_epochs):
+            self.sid = sid
+            self.total_epochs = total_epochs
+
+        def on_log(self, args, state, control, logs=None, **kwargs):
+            _assert_training_not_timeout(self.sid)
+            if state.is_world_process_zero:
+                epoch = state.epoch or 0
+                pct = 45 + int(min(1.0, epoch / max(1, self.total_epochs)) * 35)
+                with training_sessions_lock:
+                    if self.sid in training_sessions:
+                        training_sessions[self.sid]['progress'] = pct
+                        training_sessions[self.sid]['message'] = (
+                            f'TSFM微调中 (epoch {epoch:.1f}/{self.total_epochs})'
+                        )
+
+    def _tsfm_data_collator(features):
+        if not features:
+            return {}
+        allowed_keys = {
+            "past_values",
+            "future_values",
+            "past_observed_mask",
+            "future_observed_mask",
+            "freq_token",
+            "static_categorical_values",
+            "label",
+            "label_ids",
+        }
+        batch = {}
+        for key in features[0].keys():
+            if key not in allowed_keys:
+                continue
+            values = [f[key] for f in features if key in f]
+            if len(values) != len(features):
+                continue
+            first = values[0]
+            if isinstance(first, torch.Tensor):
+                try:
+                    batch[key] = torch.stack(values)
+                except Exception:
+                    batch[key] = torch.tensor(values)
+                continue
+            if isinstance(first, (np.ndarray, list, tuple)):
+                arr0 = np.asarray(first)
+                if np.issubdtype(arr0.dtype, np.number) or np.issubdtype(arr0.dtype, np.bool_):
+                    batch[key] = torch.tensor(np.stack([np.asarray(v) for v in values]))
+                continue
+            if isinstance(first, (int, float, np.number, bool)):
+                batch[key] = torch.tensor(values)
+
+        if 'future_observed_mask' in batch and 'future_values' in batch:
+            mask = batch['future_observed_mask']
+            fv = batch['future_values']
+            if mask.ndim >= 2 and fv.ndim >= 2 and mask.shape[1] != fv.shape[1]:
+                if mask.shape[1] == 1:
+                    batch['future_observed_mask'] = mask.repeat(1, fv.shape[1], *(1,) * (mask.ndim - 2))
+                    logger.info(
+                        "TSFM data_collator: future_observed_mask %s -> %s (repeat to match future_values %s)",
+                        list(mask.shape), list(batch['future_observed_mask'].shape), list(fv.shape)
+                    )
+        if 'past_observed_mask' in batch and 'past_values' in batch:
+            mask = batch['past_observed_mask']
+            pv = batch['past_values']
+            if mask.ndim >= 2 and pv.ndim >= 2 and mask.shape[1] != pv.shape[1]:
+                if mask.shape[1] == 1:
+                    batch['past_observed_mask'] = mask.repeat(1, pv.shape[1], *(1,) * (mask.ndim - 2))
+                    logger.info(
+                        "TSFM data_collator: past_observed_mask %s -> %s (repeat to match past_values %s)",
+                        list(mask.shape), list(batch['past_observed_mask'].shape), list(pv.shape)
+                    )
+
+        return batch
+
+    cuda_available = torch.cuda.is_available()
+    if cuda_available:
+        try:
+            device_count = torch.cuda.device_count()
+            current_idx = torch.cuda.current_device()
+            current_name = torch.cuda.get_device_name(current_idx)
+            all_devices = [torch.cuda.get_device_name(i) for i in range(device_count)]
+            logger.info(
+                "TSFM训练设备: CUDA可用=True, 设备数=%s, 当前设备=%s(%s), 全部设备=%s, torch.cuda=%s",
+                device_count, current_idx, current_name, all_devices, torch.version.cuda
+            )
+        except Exception as e:
+            logger.warning("TSFM读取CUDA设备信息失败，将继续训练: %s", e)
+    else:
+        logger.warning(
+            "TSFM训练设备: CUDA可用=False，将使用CPU训练。可通过安装/配置CUDA版本PyTorch启用GPU加速。"
+        )
+    no_cuda = not cuda_available
+
+    training_args = TrainingArguments(
+        output_dir=str(temp_output_dir),
+        overwrite_output_dir=True,
+        num_train_epochs=num_train_epochs,
+        per_device_train_batch_size=batch_size,
+        learning_rate=tsfm_lr,
+        weight_decay=tsfm_weight_decay,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        save_total_limit=2,
+        load_best_model_at_end=True,
+        logging_steps=10,
+        report_to="none",
+        disable_tqdm=True,
+        no_cuda=no_cuda,
+        remove_unused_columns=False,
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        data_collator=_tsfm_data_collator,
+        callbacks=[_TSFMProgressCallback(session_id, num_train_epochs)],
+    )
+
+    trainer.train()
+
+    with training_sessions_lock:
+        training_sessions[session_id]['progress'] = 80
+        training_sessions[session_id]['current_step'] = 'evaluation'
+        training_sessions[session_id]['message'] = '正在评估TSFM模型...'
+
+    _assert_training_not_timeout(session_id)
+
+    metrics = {'test': {}, 'val': {}}
+    evals_result = {}
+    try:
+        test_output = trainer.predict(test_dataset)
+        val_output = trainer.predict(val_dataset)
+
+        n_targets = len(target_columns)
+        close_idx = target_columns.index('Close') if 'Close' in target_columns else 0
+
+        def _extract_from_dataset(dataset, keys, max_samples=None):
+            results = {k: [] for k in keys}
+            indices = range(len(dataset)) if max_samples is None else range(min(max_samples, len(dataset)))
+            for i in indices:
+                item = dataset[i]
+                for k in keys:
+                    if k in item:
+                        v = item[k]
+                        if hasattr(v, 'numpy'):
+                            v = v.numpy()
+                        results[k].append(np.asarray(v, dtype=np.float64))
+            out = {}
+            for k in keys:
+                if results[k]:
+                    out[k] = np.stack(results[k], axis=0)
+                else:
+                    out[k] = np.array([], dtype=np.float64)
+            return out
+
+        for split_name, output, ds in [('test', test_output, test_dataset), ('val', val_output, val_dataset)]:
+            preds_raw = output.predictions
+
+            if isinstance(preds_raw, tuple):
+                preds = preds_raw[0] if len(preds_raw) > 0 else preds_raw
+            else:
+                preds = preds_raw
+
+            if hasattr(preds, 'cpu'):
+                preds = preds.cpu().numpy()
+            preds = np.asarray(preds, dtype=np.float64)
+
+            extracted = _extract_from_dataset(ds, ['future_values', 'past_values'])
+            labels = extracted['future_values']
+            past_vals = extracted['past_values']
+
+            logger.info(
+                "TSFM评估[%s] preds shape=%s dtype=%s, labels shape=%s dtype=%s, past_vals shape=%s, n_targets=%s, close_idx=%s",
+                split_name, preds.shape, preds.dtype, labels.shape, labels.dtype,
+                past_vals.shape if past_vals.ndim >= 2 else 'N/A',
+                n_targets, close_idx
+            )
+
+            if preds.ndim == 3 and labels.ndim == 3:
+                n_steps = min(preds.shape[1], labels.shape[1])
+                n_ch = min(preds.shape[2], labels.shape[2])
+                preds_trimmed = preds[:, :n_steps, :n_ch]
+                labels_trimmed = labels[:, :n_steps, :n_ch]
+                ch = min(close_idx, n_ch - 1)
+                close_pred = preds_trimmed[:, :, ch].flatten()
+                close_true = labels_trimmed[:, :, ch].flatten()
+            elif preds.ndim == 3 and labels.ndim == 2:
+                close_pred = preds[:, :, min(close_idx, preds.shape[2] - 1)].flatten()
+                close_true = labels.flatten()
+            elif preds.ndim == 2 and labels.ndim == 2:
+                close_pred = preds.flatten()
+                close_true = labels.flatten()
+            else:
+                close_pred = preds.flatten()
+                close_true = labels.flatten()
+
+            mask = ~(np.isnan(close_pred) | np.isnan(close_true))
+            close_pred = close_pred[mask]
+            close_true = close_true[mask]
+
+            if len(close_true) > 0:
+                metrics[split_name]['mse'] = float(mean_squared_error(close_true, close_pred))
+                metrics[split_name]['rmse'] = float(np.sqrt(metrics[split_name]['mse']))
+                metrics[split_name]['mae'] = float(mean_absolute_error(close_true, close_pred))
+                metrics[split_name]['r2'] = float(r2_score(close_true, close_pred))
+
+                if preds.ndim == 3 and labels.ndim == 3 and past_vals.ndim == 3:
+                    n_samples = min(preds_trimmed.shape[0], past_vals.shape[0])
+                    p_ch = min(ch, past_vals.shape[2] - 1)
+                    last_obs = past_vals[:n_samples, -1, p_ch]
+                    pred_dir = preds_trimmed[:n_samples, :, ch] - last_obs[:, np.newaxis]
+                    true_dir = labels_trimmed[:n_samples, :, ch] - last_obs[:, np.newaxis]
+                    valid = ~(np.isnan(pred_dir) | np.isnan(true_dir))
+                    pred_dir = pred_dir[valid]
+                    true_dir = true_dir[valid]
+                    if len(true_dir) > 0:
+                        dir_acc = float(np.mean(np.sign(pred_dir) == np.sign(true_dir)))
+                    else:
+                        dir_acc = 0.0
+                else:
+                    nonzero = close_true != 0
+                    if nonzero.sum() > 0:
+                        dir_acc = float(np.mean(
+                            np.sign(close_true[nonzero]) == np.sign(close_pred[nonzero])
+                        ))
+                    else:
+                        dir_acc = 0.0
+                metrics[split_name]['direction_accuracy'] = dir_acc
+
+            if preds.ndim == 3 and labels.ndim == 3 and n_targets > 1:
+                for ti, tname in enumerate(target_columns):
+                    if ti >= preds_trimmed.shape[2] or ti >= labels_trimmed.shape[2]:
+                        break
+                    t_pred = preds_trimmed[:, :, ti].flatten()
+                    t_true = labels_trimmed[:, :, ti].flatten()
+                    t_mask = ~(np.isnan(t_pred) | np.isnan(t_true))
+                    t_pred = t_pred[t_mask]
+                    t_true = t_true[t_mask]
+                    if len(t_true) > 0:
+                        metrics[split_name][f'{tname}_mse'] = float(mean_squared_error(t_true, t_pred))
+                        metrics[split_name][f'{tname}_mae'] = float(mean_absolute_error(t_true, t_pred))
+                        metrics[split_name][f'{tname}_r2'] = float(r2_score(t_true, t_pred))
+
+        if hasattr(test_output, 'metrics') and test_output.metrics:
+            evals_result['test'] = {'loss': [float(test_output.metrics.get('test_loss', 0))]}
+        if hasattr(val_output, 'metrics') and val_output.metrics:
+            evals_result['val'] = {'loss': [float(val_output.metrics.get('test_loss', 0))]}
+
+        try:
+            log_history = trainer.state.log_history
+            train_losses = []
+            val_losses = []
+            for entry in log_history:
+                if 'loss' in entry and 'epoch' in entry:
+                    train_losses.append(float(entry['loss']))
+                if 'eval_loss' in entry:
+                    val_losses.append(float(entry['eval_loss']))
+            if train_losses:
+                evals_result['train'] = {'loss': train_losses}
+            if val_losses:
+                evals_result.setdefault('val', {})['loss'] = val_losses
+        except Exception:
+            pass
+
+    except Exception as e:
+        import traceback
+        logger.warning("TSFM评估失败: %s\n%s", e, traceback.format_exc())
+
+    with training_sessions_lock:
+        training_sessions[session_id]['progress'] = 90
+        training_sessions[session_id]['current_step'] = 'saving'
+        training_sessions[session_id]['message'] = '正在保存TSFM模型...'
+
+    _assert_training_not_timeout(session_id)
+
+    model_id = (
+        f"tsfm_{label_type}_"
+        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
+    )
+    model_dir = MODELS_DIR / model_id
+    model_dir.mkdir(parents=True, exist_ok=True)
+
+    hf_model_dir = model_dir / "hf_model"
+    model.save_pretrained(str(hf_model_dir))
+
+    preprocessor_path = model_dir / "preprocessor.pkl"
+    with open(preprocessor_path, 'wb') as f:
+        pickle.dump(tsp, f)
+
+    save_config = {
+        'model_id': model_id,
+        'model_type': 'tsfm',
+        'task_type': 'regression',
+        'label_type': label_type,
+        'predict_step': forecast_length,
+        'loss_function': loss_function,
+        'loss_params': config.get('loss_params', {}),
+        'train_ratio': train_ratio,
+        'test_ratio': test_ratio,
+        'val_ratio': val_ratio,
+        'feature_names': target_columns + control_columns,
+        'feature_name_mapping': col_mapping,
+        'label_name': 'Close',
+        'model_params': {
+            'context_length': context_length,
+            'forecast_length': forecast_length,
+            'num_train_epochs': num_train_epochs,
+            'per_device_train_batch_size': batch_size,
+            'learning_rate': tsfm_lr,
+            'weight_decay': tsfm_weight_decay,
+            'freeze_backbone': freeze_backbone,
+            'decoder_mode': decoder_mode,
+            'pretrained_model_id': pretrained_model_id,
+            'trainable_params': trainable_params,
+            'total_params': total_params,
+        },
+        'data_file': str(file_path),
+        'start_date': start_date,
+        'end_date': end_date,
+        'factor_ids': factor_ids,
+        'failed_factors': [],
+        'created_at': datetime.now().isoformat(),
+        'data_info': training_sessions[session_id].get('data_info', {}),
+        'metrics': metrics,
+        'model_storage': 'tsfm_hf',
+        'model_file': 'hf_model',
+        'scaler_file': None,
+        'preprocessor_file': 'preprocessor.pkl',
+        'column_specifiers': column_specifiers,
+        'target_columns': target_columns,
+        'control_columns': control_columns,
+        'extra_joined_columns': merged_extra_meta.get('extra_columns', []),
+        'loss_function_note': (
+            'TSFM模型使用HuggingFace Trainer微调，'
+            f'损失函数为{loss_function}，'
+            f'骨干{"已冻结(少样本微调)" if freeze_backbone else "未冻结(全量微调)"}'
+        ),
+    }
+    if evals_result:
+        save_config['evals_result'] = evals_result
+    with open(model_dir / "config.json", 'w', encoding='utf-8') as f:
+        json.dump(save_config, f, ensure_ascii=False, indent=2, default=str)
+
+    try:
+        import shutil
+        if temp_output_dir.exists():
+            shutil.rmtree(temp_output_dir, ignore_errors=True)
+    except Exception:
+        pass
+
+    with training_sessions_lock:
+        training_sessions[session_id]['status'] = 'completed'
+        training_sessions[session_id]['progress'] = 100
+        training_sessions[session_id]['current_step'] = 'completed'
+        training_sessions[session_id]['message'] = '训练完成'
+        training_sessions[session_id]['results'] = {
+            'model_id': model_id,
+            'model_type': 'tsfm',
+            'task_type': 'regression',
+            'label_type': label_type,
+            'predict_step': forecast_length,
+            'loss_function': loss_function,
+            'metrics': metrics,
+            'feature_importance': {},
+            'data_info': training_sessions[session_id].get('data_info', {}),
+            'model_dir': str(model_dir),
+            'evals_result': save_config.get('evals_result'),
+        }
+        training_sessions[session_id]['completed_time'] = datetime.now().isoformat()
+        training_sessions[session_id]['completed_ts'] = time.time()
+
+
 def _train_model(session_id, config):
     try:
         with training_sessions_lock:
@@ -465,6 +1477,11 @@ def _train_model(session_id, config):
         df = _load_feather_data(str(file_path), start_date, end_date)
         if df is None or len(df) == 0:
             raise ValueError("数据加载失败或数据为空")
+
+        if model_type == 'tsfm':
+            _train_tsfm_model(session_id, config, df, file_path)
+            return
+
         if predict_step >= len(df):
             raise ValueError(
                 f"predict_step({predict_step}) 不能大于等于样本数({len(df)})，请减小预测步长或扩大数据范围"
@@ -570,7 +1587,7 @@ def _train_model(session_id, config):
         _assert_training_not_timeout(session_id)
 
         train_df, val_df, test_df = _split_data_chronological(
-            feature_df, train_ratio, test_ratio, val_ratio
+            feature_df, train_ratio=train_ratio, val_ratio=val_ratio
         )
         if len(train_df) == 0 or len(test_df) == 0 or len(val_df) == 0:
             raise ValueError(
@@ -668,6 +1685,10 @@ def _train_model(session_id, config):
                 elif loss_function == 'magnitude_weighted':
                     lambda_ = loss_params.get('lambda', 2.0)
                     custom_eval = lambda y_pred, dataset: _custom_eval_metric_magnitude_weighted(y_pred, dataset, lambda_)
+                elif loss_function == 'mse_hinge':
+                    alpha = loss_params.get('alpha', 1.0)
+                    beta = loss_params.get('beta', 1.0)
+                    custom_eval = lambda y_pred, dataset: _custom_eval_metric_mse_hinge(y_pred, dataset, alpha, beta)
 
             def _lgb_iter_callback(env):
                 _assert_training_not_timeout(session_id)
@@ -712,11 +1733,13 @@ def _train_model(session_id, config):
                 k: v for k, v in model_params.items()
                 if k not in ('n_estimators', 'early_stopping_rounds')
             }
+            if xgb_model_params.get('max_depth', None) == -1:
+                xgb_model_params['max_depth'] = 0
             params.update(xgb_model_params)
 
             dtrain = xgb.DMatrix(X_train_scaled, label=y_train.values, feature_names=list(X_train.columns))
-            dtest = xgb.DMatrix(X_test_scaled, label=y_test.values, feature_names=list(X_train.columns))
-            dval = xgb.DMatrix(X_val_scaled, label=y_val.values, feature_names=list(X_train.columns))
+            dtest = xgb.DMatrix(X_test_scaled, label=y_test.values, feature_names=list(X_test.columns))
+            dval = xgb.DMatrix(X_val_scaled, label=y_val.values, feature_names=list(X_val.columns))
 
             custom_feval = None
             if not is_classification:
@@ -731,6 +1754,10 @@ def _train_model(session_id, config):
                 elif loss_function == 'magnitude_weighted':
                     lambda_ = loss_params.get('lambda', 2.0)
                     custom_feval = lambda y_pred, dmat: _custom_eval_metric_magnitude_weighted(y_pred, dmat, lambda_)
+                elif loss_function == 'mse_hinge':
+                    alpha = loss_params.get('alpha', 1.0)
+                    beta = loss_params.get('beta', 1.0)
+                    custom_feval = lambda y_pred, dmat: _custom_eval_metric_mse_hinge(y_pred, dmat, alpha, beta)
 
             xgb_num_rounds = int(model_params.get('n_estimators', 200))
 
@@ -773,6 +1800,7 @@ def _train_model(session_id, config):
                 )
 
         elif model_type == 'logistic_regression':
+            _assert_training_not_timeout(session_id)
             if is_classification:
                 model = LogisticRegression(
                     max_iter=model_params.get('max_iter', 1000),
@@ -787,6 +1815,7 @@ def _train_model(session_id, config):
             model.fit(X_train_scaled, y_train.values)
 
         elif model_type == 'random_forest':
+            _assert_training_not_timeout(session_id)
             from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
             if is_classification:
                 model = RandomForestClassifier(
@@ -886,8 +1915,20 @@ def _train_model(session_id, config):
                 'r2': float(r2_score(y_val, y_pred_val)),
             }
 
-            direction_acc_test = float(np.mean(np.sign(y_test.values) == np.sign(y_pred_test)))
-            direction_acc_val = float(np.mean(np.sign(y_val.values) == np.sign(y_pred_val)))
+            nonzero_test = y_test.values != 0
+            if nonzero_test.sum() > 0:
+                direction_acc_test = float(np.mean(
+                    np.sign(y_test.values[nonzero_test]) == np.sign(y_pred_test[nonzero_test])
+                ))
+            else:
+                direction_acc_test = 0.0
+            nonzero_val = y_val.values != 0
+            if nonzero_val.sum() > 0:
+                direction_acc_val = float(np.mean(
+                    np.sign(y_val.values[nonzero_val]) == np.sign(y_pred_val[nonzero_val])
+                ))
+            else:
+                direction_acc_val = 0.0
             metrics['test']['direction_accuracy'] = direction_acc_test
             metrics['val']['direction_accuracy'] = direction_acc_val
 
@@ -905,6 +1946,11 @@ def _train_model(session_id, config):
                 lambda_ = loss_params.get('lambda', 2.0)
                 metrics['test']['magnitude_weighted_loss'] = float(MagnitudeWeightedDirectionLoss.compute(y_test.values, y_pred_test, lambda_))
                 metrics['val']['magnitude_weighted_loss'] = float(MagnitudeWeightedDirectionLoss.compute(y_val.values, y_pred_val, lambda_))
+            elif loss_function == 'mse_hinge':
+                alpha = loss_params.get('alpha', 1.0)
+                beta = loss_params.get('beta', 1.0)
+                metrics['test']['mse_hinge_loss'] = float(MSEHingeLoss.compute(y_test.values, y_pred_test, alpha, beta))
+                metrics['val']['mse_hinge_loss'] = float(MSEHingeLoss.compute(y_val.values, y_pred_val, alpha, beta))
 
         feature_importance = {}
         if model_type == 'lightgbm':
@@ -1071,6 +2117,7 @@ def get_available_models():
         {'id': 'xgboost', 'name': 'XGBoost', 'type': 'tree', 'description': '极端梯度提升树，精度高，支持自定义评估指标', 'supports': ['regression', 'classification']},
         {'id': 'logistic_regression', 'name': '逻辑回归/Ridge', 'type': 'linear', 'description': '线性模型，分类用逻辑回归，回归用Ridge', 'supports': ['regression', 'classification']},
         {'id': 'random_forest', 'name': '随机森林', 'type': 'tree', 'description': '集成学习方法，鲁棒性强', 'supports': ['regression', 'classification']},
+        {'id': 'tsfm', 'name': 'TSFM (Granite TTM)', 'type': 'foundation', 'description': 'IBM Granite时序基础模型，少样本微调，5%-10%数据即可适应BTC波动', 'supports': ['regression'], 'available': TSFM_AVAILABLE},
     ]
     return jsonify({'success': True, 'models': models})
 
@@ -1111,7 +2158,10 @@ def start_training():
             timeout_seconds = int(data.get('timeout_seconds') or default_timeout)
         except (TypeError, ValueError):
             timeout_seconds = default_timeout
-        timeout_seconds = max(60, min(timeout_seconds, 24 * 3600))
+        if timeout_seconds > 0:
+            timeout_seconds = max(60, min(timeout_seconds, 24 * 3600))
+        else:
+            timeout_seconds = 0
 
         config = {
             'file_path': str(validated_file_path),
@@ -1199,6 +2249,25 @@ def get_training_status(session_id):
         'cancel_requested': bool(session.get('cancel_requested')),
         'failed_factors': session.get('failed_factors') or [],
     })
+
+
+@bp.route('/active-sessions', methods=['GET'])
+def get_active_sessions():
+    with training_sessions_lock:
+        _cleanup_training_sessions_locked()
+        active = []
+        for sid, session in training_sessions.items():
+            if session.get('status') in ('pending', 'running'):
+                active.append({
+                    'session_id': sid,
+                    'status': session.get('status'),
+                    'progress': session.get('progress', 0),
+                    'current_step': session.get('current_step', ''),
+                    'message': session.get('message', ''),
+                    'start_time': session.get('start_time'),
+                    'model_type': session.get('config', {}).get('model_type', ''),
+                })
+    return jsonify({'success': True, 'sessions': active})
 
 
 @bp.route('/cancel/<session_id>', methods=['POST'])
@@ -1332,6 +2401,19 @@ def predict(model_id):
             import xgboost as xgb_mod
             model = xgb_mod.Booster()
             model.load_model(str(model_path))
+        elif model_storage == 'tsfm_hf':
+            if not TSFM_AVAILABLE:
+                return jsonify({'success': False, 'error': 'TSFM依赖未安装，无法加载模型'}), 400
+            hf_dir = (model_dir / model_file).resolve()
+            if not _is_path_under(model_dir, hf_dir) or not hf_dir.exists():
+                return jsonify({'success': False, 'error': 'TSFM模型文件不存在'})
+            model = TinyTimeMixerForPrediction.from_pretrained(str(hf_dir))
+            preprocessor_file = cfg.get('preprocessor_file', 'preprocessor.pkl')
+            preprocessor_path = (model_dir / preprocessor_file).resolve()
+            if _is_path_under(model_dir, preprocessor_path) and preprocessor_path.exists():
+                tsp = _safe_pickle_load(str(preprocessor_path))
+            else:
+                return jsonify({'success': False, 'error': 'TSFM预处理器文件不存在'})
         else:
             model = _safe_pickle_load(str(model_path))
             scaler_path = (model_dir / scaler_file).resolve()
@@ -1379,7 +2461,181 @@ def predict(model_id):
             X = feature_df
 
         model_type = cfg.get('model_type')
-        if model_type == 'lightgbm':
+        if model_type == 'tsfm':
+            import torch
+
+            timestamp_col_pred = None
+            for col in df.columns:
+                cl = col.lower()
+                if cl in ('open_time', 'opentime', 'time', 'date',
+                           'timestamp', 'datetime', 'close_time', 'closetime'):
+                    timestamp_col_pred = col
+                    break
+            if timestamp_col_pred is None:
+                if isinstance(df.index, pd.DatetimeIndex):
+                    df = df.reset_index()
+                    timestamp_col_pred = df.columns[0]
+                else:
+                    return jsonify({'success': False, 'error': '预测数据中找不到时间戳列'})
+
+            pred_col_mapping = {}
+            for col in df.columns:
+                cl = col.lower()
+                if cl == 'open':
+                    pred_col_mapping[col] = 'Open'
+                elif cl == 'high':
+                    pred_col_mapping[col] = 'High'
+                elif cl == 'low':
+                    pred_col_mapping[col] = 'Low'
+                elif cl == 'close':
+                    pred_col_mapping[col] = 'Close'
+                elif cl == 'volume':
+                    pred_col_mapping[col] = 'Volume'
+
+            tsfm_pred_df = df.rename(columns=pred_col_mapping)
+            tsfm_pred_df = tsfm_pred_df.rename(columns={timestamp_col_pred: 'timestamp'})
+            tsfm_pred_df['timestamp'] = pd.to_datetime(tsfm_pred_df['timestamp'], errors='coerce')
+            tsfm_pred_df = tsfm_pred_df.dropna(subset=['timestamp']).sort_values('timestamp').reset_index(drop=True)
+
+            numeric_pred_cols = tsfm_pred_df.select_dtypes(include=[np.number]).columns.tolist()
+            if numeric_pred_cols:
+                tsfm_pred_df[numeric_pred_cols] = (
+                    tsfm_pred_df[numeric_pred_cols].replace([np.inf, -np.inf], np.nan)
+                )
+
+            pred_dataset = tsp.preprocess(tsfm_pred_df)
+
+            from torch.utils.data import Dataset as TorchDataset, DataLoader
+            tsfm_allowed_keys_pred = [
+                'past_values',
+                'future_values',
+                'past_observed_mask',
+                'future_observed_mask',
+                'freq_token',
+                'static_categorical_values',
+                'metadata',
+                'label',
+                'label_ids',
+            ]
+
+            def _coerce_tsfm_pred_value_for_tensor(value):
+                if value is None:
+                    return np.nan
+                if isinstance(value, pd.Timestamp):
+                    return np.nan if pd.isna(value) else float(value.timestamp())
+                if isinstance(value, np.datetime64):
+                    if np.isnat(value):
+                        return np.nan
+                    return float(pd.Timestamp(value).timestamp())
+                if isinstance(value, pd.Timedelta):
+                    return float(value.total_seconds())
+                if isinstance(value, np.timedelta64):
+                    return float(pd.to_timedelta(value).total_seconds())
+                if isinstance(value, pd.Series):
+                    value = value.to_numpy()
+                if isinstance(value, (list, tuple, np.ndarray)):
+                    arr = np.asarray(value)
+                    if np.issubdtype(arr.dtype, np.datetime64):
+                        arr_ns = arr.astype('datetime64[ns]').astype('int64')
+                        arr_sec = np.where(arr_ns == np.iinfo(np.int64).min, np.nan, arr_ns / 1e9)
+                        return arr_sec.astype(np.float32)
+                    if np.issubdtype(arr.dtype, np.timedelta64):
+                        return (arr.astype('timedelta64[ns]').astype('int64') / 1e9).astype(np.float32)
+                    if arr.dtype == object:
+                        return np.array([_coerce_tsfm_pred_value_for_tensor(v) for v in arr], dtype=np.float32)
+                    return arr
+                if pd.isna(value):
+                    return np.nan
+                return value
+
+            class _PredTorchDataset(TorchDataset):
+                def __init__(self, hf_dataset):
+                    if hasattr(hf_dataset, 'to_pandas'):
+                        self.df = hf_dataset.to_pandas() if not isinstance(hf_dataset, pd.DataFrame) else hf_dataset
+                    elif isinstance(hf_dataset, pd.DataFrame):
+                        self.df = hf_dataset
+                    else:
+                        self.df = pd.DataFrame(hf_dataset)
+                    self._columns = [c for c in tsfm_allowed_keys_pred if c in self.df.columns]
+                    dropped_cols = [c for c in self.df.columns if c not in self._columns]
+                    if 'past_values' not in self._columns:
+                        raise ValueError(
+                            "TSFM预测预处理结果缺少 past_values。"
+                            f"当前列: {list(self.df.columns)}"
+                        )
+                    if dropped_cols:
+                        logger.warning("TSFM预测数据集中忽略非模型输入列: %s", dropped_cols)
+
+                def __len__(self):
+                    return len(self.df)
+
+                def __getitem__(self, idx):
+                    row = self.df.iloc[idx]
+                    return {
+                        col: torch.tensor(_coerce_tsfm_pred_value_for_tensor(row[col]), dtype=torch.float32)
+                        for col in self._columns
+                    }
+
+            pred_dataset = _PredTorchDataset(pred_dataset)
+
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            model.to(device)
+            model.eval()
+
+            pred_loader = DataLoader(pred_dataset, batch_size=32, shuffle=False)
+
+            all_preds = []
+            with torch.no_grad():
+                for batch in pred_loader:
+                    if isinstance(batch, dict):
+                        input_ids = {k: v.to(device) if hasattr(v, 'to') else v for k, v in batch.items()}
+                        outputs = model(**input_ids)
+                    else:
+                        batch = [b.to(device) if hasattr(b, 'to') else b for b in batch]
+                        outputs = model(*batch)
+                    if hasattr(outputs, 'prediction_outputs'):
+                        pred_vals = outputs.prediction_outputs
+                    elif hasattr(outputs, 'logits'):
+                        pred_vals = outputs.logits
+                    elif isinstance(outputs, tuple):
+                        pred_vals = outputs[0]
+                    else:
+                        pred_vals = outputs
+                    if hasattr(pred_vals, 'cpu'):
+                        pred_vals = pred_vals.cpu().numpy()
+                    all_preds.append(np.asarray(pred_vals))
+
+            if all_preds:
+                all_preds = np.concatenate(all_preds, axis=0)
+            else:
+                return jsonify({'success': False, 'error': 'TSFM预测结果为空'})
+
+            if all_preds.ndim == 3:
+                close_preds = all_preds[:, :, 0]
+                predictions = close_preds.mean(axis=1)
+            elif all_preds.ndim == 2:
+                predictions = all_preds.mean(axis=1) if all_preds.shape[1] > 1 else all_preds.flatten()
+            else:
+                predictions = all_preds.flatten()
+
+            context_length = cfg.get('model_params', {}).get('context_length', 512)
+            forecast_length = cfg.get('model_params', {}).get('forecast_length', 96)
+            n_samples = len(predictions)
+            pred_timestamps = tsfm_pred_df['timestamp'].iloc[
+                context_length:context_length + n_samples
+            ] if len(tsfm_pred_df) > context_length else tsfm_pred_df['timestamp'].iloc[:n_samples]
+
+            result_df = pd.DataFrame({
+                'prediction': predictions[:len(pred_timestamps)],
+            }, index=pred_timestamps.iloc[:len(predictions)])
+
+            return jsonify({
+                'success': True,
+                'predictions': result_df.to_dict(orient='list'),
+                'index': [str(t) for t in result_df.index],
+                'model_id': model_id,
+            })
+        elif model_type == 'lightgbm':
             predictions = model.predict(X, num_iteration=model.best_iteration)
         elif model_type == 'xgboost':
             import xgboost as xgb_mod

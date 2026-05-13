@@ -79,6 +79,33 @@ def _compute_features(data: pd.DataFrame) -> dict[str, pd.Series]:
         "volume_price_corr": c.pct_change().rolling(20, min_periods=2).corr(v.pct_change()),
         "ma_deviation": (c - c.rolling(20, min_periods=1).mean()) / (c.rolling(20, min_periods=1).std() + 1e-8),
     }
+
+    if "basis" in data.columns:
+        features["basis"] = data["basis"].fillna(0)
+    else:
+        features["basis"] = pd.Series(0.0, index=data.index)
+
+    if "open_interest" in data.columns:
+        features["oi_change"] = data["open_interest"].pct_change(12).fillna(0)
+    else:
+        features["oi_change"] = pd.Series(0.0, index=data.index)
+
+    if "lsr_global_account" in data.columns and "lsr_top_account" in data.columns:
+        features["lsr_spread"] = (data["lsr_global_account"] - data["lsr_top_account"]).fillna(0)
+    else:
+        features["lsr_spread"] = pd.Series(0.0, index=data.index)
+
+    if "taker_buy_base" in data.columns and "volume" in data.columns:
+        vol = data["volume"].replace(0, np.nan)
+        features["taker_imbalance"] = (data["taker_buy_base"] / vol - 0.5).fillna(0)
+    else:
+        features["taker_imbalance"] = pd.Series(0.0, index=data.index)
+
+    if "funding_rate" in data.columns:
+        features["funding_rate"] = data["funding_rate"].fillna(0)
+    else:
+        features["funding_rate"] = pd.Series(0.0, index=data.index)
+
     for k in list(features.keys()):
         features[k] = features[k].replace([np.inf, -np.inf], np.nan).fillna(0.0)
     return features

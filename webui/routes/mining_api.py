@@ -7,10 +7,46 @@ import os
 import json
 import uuid
 import threading
+import numpy as np
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from flask import Blueprint, request, jsonify
+
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, (np.integer,)):
+            return int(obj)
+        if isinstance(obj, (np.floating,)):
+            return float(obj)
+        if isinstance(obj, (np.ndarray,)):
+            return obj.tolist()
+        if isinstance(obj, (np.bool_,)):
+            return bool(obj)
+        return super().default(obj)
+
+
+def _sanitize_for_json(obj):
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(v) for v in obj]
+    if isinstance(obj, (np.integer,)):
+        return int(obj)
+    if isinstance(obj, (np.floating,)):
+        v = float(obj)
+        if np.isnan(v) or np.isinf(v):
+            return None
+        return v
+    if isinstance(obj, (np.ndarray,)):
+        return _sanitize_for_json(obj.tolist())
+    if isinstance(obj, (np.bool_,)):
+        return bool(obj)
+    if isinstance(obj, float):
+        if np.isnan(obj) or np.isinf(obj):
+            return None
+    return obj
 
 # 添加项目根目录到Python路径
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -103,6 +139,7 @@ def start_mining():
 
 def _run_mining_background(session_id, data, mining_config):
     """后台运行挖掘任务"""
+    import pandas as pd
     print(f"开始后台挖掘任务: {session_id}")
     try:
         mining_sessions[session_id]['progress'] = 10
@@ -122,13 +159,19 @@ def _run_mining_background(session_id, data, mining_config):
                 loaded_count += 1
                 mining_sessions[session_id]['message'] = f'正在加载数据 ({loaded_count}/{total_combos}): {symbol} {timeframe}...'
                 try:
-                    md = mining_api.load_data(
+                    md_result = mining_api.load_data(
                         symbol=symbol,
                         timeframe=timeframe,
                         start_date=data.get('start_date'),
                         end_date=data.get('end_date')
                     )
-                    if md is not None and len(md) > 0:
+                    if isinstance(md_result, dict) and md_result.get('success'):
+                        md = md_result['data']
+                    elif isinstance(md_result, pd.DataFrame):
+                        md = md_result
+                    else:
+                        md = None
+                    if md is not None and not md.empty:
                         all_market_data[(symbol, timeframe)] = md
                         print(f"✅ {symbol}/{timeframe} 数据加载成功: {len(md)} 条")
                     else:
@@ -188,7 +231,6 @@ def _run_mining_background(session_id, data, mining_config):
         if not all_factors:
             raise ValueError("因子构建失败：未生成任何因子")
 
-        import pandas as pd
         combined_factors_df = pd.concat(all_factors_df_parts, axis=1) if all_factors_df_parts else pd.DataFrame()
 
         print(f"因子构建完成，共生成 {len(all_factors)} 个因子")
@@ -206,7 +248,7 @@ def _run_mining_background(session_id, data, mining_config):
 
         for factor_name, factor_series in all_factors.items():
             try:
-                eval_result = evaluator.evaluate_factor(factor_series, eval_target)
+                eval_result = evaluator.evaluate_single_factor(factor_series, eval_target, factor_name)
                 evaluation_results[factor_name] = eval_result
             except Exception as e:
                 print(f"评估因子 {factor_name} 失败: {e}")
@@ -219,13 +261,20 @@ def _run_mining_background(session_id, data, mining_config):
         mining_sessions[session_id]['message'] = '正在优化因子...'
 
         from factor_miner.core.factor_optimizer import FactorOptimizer
-        optimizer = FactorOptimizer()
+        optimizer = FactorOptimizer(returns=eval_target)
 
         optimization_result = {}
         if not combined_factors_df.empty:
-            optimization_result = optimizer.optimize_factors(
-                combined_factors_df, eval_target
+            best_combination, best_score = optimizer.optimize_factor_combination(
+                combined_factors_df, max_factors=mining_config.get('max_factors', 15),
+                method=mining_config.get('optimization_method', 'greedy')
             )
+            optimization_result = {
+                'selected_factors': best_combination or [],
+                'score': best_score,
+                'method': mining_config.get('optimization_method', 'greedy'),
+                'max_factors': mining_config.get('max_factors', 15)
+            }
 
         selected_count = len(optimization_result.get('selected_factors', []))
         print(f"因子优化完成，选择了 {selected_count} 个因子")
@@ -495,7 +544,7 @@ def _save_sessions_file(sessions):
     sessions_file = _get_sessions_file()
     _get_history_dir().mkdir(parents=True, exist_ok=True)
     with open(sessions_file, 'w', encoding='utf-8') as f:
-        json.dump(sessions, f, ensure_ascii=False, indent=2)
+        json.dump(sessions, f, ensure_ascii=False, indent=2, cls=NumpyEncoder)
 
 @bp.route('/history/delete/<session_id>', methods=['POST'])
 def delete_mining_history(session_id):
@@ -603,25 +652,25 @@ def get_mining_result(session_id):
         if session_id in mining_sessions:
             session = mining_sessions[session_id]
             if session.get('status') in ('completed', 'stopped'):
-                return jsonify({
+                return jsonify(_sanitize_for_json({
                     'success': True,
                     'session_id': session_id,
                     'results': session.get('results', {}),
                     'config': session.get('config', {}),
                     'completed_time': session.get('completed_time')
-                })
+                }))
         
         # 从文件中加载
         sessions = load_completed_mining_sessions()
         session_data = _find_session_in_file_storage(sessions, session_id)
         if session_data:
-            return jsonify({
+            return jsonify(_sanitize_for_json({
                 'success': True,
                 'session_id': session_id,
                 'results': session_data.get('results', {}),
                 'config': session_data.get('config', {}),
                 'completed_time': session_data.get('completed_time')
-            })
+            }))
         
         return jsonify({'success': False, 'error': '会话不存在'})
         
@@ -657,12 +706,12 @@ def save_mining_result_to_file(session_id, session_data):
         
         # 保存到文件
         with open(sessions_file, 'w', encoding='utf-8') as f:
-            json.dump(sessions, f, ensure_ascii=False, indent=2)
+            json.dump(sessions, f, ensure_ascii=False, indent=2, cls=NumpyEncoder)
         
         # 保存详细结果到单独文件
         result_file = history_dir / f"mining_results_{session_id}.json"
         with open(result_file, 'w', encoding='utf-8') as f:
-            json.dump(session_data, f, ensure_ascii=False, indent=2)
+            json.dump(session_data, f, ensure_ascii=False, indent=2, cls=NumpyEncoder)
         
         print(f"挖掘结果已保存: {session_id}")
         
@@ -726,8 +775,12 @@ def save_selected_factors():
         factors = results.get('factors', {})
         mode = results.get('mode', session_data.get('config', {}).get('mode', 'standard'))
 
-        from factor_miner.core.factor_storage import get_global_storage
-        storage = get_global_storage()
+        from factor_miner.core.factor_lifecycle import FactorLifecycleService
+        from factor_miner.core.factor_catalog import FactorCatalogService
+        from factor_miner.core.factor_repository import FactorRepository
+        _repo = FactorRepository()
+        _catalog = FactorCatalogService(_repo)
+        lifecycle = FactorLifecycleService(_repo, _catalog)
 
         algo_name = 'standard_mining'
         if mode == 'cross_sectional':
@@ -750,14 +803,26 @@ def save_selected_factors():
             performance_metrics['source_session_id'] = session_id
             performance_metrics['source_factor_id'] = factor_id
 
-            ok = storage.save_minactor_factor(
+            from factor_miner.core.factor_schema import FactorDefinition, FactorArtifacts, FactorTraits
+            fd = FactorDefinition(
                 factor_id=new_factor_id,
                 name=f"Mined_{mode}_{idx}",
-                algorithm_name=algo_name,
                 description=f"来源:{mode} 表达式:{expression[:200]}",
-                category='mined_factor',
-                performance_metrics=performance_metrics,
+                source_group='mined_factor',
+                factor_kind='mined',
+                computation_type='algorithm_proxy',
+                artifacts=FactorArtifacts(
+                    algorithm_name=algo_name,
+                    proxy_key=algo_name,
+                    entry_point='calculate',
+                    extra={'expression': expression},
+                ),
+                parameters={},
+                traits=FactorTraits(is_mined=True),
+                metadata=performance_metrics,
             )
+            save_result = lifecycle.save_factor(fd, overwrite=True, validate=True)
+            ok = save_result.success
             if ok:
                 saved_count += 1
                 saved_factor_ids.append(new_factor_id)
@@ -800,17 +865,14 @@ def get_mining_diff(session_id):
             })
 
         try:
-            from factor_miner.core.factor_storage import get_global_storage
-            storage = get_global_storage()
-            existing_factors = storage.list_factors() if hasattr(storage, 'list_factors') else {}
+            from factor_miner.core.factor_catalog import FactorCatalogService
+            from factor_miner.core.factor_repository import FactorRepository
+            _repo2 = FactorRepository()
+            _catalog2 = FactorCatalogService(_repo2)
+            existing_summaries = _catalog2.list_factors()
+            existing_ids = {s.factor_id for s in existing_summaries}
         except Exception:
-            existing_factors = {}
-
-        existing_ids = set()
-        if isinstance(existing_factors, dict):
-            existing_ids = set(existing_factors.keys())
-        elif isinstance(existing_factors, list):
-            existing_ids = {f.get('factor_id', f.get('id', '')) for f in existing_factors if isinstance(f, dict)}
+            existing_ids = set()
 
         items = []
         summary = {'total_mined': len(mined_factors), 'new': 0, 'identical': 0, 'different': 0, 'missing_artifact': 0}
@@ -938,6 +1000,8 @@ def _run_cross_sectional_mining_background(session_id, symbols, timeframe,
         from factor_miner.core.data_loader import DataLoader
         loader = DataLoader()
 
+        include_extras = gp_config.get('include_extras', ['metrics', 'funding', 'basis'])
+
         data_dict = {}
         failed_symbols = []
 
@@ -951,6 +1015,13 @@ def _run_cross_sectional_mining_background(session_id, symbols, timeframe,
                     interval=timeframe
                 )
                 if market_data is not None and not market_data.empty and len(market_data) >= 50:
+                    if include_extras and data_source == 'binance':
+                        try:
+                            market_data = loader.join_extras(
+                                market_data, symbol, interval=timeframe, include=include_extras
+                            )
+                        except Exception as e:
+                            print(f"⚠️ {symbol} 加载额外数据失败: {e}")
                     return symbol, market_data, None
                 return symbol, None, "数据不足或为空"
             except Exception as e:
@@ -1218,6 +1289,8 @@ def _run_rl_cross_sectional_mining_background(session_id, symbols, timeframe,
         from factor_miner.core.data_loader import DataLoader
         loader = DataLoader()
 
+        include_extras = rl_config.get('include_extras', ['metrics', 'funding', 'basis'])
+
         data_dict = {}
         failed_symbols = []
 
@@ -1231,6 +1304,13 @@ def _run_rl_cross_sectional_mining_background(session_id, symbols, timeframe,
                     interval=timeframe
                 )
                 if market_data is not None and not market_data.empty and len(market_data) >= 50:
+                    if include_extras and data_source == 'binance':
+                        try:
+                            market_data = loader.join_extras(
+                                market_data, symbol, interval=timeframe, include=include_extras
+                            )
+                        except Exception as e:
+                            print(f"⚠️ {symbol} 加载额外数据失败: {e}")
                     return symbol, market_data, None
                 return symbol, None, "数据不足或为空"
             except Exception as e:

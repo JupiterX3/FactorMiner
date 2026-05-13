@@ -1,0 +1,1269 @@
+{% extends "base.html" %}
+
+{% block title %}实时扫描 - {{ config.title }}{% endblock %}
+
+{% block extra_css %}
+<style>
+.factor-weight-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+    font-size: 0.85rem;
+}
+.factor-weight-row .fw-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.factor-weight-row input[type="number"] {
+    width: 64px;
+}
+.factor-weight-row select {
+    width: 56px;
+}
+.scan-result-card {
+    transition: box-shadow 0.2s;
+}
+.scan-result-card:hover {
+    box-shadow: 0 0 12px rgba(0,0,0,.12);
+}
+.long-badge { background: rgba(20, 241, 149, 0.1); color: var(--accent-green); border: 1px solid rgba(20, 241, 149, 0.3); }
+.short-badge { background: rgba(255, 59, 48, 0.1); color: var(--accent-red); border: 1px solid rgba(255, 59, 48, 0.3); }
+.auto-refresh-indicator {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+}
+.auto-refresh-indicator.active { background: var(--accent-green); animation: pulse 1.5s infinite; }
+.auto-refresh-indicator.inactive { background: #6c757d; }
+@keyframes pulse {
+    0%,100% { opacity: 1; }
+    50% { opacity: .4; }
+}
+#factorCategoryContainer {
+    font-size: 0.875rem;
+}
+.factor-category .collapse-icon {
+    transition: transform 0.2s ease;
+}
+.factor-category .collapse-icon.rotated {
+    transform: rotate(-90deg);
+}
+.factor-category .form-check {
+    margin-bottom: 0.25rem;
+    padding-left: 1.5rem;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="row">
+    <div class="col-12">
+        <h2 class="page-title mb-4">🔔 截面实时扫描</h2>
+        <p class="text-muted">配置因子组合，实时计算截面得分，展示当前推荐做多/做空列表</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-4">
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-header d-flex justify-content-between align-items-center shadow-sm border-0">
+                <h5 class="mb-0"><i class="fas fa-sliders-h me-2"></i>扫描配置</h5>
+                <div>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="document.getElementById('importConfigFile').click()">
+                        <i class="fas fa-file-import me-1"></i>导入配置
+                    </button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" onclick="exportCurrentScanConfig()">
+                        <i class="fas fa-file-export me-1"></i>导出配置
+                    </button>
+                    <input type="file" id="importConfigFile" accept=".json" style="display:none" onchange="importScanConfig(this)">
+                </div>
+            </div>
+            <div class="card-body shadow-sm border-0">
+                <div class="mb-3">
+                    <label class="form-label">因子选择</label>
+                    <div class="mb-2">
+                        <input type="text" class="form-control form-control-sm" id="factorSearch" placeholder="搜索因子..." />
+                    </div>
+                    <div id="factorCategoryContainer" class="border rounded" style="max-height: 300px; overflow-y: auto;">
+                    </div>
+                    <div class="d-flex justify-content-between align-items-center mt-1">
+                        <div class="form-text small">已选 <span id="factorCount">0</span> 个因子</div>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllFactors()">全选</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearFactorSelection()">清空</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">交易所 / 类型</label>
+                    <div class="d-flex gap-2">
+                        <select class="form-select" id="exchangeSelect">
+                            <option value="binance" selected>Binance</option>
+                        </select>
+                        <select class="form-select" id="tradeTypeSelect">
+                            <option value="futures" selected>期货</option>
+                            <option value="spot">现货</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">交易对</label>
+                    <div class="mb-2">
+                        <input type="text" class="form-control form-control-sm" id="symbolSearch" placeholder="搜索交易对..." />
+                    </div>
+                    <div class="mb-2">
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control form-control-sm" id="symbolListInput" placeholder="批量导入: BTCUSDT,ETHUSDT,..." />
+                            <button class="btn btn-outline-primary" type="button" onclick="importSymbolList()">
+                                <i class="fas fa-upload"></i> 导入
+                            </button>
+                        </div>
+                        <div class="form-text small mt-1" id="importResult"></div>
+                    </div>
+                    <select class="form-select" id="symbolsSelect" multiple size="6"></select>
+                    <div class="d-flex justify-content-between align-items-center mt-1">
+                        <div class="form-text small">已选 <span id="selectedSymbolCount">0</span> 个</div>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllSymbols()">全选</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="selectAllSymbolsExcludeStablecoins()">排除稳定币</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="clearSymbolSelection()">清空</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">时间框架</label>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <select class="form-select" id="baseTimeframeSelect">
+                                <option value="1m">1分钟</option>
+                                <option value="5m">5分钟</option>
+                                <option value="15m" selected>15分钟</option>
+                                <option value="1h">1小时</option>
+                                <option value="4h">4小时</option>
+                                <option value="1d">1天</option>
+                            </select>
+                            <div class="form-text small">基础周期</div>
+                        </div>
+                        <div class="col-6">
+                            <select class="form-select" id="factorTimeframeSelect">
+                                <option value="1m">1分钟</option>
+                                <option value="5m">5分钟</option>
+                                <option value="15m">15分钟</option>
+                                <option value="1h" selected>1小时</option>
+                                <option value="4h">4小时</option>
+                                <option value="1d">1天</option>
+                            </select>
+                            <div class="form-text small">因子周期</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">因子K线模式</label>
+                    <select class="form-select" id="factorBarModeSelect">
+                        <option value="completed" selected>仅已完成K线</option>
+                        <option value="offset_resample">偏移重采样（扩展样本）</option>
+                    </select>
+                    <div class="form-text small" id="barModeHint">
+                        completed 模式使用整点K线；offset_resample 将低周期K线偏移重采样为高周期，扩展样本量。
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">数据源</label>
+                    <select class="form-select" id="dataSourceSelect">
+                        <option value="realtime" selected>交易所实时API</option>
+                    </select>
+                    <div class="form-text small" id="dataSourceHint">
+                        仅支持实时API：直接从交易所拉取最新OHLCV与额外数据，确保因子值为最新。
+                    </div>
+                </div>
+
+                <div class="mb-3" id="realtimeLimitConfig" style="display:none;">
+                    <label class="form-label small">实时拉取bar数</label>
+                    <input type="number" class="form-control form-control-sm" id="realtimeLimitInput" value="200" min="50" max="1500">
+                    <div class="form-text small">每个币种从交易所拉取的K线数量，越多历史因子越准确但越慢</div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">组合方式</label>
+                    <select class="form-select" id="combineModeSelect">
+                        <option value="average">等权平均</option>
+                        <option value="weighted">手动权重</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">标准化方法</label>
+                    <select class="form-select" id="normalizeMethodSelect">
+                        <option value="rank_centered" selected>rank_centered（居中排名）</option>
+                        <option value="rank">rank（归一化排名）</option>
+                        <option value="none">none（原始值）</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">异常值处理</label>
+                    <select class="form-select" id="outlierMethodSelect">
+                        <option value="none" selected>不处理</option>
+                        <option value="mad">MAD 截断</option>
+                        <option value="winsor">Winsorize (1%/99%)</option>
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small">做多数量</label>
+                            <input type="number" class="form-control form-control-sm" id="longCountInput" value="5" min="1" max="50">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small">做空数量</label>
+                            <input type="number" class="form-control form-control-sm" id="shortCountInput" value="5" min="1" max="50">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small">最小有效币种数</label>
+                    <input type="number" class="form-control form-control-sm" id="minValidCountInput" value="10" min="2" max="200">
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label small">最大回看bar数</label>
+                    <input type="number" class="form-control form-control-sm" id="maxLookbackInput" value="200" min="50" max="2000">
+                </div>
+
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="autoRefreshCheck">
+                        <label class="form-check-label small" for="autoRefreshCheck">
+                            自动刷新
+                        </label>
+                    </div>
+                    <div class="row g-2 mt-1" id="autoRefreshConfig" style="display:none;">
+                        <div class="col-6">
+                            <label class="form-label small">间隔(秒)</label>
+                            <input type="number" class="form-control form-control-sm" id="autoRefreshInterval" value="60" min="15" max="3600">
+                        </div>
+                        <div class="col-6 d-flex align-items-end">
+                            <span class="auto-refresh-indicator inactive" id="autoRefreshIndicator"></span>
+                            <small class="text-muted" id="autoRefreshStatus">未启动</small>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="button" class="btn btn-primary w-100" id="scanBtn" onclick="runScan()">
+                    <i class="fas fa-bolt me-1"></i>立即扫描
+                </button>
+            </div>
+        </div>
+
+        <div class="card mb-3 shadow-sm border-0" id="factorWeightsCard" style="display:none;">
+            <div class="card-header shadow-sm border-0">
+                <h5 class="mb-0"><i class="fas fa-balance-scale me-2"></i>因子权重 & 方向</h5>
+            </div>
+            <div class="card-body shadow-sm border-0" id="factorWeightsBody">
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div id="scanStatus" class="alert alert-info" style="display:none;"></div>
+
+        <div class="row" id="resultArea" style="display:none;">
+            <div class="col-12 mb-3">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5>扫描结果 <small class="text-muted" id="scanTimeLabel"></small></h5>
+                    <span class="badge bg-secondary" id="totalCandidatesLabel"></span>
+                </div>
+            </div>
+
+            <div class="col-md-6 mb-3">
+                <div class="card scan-result-card border-success shadow-sm border-0">
+                    <div class="card-header border-bottom border-success shadow-sm" style="background: rgba(20, 241, 149, 0.1); color: var(--accent-green);">
+                        <h6 class="mb-0">🟢 推荐做多</h6>
+                    </div>
+                    <div class="card-body p-0 shadow-sm border-0">
+                        <table class="table table-sm table-hover mb-0 align-middle text-center">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>币种</th>
+                                    <th>综合得分</th>
+                                    <th>因子详情</th>
+                                </tr>
+                            </thead>
+                            <tbody id="longTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-md-6 mb-3">
+                <div class="card scan-result-card border-danger shadow-sm border-0">
+                    <div class="card-header border-bottom border-danger shadow-sm" style="background: rgba(255, 59, 48, 0.1); color: var(--accent-red);">
+                        <h6 class="mb-0">🔴 推荐做空</h6>
+                    </div>
+                    <div class="card-body p-0 shadow-sm border-0">
+                        <table class="table table-sm table-hover mb-0 align-middle text-center">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>币种</th>
+                                    <th>综合得分</th>
+                                    <th>因子详情</th>
+                                </tr>
+                            </thead>
+                            <tbody id="shortTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12 mb-3">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header shadow-sm border-0">
+                        <h6 class="mb-0">📋 全部币种排名</h6>
+                    </div>
+                    <div class="card-body p-0 shadow-sm border-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover mb-0 align-middle text-center text-nowrap">
+                                <thead>
+                                    <tr id="fullRankTableHeader">
+                                        <th style="min-width: 60px;">排名</th>
+                                        <th style="min-width: 80px;">币种</th>
+                                        <th style="min-width: 80px;">综合得分</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fullRankTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header shadow-sm border-0">
+                        <h6 class="mb-0">📊 因子覆盖度</h6>
+                    </div>
+                    <div class="card-body shadow-sm border-0" id="coverageBody"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let allFactors = [];
+let allSymbols = [];
+let localDataRows = [];
+let lastScanResult = null;
+let autoRefreshTimer = null;
+
+const STABLECOINS = new Set([
+    'USDT','USDC','BUSD','DAI','TUSD','PAX','USDP','FDUSD','FDUSD','PYUSD'
+]);
+
+function isStablecoin(symbol) {
+    const base = symbol.replace(/[_-].*$/, '').replace('USDT','').replace('BUSD','');
+    return STABLECOINS.has(base) || STABLECOINS.has(symbol.replace(/_USDT.*/, ''));
+}
+
+async function loadFactors() {
+    try {
+        const resp = await fetch('/api/factors/list');
+        const data = await resp.json();
+        if (data.success && data.factors) {
+            allFactors = data.factors;
+            renderFactorCategories();
+            _factorsLoaded = true;
+        }
+    } catch (e) {
+        console.error('加载因子列表失败:', e);
+        _factorsLoaded = true; // 即使失败也标记完成，避免死等
+    }
+}
+
+function renderFactorCategories() {
+    const container = document.getElementById('factorCategoryContainer');
+    const search = (document.getElementById('factorSearch').value || '').toLowerCase();
+
+    function isMinedFactor(factor) {
+        const factorType = String(factor.type || '').toLowerCase();
+        const factorId = String(factor.id || factor.factor_id || '').toLowerCase();
+        const req = String(factor.data_requirement || '').toLowerCase();
+        return (
+            req === 'mined_factor' ||
+            factorType === 'gp_cs' || factorType === 'rl_cs' || factorType === 'mined_factor' ||
+            factorId.startsWith('gp_cs_') || factorId.startsWith('rl_cs_') || factorId.startsWith('mined_')
+        );
+    }
+
+    function getAlphaFamily(factor) {
+        const fam = String(factor.source_family || factor.type || '').toLowerCase();
+        if (fam === 'qlib158' || fam === 'qlib360' || fam === 'wq101') return fam;
+        const fid = String(factor.id || factor.factor_id || '').toLowerCase();
+        if (fid.startsWith('alpha158_')) return 'qlib158';
+        if (fid.startsWith('alpha360_')) return 'qlib360';
+        if (fid.startsWith('wq101_')) return 'wq101';
+        return null;
+    }
+
+    const CATEGORY_META = {
+        'basic_kline': { name: '基础K线因子', icon: 'fa-chart-line', color: 'primary' },
+        'mined_factor': { name: '挖掘因子', icon: 'fa-hammer', color: 'success' },
+        'event_factor': { name: '事件因子', icon: 'fa-bolt', color: 'danger' },
+        'derivatives': { name: '衍生品微观结构因子', icon: 'fa-database', color: 'warning' },
+        'funding': { name: '资金费率因子', icon: 'fa-coins', color: 'info' },
+    };
+
+    const SUBGROUP_META = {
+        'basic_kline_general': { name: '通用技术因子', order: 0 },
+        'basic_kline_qlib158': { name: 'qlib Alpha158', order: 1 },
+        'basic_kline_qlib360': { name: 'qlib Alpha360', order: 2 },
+        'basic_kline_wq101': { name: 'WorldQuant Alpha101', order: 3 },
+    };
+
+    const catBuckets = {};
+    const subBuckets = {};
+
+    allFactors.forEach(f => {
+        const fid = f.id || f.factor_id;
+        const fname = f.name || fid;
+        if (search && !fname.toLowerCase().includes(search) && !fid.toLowerCase().includes(search)) return;
+
+        let req = f.data_requirement || 'basic_kline';
+        if (isMinedFactor(f)) req = 'mined_factor';
+
+        if (!catBuckets[req]) catBuckets[req] = [];
+        catBuckets[req].push(f);
+
+        if (req === 'basic_kline') {
+            const fam = getAlphaFamily(f);
+            let sgKey = 'basic_kline_general';
+            if (fam === 'qlib158') sgKey = 'basic_kline_qlib158';
+            else if (fam === 'qlib360') sgKey = 'basic_kline_qlib360';
+            else if (fam === 'wq101') sgKey = 'basic_kline_wq101';
+            if (!subBuckets[sgKey]) subBuckets[sgKey] = [];
+            subBuckets[sgKey].push(f);
+        }
+    });
+
+    const catOrder = ['basic_kline', 'mined_factor', 'derivatives', 'funding', 'event_factor'];
+    let html = '';
+
+    catOrder.forEach(req => {
+        const factors = catBuckets[req];
+        if (!factors || factors.length === 0) return;
+        const meta = CATEGORY_META[req] || { name: req, icon: 'fa-folder', color: 'secondary' };
+
+        html += `<div class="factor-category">
+            <div class="d-flex align-items-center px-2 py-1 bg-light cursor-pointer" onclick="toggleCategory(this)">
+                <i class="fas ${meta.icon} me-1 small text-${meta.color}"></i>
+                <i class="fas fa-chevron-down collapse-icon me-1 small"></i>
+                <strong class="small">${meta.name}</strong>
+                <span class="badge bg-secondary ms-auto">${factors.length}</span>
+            </div>
+            <div class="category-factors">`;
+
+        if (req === 'basic_kline') {
+            const sgOrder = Object.entries(SUBGROUP_META)
+                .sort((a, b) => a[1].order - b[1].order)
+                .map(([k]) => k);
+            sgOrder.forEach(sgKey => {
+                const sgFactors = subBuckets[sgKey];
+                if (!sgFactors || sgFactors.length === 0) return;
+                const sgMeta = SUBGROUP_META[sgKey];
+                html += `<div class="px-2 py-1 small text-muted border-bottom">
+                    <strong>${sgMeta.name}</strong> (${sgFactors.length})
+                    <a href="javascript:void(0)" class="ms-2 small" onclick="toggleSubgroupFactors('${sgKey}', this)">全选/取消</a>
+                </div>`;
+                sgFactors.forEach(f => {
+                    const fid = f.id || f.factor_id;
+                    const fname = f.name || fid;
+                    html += `<div class="form-check">
+                        <input class="form-check-input factor-checkbox" type="checkbox" value="${fid}"
+                               id="fc_${fid}" data-subgroup="${sgKey}" onchange="updateFactorCount()">
+                        <label class="form-check-label" for="fc_${fid}" title="${f.description || ''}">
+                            ${fname} <code class="small">${fid}</code>
+                        </label>
+                    </div>`;
+                });
+            });
+        } else {
+            factors.forEach(f => {
+                const fid = f.id || f.factor_id;
+                const fname = f.name || fid;
+                html += `<div class="form-check">
+                    <input class="form-check-input factor-checkbox" type="checkbox" value="${fid}"
+                           id="fc_${fid}" onchange="updateFactorCount()">
+                    <label class="form-check-label" for="fc_${fid}" title="${f.description || ''}">
+                        ${fname} <code class="small">${fid}</code>
+                    </label>
+                </div>`;
+            });
+        }
+
+        html += `</div></div>`;
+    });
+
+    container.innerHTML = html;
+}
+
+function toggleSubgroupFactors(sgKey, el) {
+    const checkboxes = document.querySelectorAll(`.factor-checkbox[data-subgroup="${sgKey}"]`);
+    const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+    checkboxes.forEach(cb => cb.checked = !allChecked);
+    updateFactorCount();
+}
+
+// 等待因子列表加载完成后再执行回调
+let _pendingScanConfig = null;
+let _factorsLoaded = false;
+
+function _onFactorsReady(callback) {
+    if (_factorsLoaded && allFactors.length > 0) {
+        callback();
+    } else {
+        // 轮询等待因子列表加载完成（最多 10 秒）
+        let waited = 0;
+        const poll = setInterval(() => {
+            waited += 200;
+            if ((_factorsLoaded && allFactors.length > 0) || waited > 10000) {
+                clearInterval(poll);
+                callback();
+            }
+        }, 200);
+    }
+}
+
+function importScanConfig(inputEl) {
+    const file = inputEl.files && inputEl.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const config = JSON.parse(e.target.result);
+            if (!config._meta || config._meta.type !== 'realtime_scan_config') {
+                alert('无效的扫描配置文件（缺少 _meta.type = realtime_scan_config）');
+                return;
+            }
+            // 确保因子列表已加载后再应用配置
+            _onFactorsReady(() => applyScanConfig(config));
+        } catch (err) {
+            alert('解析配置文件失败: ' + err.message);
+        }
+    };
+    reader.readAsText(file);
+    inputEl.value = '';
+}
+
+// 缓存导入配置中的因子方向，在 average 模式下也生效
+let _importedFactorDirections = {};
+
+async function applyScanConfig(config) {
+    // 先清空之前的选择
+    document.querySelectorAll('.factor-checkbox:checked').forEach(cb => cb.checked = false);
+
+    if (config.factor_ids && config.factor_ids.length > 0) {
+        config.factor_ids.forEach(fid => {
+            const cb = document.getElementById(`fc_${fid}`);
+            if (cb) cb.checked = true;
+        });
+        updateFactorCount();
+    }
+
+    if (config.base_timeframe) {
+        const sel = document.getElementById('baseTimeframeSelect');
+        if (sel) {
+            // 检查选项是否存在
+            const optExists = Array.from(sel.options).some(o => o.value === config.base_timeframe);
+            if (optExists) {
+                sel.value = config.base_timeframe;
+            } else {
+                console.warn(`base_timeframe "${config.base_timeframe}" 在实时扫描页不可用，已保持默认值`);
+            }
+        }
+    }
+    if (config.factor_timeframe) {
+        const sel = document.getElementById('factorTimeframeSelect');
+        if (sel) {
+            const optExists = Array.from(sel.options).some(o => o.value === config.factor_timeframe);
+            if (optExists) {
+                sel.value = config.factor_timeframe;
+            } else {
+                console.warn(`factor_timeframe "${config.factor_timeframe}" 在实时扫描页不可用，已保持默认值`);
+            }
+        }
+    }
+    let _barModeWarning = '';
+    if (config.factor_bar_mode) {
+        const sel = document.getElementById('factorBarModeSelect');
+        if (sel) {
+            const supportedModes = Array.from(sel.options).map(o => o.value);
+            if (supportedModes.includes(config.factor_bar_mode)) {
+                sel.value = config.factor_bar_mode;
+            } else {
+                sel.value = 'completed';
+                _barModeWarning = `因子K线模式 "${config.factor_bar_mode}" 不适用于实时扫描，已回退为 "completed"`;
+                console.warn(_barModeWarning);
+            }
+        }
+    }
+    if (config.data_source) {
+        const sel = document.getElementById('dataSourceSelect');
+        if (sel) {
+            sel.value = 'realtime';
+            sel.dispatchEvent(new Event('change'));
+        }
+    }
+    if (config.realtime_limit) {
+        const inp = document.getElementById('realtimeLimitInput');
+        if (inp) inp.value = config.realtime_limit;
+    }
+    if (config.combine_mode) {
+        const sel = document.getElementById('combineModeSelect');
+        if (sel) {
+            sel.value = config.combine_mode;
+            sel.dispatchEvent(new Event('change'));
+        }
+    }
+    if (config.normalize_method) {
+        const sel = document.getElementById('normalizeMethodSelect');
+        if (sel) sel.value = config.normalize_method;
+    }
+    if (config.outlier_method) {
+        const sel = document.getElementById('outlierMethodSelect');
+        if (sel) sel.value = config.outlier_method;
+    }
+    if (config.long_count) {
+        const inp = document.getElementById('longCountInput');
+        if (inp) inp.value = config.long_count;
+    }
+    if (config.short_count) {
+        const inp = document.getElementById('shortCountInput');
+        if (inp) inp.value = config.short_count;
+    }
+    if (config.min_valid_count) {
+        const inp = document.getElementById('minValidCountInput');
+        if (inp) inp.value = config.min_valid_count;
+    }
+    if (config.max_lookback) {
+        const inp = document.getElementById('maxLookbackInput');
+        if (inp) inp.value = config.max_lookback;
+    }
+    let shouldReloadSymbols = false;
+    if (config.exchange) {
+        const sel = document.getElementById('exchangeSelect');
+        if (sel && sel.value !== config.exchange) {
+            sel.value = config.exchange;
+            shouldReloadSymbols = true;
+        }
+    }
+    if (config.trade_type) {
+        const sel = document.getElementById('tradeTypeSelect');
+        if (sel && sel.value !== config.trade_type) {
+            sel.value = config.trade_type;
+            shouldReloadSymbols = true;
+        }
+    }
+
+    // 导入配置后确保交易对列表与 exchange/trade_type 同步
+    if (shouldReloadSymbols) {
+        await loadLocalSymbols();
+    }
+
+    // 导入交易对列表（如果存在）
+    if (config.symbols && config.symbols.length > 0) {
+        // 等待交易对列表准备就绪后再选中，避免 fixed timeout 导致偶发空列表
+        let retries = 20;
+        while (allSymbols.length === 0 && retries > 0) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            retries--;
+        }
+        const select = document.getElementById('symbolsSelect');
+        if (select) {
+            const symSet = new Set(config.symbols.map(s => s.toUpperCase()));
+            let matched = 0;
+            Array.from(select.options).forEach(o => {
+                if (symSet.has(o.value.toUpperCase())) {
+                    o.selected = true;
+                    matched++;
+                }
+            });
+            updateSymbolCount();
+            if (matched < config.symbols.length) {
+                console.warn(`交易对导入：匹配 ${matched}/${config.symbols.length} 个`);
+            }
+        }
+    }
+
+    // 保存因子方向信息（在所有模式下都保留）
+    _importedFactorDirections = config.factor_directions || {};
+
+    if (config.combine_mode === 'weighted' && config.factor_weights) {
+        updateFactorWeightsCard();
+        setTimeout(() => {
+            document.querySelectorAll('.fw-row').forEach(row => {
+                const fid = row.dataset.factorId;
+                const w = config.factor_weights[fid];
+                if (w !== undefined) {
+                    const wInput = row.querySelector('.fw-weight');
+                    if (wInput) wInput.value = w;
+                }
+                const d = config.factor_directions?.[fid];
+                if (d !== undefined) {
+                    const dSelect = row.querySelector('.fw-direction');
+                    if (dSelect) dSelect.value = String(d);
+                }
+            });
+        }, 100);
+    }
+
+    const nApplied = (config.factor_ids || []).filter(fid => document.getElementById(`fc_${fid}`)).length;
+    const nTotal = (config.factor_ids || []).length;
+    const nSymbols = (config.symbols || []).length;
+    const warnParts = [];
+    if (nApplied < nTotal) {
+        warnParts.push(`${nTotal - nApplied} 个因子在当前因子库中不存在`);
+    }
+    if (_barModeWarning) {
+        warnParts.push(_barModeWarning);
+    }
+    let msg = `配置已导入：${nApplied}/${nTotal} 个因子已选中`;
+    if (nSymbols > 0) msg += `，${nSymbols} 个交易对将在加载后自动选中`;
+    if (warnParts.length > 0) msg += `\n⚠️ ${warnParts.join('；')}`;
+    msg += '，其余参数已填充';
+    alert(msg);
+}
+
+async function exportCurrentScanConfig() {
+    const params = getScanParams();
+    const config = {
+        _meta: {
+            type: 'realtime_scan_config',
+            version: 2,
+            exported_from: 'realtime_scan',
+            exported_at: new Date().toISOString(),
+        },
+        ...params,
+    };
+
+    let finalConfig = config;
+    try {
+        const resp = await fetch('/api/factors/save_scan_config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: config }),
+        });
+        const data = await resp.json();
+        if (data.success && data.config) {
+            finalConfig = data.config;
+        }
+    } catch (err) {
+        console.warn('保存到服务端请求失败:', err);
+    }
+
+    const json = JSON.stringify(finalConfig, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `scan_config_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function toggleCategory(el) {
+    const icon = el.querySelector('.collapse-icon');
+    const body = el.nextElementSibling;
+    icon.classList.toggle('rotated');
+    body.style.display = body.style.display === 'none' ? '' : 'none';
+}
+
+function getSelectedFactorIds() {
+    return Array.from(document.querySelectorAll('.factor-checkbox:checked')).map(cb => cb.value);
+}
+
+function updateFactorCount() {
+    const ids = getSelectedFactorIds();
+    document.getElementById('factorCount').textContent = ids.length;
+    updateFactorWeightsCard();
+}
+
+function selectAllFactors() {
+    document.querySelectorAll('.factor-checkbox').forEach(cb => cb.checked = true);
+    updateFactorCount();
+}
+
+function clearFactorSelection() {
+    document.querySelectorAll('.factor-checkbox').forEach(cb => cb.checked = false);
+    updateFactorCount();
+}
+
+async function loadLocalSymbols(forceRefresh = false) {
+    const exchange = document.getElementById('exchangeSelect').value;
+    const tradeType = document.getElementById('tradeTypeSelect').value;
+    try {
+        const forceParam = forceRefresh ? '&force=1' : '';
+        const url = `/api/data/local-data-cached?exchange=${exchange}&trade_type=${tradeType}${forceParam}`;
+        const resp = await fetch(url);
+        const data = await resp.json();
+        if (data.success && data.data) {
+            localDataRows = data.data;
+            applyLocalSymbolsState();
+            // 本地数据为空时，回退到交易所交易对，避免候选框无可选项
+            if (allSymbols.length === 0) {
+                await loadExchangeSymbols(exchange, tradeType, forceRefresh);
+            }
+        } else {
+            localDataRows = [];
+            await loadExchangeSymbols(exchange, tradeType, forceRefresh);
+        }
+    } catch (e) {
+        console.error('加载交易对失败:', e);
+        localDataRows = [];
+        await loadExchangeSymbols(exchange, tradeType, forceRefresh);
+    }
+}
+
+function applyLocalSymbolsState() {
+    const baseTf = document.getElementById('baseTimeframeSelect').value;
+    const rowsForTimeframe = (localDataRows || []).filter(r => String(r.timeframe || '') === String(baseTf || ''));
+    // 优先使用当前基础周期；若该周期无数据，退化到本地全部周期，避免空列表
+    const sourceRows = rowsForTimeframe.length > 0 ? rowsForTimeframe : (localDataRows || []);
+    allSymbols = [...new Set(sourceRows.map(r => r.symbol).filter(Boolean))].sort();
+    renderSymbols();
+}
+
+async function loadExchangeSymbols(exchange, tradeType, forceRefresh = false) {
+    try {
+        const forceParam = forceRefresh ? '?force=1' : '';
+        const resp = await fetch(`/api/data/symbols/${exchange}${forceParam}`);
+        const data = await resp.json();
+        if (data.success && data.data) {
+            const marketList = Array.isArray(data.data[tradeType]) ? data.data[tradeType] : [];
+            allSymbols = [...new Set(marketList.map(m => m.symbol).filter(Boolean))].sort();
+            renderSymbols();
+        } else {
+            allSymbols = [];
+            renderSymbols();
+        }
+    } catch (e) {
+        console.error('从交易所接口加载交易对失败:', e);
+        allSymbols = [];
+        renderSymbols();
+    }
+}
+
+function renderSymbols() {
+    const select = document.getElementById('symbolsSelect');
+    const search = (document.getElementById('symbolSearch').value || '').toUpperCase();
+    const filtered = allSymbols.filter(s => !search || s.toUpperCase().includes(search));
+    const selected = Array.from(select.selectedOptions).map(o => o.value);
+    select.innerHTML = filtered.map(s =>
+        `<option value="${s}" ${selected.includes(s) ? 'selected' : ''}>${s}</option>`
+    ).join('');
+    updateSymbolCount();
+}
+
+function updateSymbolCount() {
+    const count = document.getElementById('symbolsSelect').selectedOptions.length;
+    document.getElementById('selectedSymbolCount').textContent = count;
+}
+
+function selectAllSymbols() {
+    Array.from(document.getElementById('symbolsSelect').options).forEach(o => o.selected = true);
+    updateSymbolCount();
+}
+
+function selectAllSymbolsExcludeStablecoins() {
+    Array.from(document.getElementById('symbolsSelect').options).forEach(o => {
+        o.selected = !isStablecoin(o.value);
+    });
+    updateSymbolCount();
+}
+
+function clearSymbolSelection() {
+    Array.from(document.getElementById('symbolsSelect').options).forEach(o => o.selected = false);
+    updateSymbolCount();
+}
+
+function importSymbolList() {
+    const raw = document.getElementById('symbolListInput').value.trim();
+    if (!raw) return;
+    let tokens;
+    try {
+        const parsed = JSON.parse(raw);
+        tokens = Array.isArray(parsed) ? parsed : [parsed];
+    } catch {
+        tokens = raw.split(/[,;\s]+/).filter(Boolean);
+    }
+    tokens = tokens.map(t => t.replace(/[^a-zA-Z0-9_]/g, '').toUpperCase());
+    const symbolSet = new Set(allSymbols.map(s => s.toUpperCase()));
+    const matched = [];
+    const unmatched = [];
+    tokens.forEach(t => {
+        const found = allSymbols.find(s => s.toUpperCase() === t || s.toUpperCase().replace(/_/g, '') === t.replace(/_/g, ''));
+        if (found) {
+            matched.push(found);
+        } else {
+            unmatched.push(t);
+        }
+    });
+    const select = document.getElementById('symbolsSelect');
+    const selected = new Set(matched);
+    Array.from(select.options).forEach(o => {
+        if (selected.has(o.value)) o.selected = true;
+    });
+    updateSymbolCount();
+    const resultEl = document.getElementById('importResult');
+    if (unmatched.length > 0) {
+        resultEl.textContent = `匹配 ${matched.length} 个，未匹配 ${unmatched.length} 个: ${unmatched.slice(0, 5).join(', ')}${unmatched.length > 5 ? '...' : ''}`;
+        resultEl.className = 'form-text small mt-1 text-warning';
+    } else {
+        resultEl.textContent = `成功匹配 ${matched.length} 个交易对`;
+        resultEl.className = 'form-text small mt-1 text-success';
+    }
+}
+
+function updateFactorWeightsCard() {
+    const ids = getSelectedFactorIds();
+    const card = document.getElementById('factorWeightsCard');
+    const body = document.getElementById('factorWeightsBody');
+    const combineMode = document.getElementById('combineModeSelect').value;
+    if (ids.length === 0 || combineMode !== 'weighted') {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = '';
+    const prevWeights = {};
+    body.querySelectorAll('.fw-row').forEach(row => {
+        const fid = row.dataset.factorId;
+        prevWeights[fid] = {
+            weight: row.querySelector('.fw-weight')?.value || '1.0',
+            direction: row.querySelector('.fw-direction')?.value || '1',
+        };
+    });
+    let html = '';
+    ids.forEach(fid => {
+        const f = allFactors.find(x => (x.id || x.factor_id) === fid);
+        const name = f ? f.name : fid;
+        const pw = prevWeights[fid];
+        const weight = pw ? pw.weight : '1.0';
+        const dir = pw ? pw.direction : '1';
+        html += `<div class="factor-weight-row fw-row" data-factor-id="${fid}">
+            <span class="fw-label" title="${fid}">${name}</span>
+            <select class="form-select form-select-sm fw-direction" title="方向">
+                <option value="1" ${dir === '1' ? 'selected' : ''}>正向</option>
+                <option value="-1" ${dir === '-1' ? 'selected' : ''}>反向</option>
+            </select>
+            <input type="number" class="form-control form-control-sm fw-weight" step="0.1" min="0" value="${weight}" title="权重">
+        </div>`;
+    });
+    body.innerHTML = html;
+}
+
+function getScanParams() {
+    const factorIds = getSelectedFactorIds();
+    const symbols = Array.from(document.getElementById('symbolsSelect').selectedOptions).map(o => o.value);
+    const baseTimeframe = document.getElementById('baseTimeframeSelect').value;
+    const factorTimeframe = document.getElementById('factorTimeframeSelect').value;
+    const factorBarMode = document.getElementById('factorBarModeSelect').value;
+    const dataSource = document.getElementById('dataSourceSelect').value;
+    const realtimeLimit = parseInt(document.getElementById('realtimeLimitInput').value) || 200;
+    const combineMode = document.getElementById('combineModeSelect').value;
+    const normalizeMethod = document.getElementById('normalizeMethodSelect').value;
+    const outlierMethod = document.getElementById('outlierMethodSelect').value;
+    const longCount = parseInt(document.getElementById('longCountInput').value) || 5;
+    const shortCount = parseInt(document.getElementById('shortCountInput').value) || 5;
+    const minValidCount = parseInt(document.getElementById('minValidCountInput').value) || 10;
+    const maxLookback = parseInt(document.getElementById('maxLookbackInput').value) || 200;
+    const exchange = document.getElementById('exchangeSelect').value;
+    const tradeType = document.getElementById('tradeTypeSelect').value;
+
+    const factorWeights = {};
+    const factorDirections = {};
+    if (combineMode === 'weighted') {
+        document.querySelectorAll('.fw-row').forEach(row => {
+            const fid = row.dataset.factorId;
+            factorWeights[fid] = parseFloat(row.querySelector('.fw-weight')?.value || '1.0');
+            factorDirections[fid] = parseInt(row.querySelector('.fw-direction')?.value || '1');
+        });
+    } else {
+        // 等权模式也需要传递因子方向（从导入配置中恢复）
+        factorIds.forEach(fid => {
+            if (_importedFactorDirections[fid] !== undefined) {
+                factorDirections[fid] = parseInt(_importedFactorDirections[fid]);
+            }
+        });
+    }
+
+    return {
+        factor_ids: factorIds,
+        symbols: symbols,
+        base_timeframe: baseTimeframe,
+        factor_timeframe: factorTimeframe,
+        factor_bar_mode: factorBarMode,
+        data_source: dataSource,
+        realtime_limit: realtimeLimit,
+        combine_mode: combineMode,
+        normalize_method: normalizeMethod,
+        outlier_method: outlierMethod,
+        long_count: longCount,
+        short_count: shortCount,
+        min_valid_count: minValidCount,
+        max_lookback: maxLookback,
+        exchange: exchange,
+        trade_type: tradeType,
+        factor_weights: factorWeights,
+        factor_directions: factorDirections,
+    };
+}
+
+async function runScan() {
+    const params = getScanParams();
+    if (!params.factor_ids.length) {
+        showStatus('请至少选择1个因子', 'warning');
+        return;
+    }
+    if (params.symbols.length < 2) {
+        showStatus('请至少选择2个交易对', 'warning');
+        return;
+    }
+
+    const btn = document.getElementById('scanBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>扫描中...';
+    hideStatus();
+
+    try {
+        const resp = await fetch('/api/factors/realtime_scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(params),
+        });
+        const data = await resp.json();
+        if (data.success) {
+            lastScanResult = data;
+            renderResults(data);
+            showStatus(`扫描完成，共 ${data.total_candidates} 个币种`, 'success');
+        } else {
+            showStatus(data.message || '扫描失败', 'danger');
+        }
+    } catch (e) {
+        showStatus('扫描请求失败: ' + e.message, 'danger');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fas fa-bolt me-1"></i>立即扫描';
+    }
+}
+
+function renderResults(data) {
+    document.getElementById('resultArea').style.display = '';
+    document.getElementById('scanTimeLabel').textContent = data.scan_time ? `(${data.scan_time})` : '';
+    const dsLabel = data.data_source === 'realtime' ? '实时API' : '本地数据';
+    document.getElementById('totalCandidatesLabel').textContent = `${data.n_symbols_loaded} 币种 / ${data.total_candidates} 候选 [${dsLabel}]`;
+
+    renderLongShortTable('longTableBody', data.long, 'long');
+    renderLongShortTable('shortTableBody', data.short, 'short');
+    renderFullRankTable(data);
+    renderCoverage(data);
+}
+
+function renderLongShortTable(tbodyId, items, type) {
+    const tbody = document.getElementById(tbodyId);
+    if (!items || items.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted small">无数据</td></tr>`;
+        return;
+    }
+    const factorIds = getSelectedFactorIds();
+    let html = '';
+    items.forEach((item, idx) => {
+        const badge = type === 'long' ? 'long-badge' : 'short-badge';
+        const details = factorIds.map(fid => {
+            const score = item.factor_scores?.[fid];
+            const rank = item.factor_ranks?.[fid];
+            const val = item.factor_values?.[fid];
+            let tip = `${fid}: 值=${val ?? 'N/A'}`;
+            if (score != null) tip += ` 得分=${score}`;
+            if (rank != null) tip += ` 排名=${rank}`;
+            return `<span class="badge ${badge} me-1 mb-1" title="${tip}">${fid.slice(0, 8)}${score != null ? ':' + score : ''}</span>`;
+        }).join('');
+        html += `<tr>
+            <td>${idx + 1}</td>
+            <td><strong>${item.symbol}</strong></td>
+            <td>${item.composite_score != null ? item.composite_score.toFixed(4) : 'N/A'}</td>
+            <td><div class="d-flex flex-wrap">${details}</div></td>
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+}
+
+function renderFullRankTable(data) {
+    const factorIds = getSelectedFactorIds();
+    const headerRow = document.getElementById('fullRankTableHeader');
+    headerRow.innerHTML = `
+        <th style="min-width: 60px;">排名</th>
+        <th style="min-width: 80px;">币种</th>
+        <th style="min-width: 80px;">综合得分</th>
+        ${factorIds.map(fid => `<th title="${fid}">${fid.slice(0, 12)}</th>`).join('')}
+    `;
+
+    const allItems = data.all_ranked || [];
+    const longSyms = new Set((data.long || []).map(i => i.symbol));
+    const shortSyms = new Set((data.short || []).map(i => i.symbol));
+
+    const tbody = document.getElementById('fullRankTableBody');
+    if (allItems.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="${3 + factorIds.length}" class="text-center text-muted small">无数据</td></tr>`;
+        return;
+    }
+
+    let html = '';
+    allItems.forEach(item => {
+        const isLong = longSyms.has(item.symbol);
+        const isShort = shortSyms.has(item.symbol);
+        let cls = '';
+        if (isLong) cls = 'table-success';
+        else if (isShort) cls = 'table-danger';
+
+        const factorCells = factorIds.map(fid => {
+            const val = item.factor_values?.[fid];
+            const score = item.factor_scores?.[fid];
+            return `<td title="值=${val ?? 'N/A'} 得分=${score ?? 'N/A'}">${score != null ? score.toFixed(3) : (val != null ? val.toFixed(3) : 'N/A')}</td>`;
+        }).join('');
+
+        html += `<tr class="${cls}">
+            <td>${item.rank}</td>
+            <td><strong>${item.symbol}</strong></td>
+            <td>${item.composite_score != null ? item.composite_score.toFixed(4) : 'N/A'}</td>
+            ${factorCells}
+        </tr>`;
+    });
+    tbody.innerHTML = html;
+}
+
+function renderCoverage(data) {
+    const body = document.getElementById('coverageBody');
+    const coverage = data.factor_coverage || {};
+    const total = data.total_candidates || 0;
+    if (Object.keys(coverage).length === 0) {
+        body.innerHTML = '<p class="text-muted small">无覆盖度数据</p>';
+        return;
+    }
+    let html = '<div class="d-flex flex-wrap gap-2">';
+    for (const [fid, count] of Object.entries(coverage)) {
+        const pct = total > 0 ? (count / total * 100).toFixed(1) : 0;
+        const color = pct >= 80 ? 'success' : pct >= 50 ? 'warning' : 'danger';
+        html += `<span class="badge bg-${color}" title="${fid}: ${count}/${total} 币种有值">${fid.slice(0, 12)}: ${count}/${total} (${pct}%)</span>`;
+    }
+    html += '</div>';
+    body.innerHTML = html;
+}
+
+function showStatus(msg, type) {
+    const el = document.getElementById('scanStatus');
+    el.className = `alert alert-${type}`;
+    el.textContent = msg;
+    el.style.display = '';
+}
+
+function hideStatus() {
+    document.getElementById('scanStatus').style.display = 'none';
+}
+
+// Auto-refresh
+document.getElementById('autoRefreshCheck').addEventListener('change', function() {
+    const config = document.getElementById('autoRefreshConfig');
+    const indicator = document.getElementById('autoRefreshIndicator');
+    const status = document.getElementById('autoRefreshStatus');
+    if (this.checked) {
+        config.style.display = '';
+        startAutoRefresh();
+        indicator.className = 'auto-refresh-indicator active';
+        status.textContent = '运行中';
+    } else {
+        config.style.display = 'none';
+        stopAutoRefresh();
+        indicator.className = 'auto-refresh-indicator inactive';
+        status.textContent = '未启动';
+    }
+});
+
+function startAutoRefresh() {
+    stopAutoRefresh();
+    const interval = parseInt(document.getElementById('autoRefreshInterval').value) || 60;
+    autoRefreshTimer = setInterval(() => {
+        runScan();
+    }, interval * 1000);
+}
+
+function stopAutoRefresh() {
+    if (autoRefreshTimer) {
+        clearInterval(autoRefreshTimer);
+        autoRefreshTimer = null;
+    }
+}
+
+// Combine mode change
+document.getElementById('combineModeSelect').addEventListener('change', updateFactorWeightsCard);
+
+// Factor search
+document.getElementById('factorSearch').addEventListener('input', renderFactorCategories);
+
+// Symbol search
+document.getElementById('symbolSearch').addEventListener('input', renderSymbols);
+
+// Symbol selection change
+document.getElementById('symbolsSelect').addEventListener('change', updateSymbolCount);
+
+// Base timeframe change - re-filter symbols
+document.getElementById('baseTimeframeSelect').addEventListener('change', () => applyLocalSymbolsState());
+
+// Exchange / trade type change - reload symbols
+document.getElementById('exchangeSelect').addEventListener('change', () => loadLocalSymbols());
+document.getElementById('tradeTypeSelect').addEventListener('change', () => loadLocalSymbols());
+
+// Bar mode hint
+document.getElementById('factorBarModeSelect').addEventListener('change', function() {
+    const hint = document.getElementById('barModeHint');
+    if (this.value === 'offset_resample') {
+        hint.textContent = '偏移重采样将低周期K线按不同偏移量重采样为高周期K线，每组都是完整的高周期bar，因子精度等同于 completed 模式，样本量扩展 factor周期/base周期 倍。';
+    } else {
+        hint.textContent = 'completed 模式使用整点K线；offset_resample 将低周期K线偏移重采样为高周期，扩展样本量。';
+    }
+});
+
+// Data source change
+document.getElementById('dataSourceSelect').addEventListener('change', function() {
+    const realtimeConfig = document.getElementById('realtimeLimitConfig');
+    const hint = document.getElementById('dataSourceHint');
+    this.value = 'realtime';
+    realtimeConfig.style.display = '';
+    hint.textContent = '实时API：直接从交易所拉取最新OHLCV + OI/LSR/Funding/Mark/Index数据，确保因子值为最新。注意：受API限速影响，币种较多时较慢。';
+});
+
+// Init
+document.addEventListener('DOMContentLoaded', () => {
+    loadFactors();
+    loadLocalSymbols();
+});
+</script>
+{% endblock %}

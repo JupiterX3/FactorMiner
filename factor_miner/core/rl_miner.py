@@ -42,6 +42,7 @@ except ImportError:
 FEATURE_NAMES = [
     'RET', 'VOL', 'V_CHG', 'PV', 'TREND', 'HL_RANGE',
     'CLOSE_POS', 'MA_DEV', 'VOLATILITY', 'MOMENTUM',
+    'BASIS', 'OI_CHG', 'LSR_SPREAD', 'TAKER_IMB', 'FUNDING',
 ]
 INPUT_DIM = len(FEATURE_NAMES)
 
@@ -211,7 +212,7 @@ if TORCH_AVAILABLE:
 
     class RLFeatureEngineer:
         @staticmethod
-        def compute_features(raw_dict):
+        def compute_features(raw_dict, extras_dict=None):
             c = raw_dict['close']
             o = raw_dict['open']
             h = raw_dict['high']
@@ -251,6 +252,34 @@ if TORCH_AVAILABLE:
                 norm = (t - median) / mad
                 return torch.clamp(norm, -5.0, 5.0)
 
+            n_symbols, n_periods = c.shape
+            zero_feat = torch.zeros((n_symbols, n_periods), device=c.device, dtype=c.dtype)
+
+            if extras_dict is not None and 'basis' in extras_dict:
+                basis = extras_dict['basis']
+            else:
+                basis = zero_feat
+
+            if extras_dict is not None and 'oi_change' in extras_dict:
+                oi_chg = extras_dict['oi_change']
+            else:
+                oi_chg = zero_feat
+
+            if extras_dict is not None and 'lsr_spread' in extras_dict:
+                lsr_spread = extras_dict['lsr_spread']
+            else:
+                lsr_spread = zero_feat
+
+            if extras_dict is not None and 'taker_imbalance' in extras_dict:
+                taker_imb = extras_dict['taker_imbalance']
+            else:
+                taker_imb = zero_feat
+
+            if extras_dict is not None and 'funding_rate' in extras_dict:
+                funding = extras_dict['funding_rate']
+            else:
+                funding = zero_feat
+
             features = torch.stack([
                 robust_norm(ret),
                 robust_norm(log_vol),
@@ -262,6 +291,11 @@ if TORCH_AVAILABLE:
                 robust_norm(ma_dev),
                 robust_norm(volatility),
                 robust_norm(momentum),
+                robust_norm(basis),
+                robust_norm(oi_chg),
+                robust_norm(lsr_spread),
+                robust_norm(taker_imb),
+                robust_norm(funding),
             ], dim=1)
 
             return features
@@ -1034,7 +1068,6 @@ if TORCH_AVAILABLE:
             aligned_index = pd.Index(all_dates)
             min_coverage = float(self.config.get('min_date_coverage', 0.8))
 
-            # 用DataFrame重索引一次性对齐时序，避免逐时间点赋值导致的三重循环开销
             aligned_frames = []
             for sym in symbols:
                 df = data_dict[sym]
@@ -1066,7 +1099,55 @@ if TORCH_AVAILABLE:
             raw_tensors['volume'] = torch.nan_to_num(raw_tensors['volume'], nan=1.0, posinf=1e12, neginf=1.0)
             raw_tensors['volume'] = raw_tensors['volume'].clamp(min=1.0)
 
-            feat_tensor = RLFeatureEngineer.compute_features(raw_tensors)
+            extras_dict = {}
+            extras_cols = {
+                'basis': 'basis',
+                'oi_change': 'open_interest',
+                'lsr_spread': None,
+                'taker_imbalance': None,
+                'funding_rate': 'funding_rate',
+            }
+
+            for feat_name, src_col in extras_cols.items():
+                try:
+                    if feat_name == 'oi_change':
+                        if all('open_interest' in data_dict[sym].columns for sym in symbols):
+                            arrs = []
+                            for sym in symbols:
+                                oi = data_dict[sym].reindex(aligned_index)['open_interest']
+                                arrs.append(oi.pct_change(12).fillna(0).to_numpy(dtype=np.float32))
+                            extras_dict['oi_change'] = torch.tensor(np.stack(arrs, axis=0), device=self.device)
+                    elif feat_name == 'lsr_spread':
+                        if all('lsr_global_account' in data_dict[sym].columns and 'lsr_top_account' in data_dict[sym].columns for sym in symbols):
+                            arrs = []
+                            for sym in symbols:
+                                df_sym = data_dict[sym].reindex(aligned_index)
+                                arrs.append((df_sym['lsr_global_account'] - df_sym['lsr_top_account']).fillna(0).to_numpy(dtype=np.float32))
+                            extras_dict['lsr_spread'] = torch.tensor(np.stack(arrs, axis=0), device=self.device)
+                    elif feat_name == 'taker_imbalance':
+                        arrs = []
+                        for sym in symbols:
+                            df_sym = data_dict[sym].reindex(aligned_index)
+                            if 'taker_buy_base' in df_sym.columns:
+                                vol = df_sym['volume'].replace(0, np.nan)
+                                imb = (df_sym['taker_buy_base'] / vol - 0.5).fillna(0)
+                            else:
+                                imb = pd.Series(0.0, index=aligned_index)
+                            arrs.append(imb.to_numpy(dtype=np.float32))
+                        extras_dict['taker_imbalance'] = torch.tensor(np.stack(arrs, axis=0), device=self.device)
+                    elif src_col is not None and all(src_col in data_dict[sym].columns for sym in symbols):
+                        arrs = []
+                        for sym in symbols:
+                            arrs.append(data_dict[sym].reindex(aligned_index)[src_col].fillna(0).to_numpy(dtype=np.float32))
+                        extras_dict[feat_name] = torch.tensor(np.stack(arrs, axis=0), device=self.device)
+                except Exception:
+                    pass
+
+            for k in extras_dict:
+                extras_dict[k] = torch.nan_to_num(extras_dict[k], nan=0.0, posinf=5.0, neginf=-5.0)
+                extras_dict[k] = torch.clamp(extras_dict[k], -5.0, 5.0)
+
+            feat_tensor = RLFeatureEngineer.compute_features(raw_tensors, extras_dict)
             feat_tensor = torch.nan_to_num(feat_tensor, nan=0.0, posinf=5.0, neginf=-5.0)
             feat_tensor = torch.clamp(feat_tensor, -5.0, 5.0)
 

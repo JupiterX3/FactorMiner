@@ -1,0 +1,29 @@
+{% extends "factor_mining.html" %}
+
+{% block title %}截面挖掘 - {{ config.title }}{% endblock %}
+
+{% block extra_css %}
+<!-- 因子挖掘专用样式 -->
+
+<style>
+/* 仅保留截面挖掘：隐藏时序参数块（仍复用同一页面DOM结构） */
+#standardMiningConfig { display: none !important; }
+#standardParams { display: none !important; }
+#modeStandard, label[for="modeStandard"] { display: none !important; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<!-- noUiSlider 样式与脚本 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.css">
+<script src="https://cdn.jsdelivr.net/npm/nouislider@15.7.0/dist/nouislider.min.js"></script>
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+window.__MINING_PAGE_PRESET__ = { mode: 'cross_sectional' };
+</script>
+<!-- 自定义因子挖掘JavaScript -->
+<script src="{{ url_for('static', filename='js/factor_mining.js') }}"></script>
+<script src="{{ url_for('static', filename='js/mining/cs_mining_preset.js') }}"></script>
+{% endblock %}
+

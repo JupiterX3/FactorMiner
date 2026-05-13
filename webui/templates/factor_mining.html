@@ -4,13 +4,13 @@
 
 {% block extra_css %}
 <!-- 因子挖掘专用样式 -->
-<link rel="stylesheet" href="{{ url_for('static', filename='css/factor_mining.css') }}">
+
 {% endblock %}
 
 {% block content %}
     <div class="row">
         <div class="col-12">
-            <h2 class="mb-2">🚀 因子挖掘</h2>
+            <h2 class="mb-2 page-title">🚀 因子挖掘</h2>
             <p class="text-muted mb-4">使用先进的算法挖掘和优化量化因子</p>
         </div>
     </div>
@@ -18,11 +18,11 @@
     <!-- 挖掘配置 -->
     <div class="row">
         <div class="col-12">
-            <div class="card">
-                <div class="card-header">
+            <div class="card shadow-sm border-0">
+                <div class="card-header shadow-sm border-0">
                     <h3 class="mb-3">⚙️ 挖掘配置</h3>
                 </div>
-                <div class="card-body">
+                <div class="card-body shadow-sm border-0">
                     <form id="miningForm">
                         <!-- 挖掘模式选择 -->
                         <div class="mb-4">
@@ -117,6 +117,7 @@
                                         <p class="mb-2"><strong>原理：</strong>借鉴AlphaGPT的算子组合范式，使用遗传编程在多币种截面空间中自动搜索最优因子表达式</p>
                                         <p class="mb-2"><strong>流程：</strong>基础特征→算子组合→截面IC评估→选择/交叉/变异→迭代进化</p>
                                         <p class="mb-2"><strong>算子集：</strong>算术(add/sub/mul/div) + 时序(delay/ts_mean/ts_std/ts_rank/...) + 截面(cs_rank/cs_zscore/cs_mad_norm) + 条件(gate)</p>
+                                        <p class="mb-2"><strong>特征空间：</strong>10维K线特征 + 5维衍生品特征(基差/持仓变化/多空比差/主动买入失衡/资金费率)</p>
                                         <p class="mb-0"><strong>要求：</strong>至少选择3个交易对，数据量越大效果越好</p>
                                     </div>
                                 </div>
@@ -173,6 +174,30 @@
                                             </div>
                                         </div>
                                     </div>
+                                    <div class="border rounded p-3 mb-3">
+                                        <h6 class="text-info mb-3">📡 衍生品数据源</h6>
+                                        <div class="form-text mb-2">选择额外数据源，扩展因子搜索空间（仅Binance期货数据可用）</div>
+                                        <div class="row g-2">
+                                            <div class="col-4">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="csExtrasBasis" checked>
+                                                    <label class="form-check-label small" for="csExtrasBasis">基差(mark-index)</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="csExtrasMetrics" checked>
+                                                    <label class="form-check-label small" for="csExtrasMetrics">持仓/多空比</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="csExtrasFunding" checked>
+                                                    <label class="form-check-label small" for="csExtrasFunding">资金费率</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
 
                                 <!-- RL截面挖掘配置 -->
@@ -182,6 +207,7 @@
                                         <div class="border rounded p-3 bg-light">
                                             <p class="mb-2"><strong>原理：</strong>借鉴AlphaGPT，使用LoopedTransformer自回归生成因子公式，REINFORCE策略梯度优化</p>
                                             <p class="mb-2"><strong>优势：</strong>相比GP能发现更复杂的因子表达式，训练过程有梯度信号引导</p>
+                                            <p class="mb-2"><strong>特征空间：</strong>10维K线特征 + 5维衍生品特征(基差/持仓变化/多空比差/主动买入失衡/资金费率)</p>
                                             <p class="mb-0"><strong>要求：</strong>需要PyTorch + GPU（CPU可用但极慢），至少3个交易对</p>
                                         </div>
                                     </div>
@@ -267,6 +293,30 @@
                                             </div>
                                         </div>
                                     </div>
+                                    <div class="border rounded p-3 mb-3">
+                                        <h6 class="text-info mb-3">📡 衍生品数据源</h6>
+                                        <div class="form-text mb-2">选择额外数据源，扩展因子搜索空间（仅Binance期货数据可用）</div>
+                                        <div class="row g-2">
+                                            <div class="col-4">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="rlExtrasBasis" checked>
+                                                    <label class="form-check-label small" for="rlExtrasBasis">基差(mark-index)</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="rlExtrasMetrics" checked>
+                                                    <label class="form-check-label small" for="rlExtrasMetrics">持仓/多空比</label>
+                                                </div>
+                                            </div>
+                                            <div class="col-4">
+                                                <div class="form-check">
+                                                    <input class="form-check-input" type="checkbox" id="rlExtrasFunding" checked>
+                                                    <label class="form-check-label small" for="rlExtrasFunding">资金费率</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                                 
                                 <div class="mb-3">
@@ -274,7 +324,12 @@
                                     <div class="row g-2 mb-2">
                                         <div class="col-6">
                                             <label for="startDateDisplay" class="form-label small">开始日期</label>
-                                            <input type="date" class="form-control form-control-sm" id="startDateDisplay">
+                                            <div class="input-group input-group-sm">
+                                                <input type="date" class="form-control" id="startDateDisplay">
+                                                <button type="button" class="btn btn-outline-secondary" onclick="recommendStartDate()" title="根据已选交易对的数据覆盖范围，推荐能覆盖所有交易对的最早开始日期">
+                                                    <i class="fas fa-magic"></i>
+                                                </button>
+                                            </div>
                                         </div>
                                         <div class="col-6">
                                             <label for="endDateDisplay" class="form-label small">结束日期</label>
@@ -363,8 +418,8 @@
     <!-- 挖掘进度 -->
     <div id="miningProgress" class="row mt-4" style="display: none;">
         <div class="col-12">
-            <div class="card">
-                <div class="card-header">
+            <div class="card shadow-sm border-0">
+                <div class="card-header shadow-sm border-0">
                     <h4 class="mb-0 d-flex justify-content-between align-items-center">
                         <span><i class="fas fa-cogs me-2"></i>挖掘进度
                         <span class="badge bg-primary ms-2" id="progressBadge">准备中</span></span>
@@ -373,7 +428,7 @@
                         </button>
                     </h4>
                 </div>
-                <div class="card-body">
+                <div class="card-body shadow-sm border-0">
                     <!-- 简单进度条 -->
                     <div class="mb-3">
                         <div class="d-flex justify-content-between align-items-center mb-2">
@@ -432,41 +487,41 @@
     <!-- 挖掘结果 -->
     <div id="miningResults" class="row mt-4" style="display: none;">
         <div class="col-12">
-            <div class="card">
-                <div class="card-header">
+            <div class="card shadow-sm border-0">
+                <div class="card-header shadow-sm border-0">
                     <h3 class="mb-3">📊 挖掘结果</h3>
                 </div>
-                <div class="card-body">
+                <div class="card-body shadow-sm border-0">
                     <!-- 结果概览 -->
                     <div class="row mb-4">
                         <div class="col-md-3">
-                            <div class="card bg-primary text-white">
-                                <div class="card-body text-center">
-                                    <h4 id="totalFactors">0</h4>
+                            <div class="card shadow-sm border-0" style="border-top: 3px solid #6366f1;">
+                                <div class="card-body text-center shadow-sm border-0">
+                                    <h4 id="totalFactors" style="color: #6366f1;">0</h4>
                                     <p class="mb-0">总因子数</p>
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card bg-success text-white">
-                                <div class="card-body text-center">
-                                    <h4 id="selectedFactors">0</h4>
+                            <div class="card shadow-sm border-0" style="border-top: 3px solid var(--accent-green);">
+                                <div class="card-body text-center shadow-sm border-0">
+                                    <h4 id="selectedFactors" style="color: var(--accent-green);">0</h4>
                                     <p class="mb-0">选中因子</p>
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card bg-info text-white">
-                                <div class="card-body text-center">
-                                    <h4 id="avgIC">0.00</h4>
+                            <div class="card shadow-sm border-0" style="border-top: 3px solid #00bfff;">
+                                <div class="card-body text-center shadow-sm border-0">
+                                    <h4 id="avgIC" style="color: #00bfff;">0.00</h4>
                                     <p class="mb-0">平均IC</p>
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-3">
-                            <div class="card bg-warning text-white">
-                                <div class="card-body text-center">
-                                    <h4 id="avgReturn">0.00%</h4>
+                            <div class="card shadow-sm border-0" style="border-top: 3px solid #ffa000;">
+                                <div class="card-body text-center shadow-sm border-0">
+                                    <h4 id="avgReturn" style="color: #ffa000;">0.00%</h4>
                                     <p class="mb-0">平均多空收益</p>
                                 </div>
                             </div>
@@ -476,21 +531,21 @@
                     <!-- 结果图表 -->
                     <div class="row mb-4">
                         <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-header">
+                            <div class="card shadow-sm border-0">
+                                <div class="card-header shadow-sm border-0">
                                     <span class="small text-muted">按类型</span> 分布图
                                 </div>
-                                <div class="card-body">
+                                <div class="card-body shadow-sm border-0">
                                     <canvas id="typeChart" height="160"></canvas>
                                 </div>
                             </div>
                         </div>
                         <div class="col-md-6">
-                            <div class="card">
-                                <div class="card-header">
+                            <div class="card shadow-sm border-0">
+                                <div class="card-header shadow-sm border-0">
                                     <span class="small text-muted">按性能</span> 分布图
                                 </div>
-                                <div class="card-body">
+                                <div class="card-body shadow-sm border-0">
                                     <canvas id="performanceChart" height="160"></canvas>
                                 </div>
                             </div>
@@ -499,7 +554,7 @@
                     
                     <!-- 结果表格 -->
                     <div class="table-responsive">
-                        <table class="table table-sm align-middle text-center" id="resultsTable">
+                        <table class="table table-sm align-middle text-center table-hover" id="resultsTable">
                             <thead>
                                 <tr>
                                     <th style="cursor:pointer;" onclick="sortResults('factor_id')">因子ID</th>
@@ -531,8 +586,8 @@
 <!-- 挖掘历史 -->
 <div class="row mt-4">
     <div class="col-12">
-        <div class="card">
-            <div class="card-header">
+        <div class="card shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <div class="d-flex justify-content-between align-items-center">
                     <h5 class="mb-0"><i class="fas fa-history me-2"></i>挖掘历史</h5>
                     <div class="btn-group btn-group-sm">
@@ -542,9 +597,9 @@
                     </div>
                 </div>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div class="table-responsive">
-                    <table class="table table-sm">
+                    <table class="table table-sm table-hover align-middle text-center text-nowrap" style="font-size: 0.9rem;">
                         <thead>
                             <tr>
                                 <th>时间</th>

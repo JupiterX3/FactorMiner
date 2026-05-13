@@ -1,0 +1,46 @@
+{
+  "factor_id": "mined_cross_sectional_20260512_150042_1",
+  "name": "Mined_cross_sectional_1",
+  "description": "来源:cross_sectional 表达式:oi_change",
+  "source_group": "mined_factor",
+  "factor_kind": "mined",
+  "computation_type": "algorithm_proxy",
+  "artifacts": {
+    "algorithm_name": "gp_cross_sectional",
+    "proxy_key": "gp_cross_sectional",
+    "entry_point": "calculate",
+    "expression": "oi_change"
+  },
+  "parameters": {},
+  "dependencies": [],
+  "traits": {
+    "is_event": false,
+    "is_mined": true,
+    "is_cross_sectional": false,
+    "is_window": false,
+    "requires_extra_data": false,
+    "realtime_supported": false
+  },
+  "tags": [],
+  "output_type": "series",
+  "metadata": {
+    "name": "GP截面因子_1",
+    "expression": "oi_change",
+    "ic_mean": 0.024958155661989133,
+    "icir": 0.10919931371332851,
+    "rank_ic_mean": 0.0032994779307071675,
+    "rank_icir": 0.02087308059196415,
+    "long_short_return": 0.0003197275255639756,
+    "n_symbols": 50,
+    "n_periods": 8170,
+    "total_periods": 8185,
+    "coverage_rate": 0.998167379352474,
+    "fitness": 0.11546123789091776,
+    "depth": 1,
+    "size": 1,
+    "source_session_id": "d455736a-ac3a-41db-bfd3-4b952cc295fb",
+    "source_factor_id": "gp_cs_1",
+    "created_at": "2026-05-12T15:00:42.884426",
+    "schema_version": "1.0"
+  }
+}

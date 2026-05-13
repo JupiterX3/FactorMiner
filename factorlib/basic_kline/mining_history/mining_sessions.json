@@ -1344,5 +1344,286 @@
     },
     "status": "completed",
     "completed_time": "2026-04-21T19:37:22.758456"
+  },
+  "d455736a-ac3a-41db-bfd3-4b952cc295fb": {
+    "session_id": "d455736a-ac3a-41db-bfd3-4b952cc295fb",
+    "config": {
+      "mode": "cross_sectional",
+      "symbols": [
+        "1000SHIB_USDT",
+        "AAVE_USDT",
+        "ADA_USDT",
+        "ALGO_USDT",
+        "APT_USDT",
+        "ARB_USDT",
+        "ATOM_USDT",
+        "AVAX_USDT",
+        "BCH_USDT",
+        "BNB_USDT",
+        "BTC_USDT",
+        "CRV_USDT",
+        "DOGE_USDT",
+        "DOT_USDT",
+        "ENA_USDT",
+        "ETC_USDT",
+        "ETH_USDT",
+        "FET_USDT",
+        "FIL_USDT",
+        "HBAR_USDT",
+        "HYPE_USDT",
+        "ICP_USDT",
+        "INJ_USDT",
+        "JTO_USDT",
+        "JUP_USDT",
+        "KAS_USDT",
+        "LDO_USDT",
+        "LINK_USDT",
+        "LTC_USDT",
+        "MORPHO_USDT",
+        "NEAR_USDT",
+        "ONDO_USDT",
+        "OP_USDT",
+        "PENDLE_USDT",
+        "POL_USDT",
+        "PYTH_USDT",
+        "QNT_USDT",
+        "RENDER_USDT",
+        "SEI_USDT",
+        "SOL_USDT",
+        "STX_USDT",
+        "SUI_USDT",
+        "TAO_USDT",
+        "TON_USDT",
+        "TRX_USDT",
+        "UNI_USDT",
+        "VET_USDT",
+        "WLD_USDT",
+        "XLM_USDT",
+        "XRP_USDT"
+      ],
+      "timeframe": "1h",
+      "start_date": "2025-06-01",
+      "end_date": "2026-05-08",
+      "data_source": "binance",
+      "gp_config": {
+        "population_size": 1000,
+        "max_generations": 100,
+        "max_depth": 10,
+        "crossover_rate": 0.7,
+        "mutation_rate": 0.2,
+        "min_ic": 0.01,
+        "min_ir": 0.1,
+        "min_coverage": 0.2,
+        "max_factors": 15,
+        "max_correlation": 0.9
+      },
+      "session_id": "d455736a-ac3a-41db-bfd3-4b952cc295fb"
+    },
+    "results": {
+      "mode": "cross_sectional",
+      "factors": {
+        "gp_cs_1": {
+          "name": "GP截面因子_1",
+          "expression": "oi_change",
+          "ic_mean": 0.024958155661989133,
+          "icir": 0.10919931371332851,
+          "rank_ic_mean": 0.0032994779307071675,
+          "rank_icir": 0.02087308059196415,
+          "long_short_return": 0.0003197275255639756,
+          "n_symbols": 50,
+          "n_periods": 8170,
+          "total_periods": 8185,
+          "coverage_rate": 0.998167379352474,
+          "fitness": 0.11546123789091776,
+          "depth": 1,
+          "size": 1
+        }
+      },
+      "total_factors": 1,
+      "n_symbols": 50,
+      "total_evaluated": 100000,
+      "generation_stats": [
+        {
+          "generation": 1,
+          "best_fitness": 2.3644547723267477,
+          "best_ic": 0.21824884052682597,
+          "best_icir": 2.331231186573979,
+          "avg_fitness": -245.70689317055897,
+          "best_expression": "sign(sqrt(oi_change))",
+          "time": 66570.66330385208
+        },
+        {
+          "generation": 2,
+          "best_fitness": 2.3644547723267477,
+          "best_ic": 0.21824884052682597,
+          "best_icir": 2.331231186573979,
+          "avg_fitness": -39.85619268978698,
+          "best_expression": "sign(sqrt(oi_change))",
+          "time": 687.682900428772
+        },
+        {
+          "generation": 3,
+          "best_fitness": 2.3644547723267477,
+          "best_ic": 0.21824884052682597,
+          "best_icir": 2.331231186573979,
+          "avg_fitness": -44.78711763183903,
+          "best_expression": "sign(sqrt(oi_change))",
+          "time": 416.9211702346802
+        },
+        {
+          "generation": 4,
+          "best_fitness": 2.3644547723267477,
+          "best_ic": 0.21824884052682597,
+          "best_icir": 2.331231186573979,
+          "avg_fitness": -52.70635480279016,
+          "best_expression": "sign(sqrt(oi_change))",
+          "time": 650.7314283847809
+        },
+        {
+          "generation": 5,
+          "best_fitness": 2.3644547723267477,
+          "best_ic": 0.21824884052682597,
+          "best_icir": 2.331231186573979,
+          "avg_fitness": -123.51366445427125,
+          "best_expression": "sign(sqrt(oi_change))",
+          "time": 486.9275252819061
+        },
+        {
+          "generation": 6,
+          "best_fitness": 2.6357308981585446,
+          "best_ic": 0.060335272541183635,
+          "best_icir": 0.34739756482521256,
+          "avg_fitness": -146.2445591043916,
+          "best_expression": "(oi_change min ts_kurtosis(w=30)(gate(sqrt(volume_price_corr), momentum, oi_change)))",
+          "time": 407.40389704704285
+        },
+        {
+          "generation": 7,
+          "best_fitness": 2.6357308981585446,
+          "best_ic": 0.060335272541183635,
+          "best_icir": 0.34739756482521256,
+          "avg_fitness": -122.74196354289735,
+          "best_expression": "(oi_change min ts_kurtosis(w=30)(gate(sqrt(volume_price_corr), momentum, oi_change)))",
+          "time": 234.64053440093994
+        },
+        {
+          "generation": 8,
+          "best_fitness": 2.6357308981585446,
+          "best_ic": 0.060335272541183635,
+          "best_icir": 0.34739756482521256,
+          "avg_fitness": -76.25291457324836,
+          "best_expression": "(oi_change min ts_kurtosis(w=30)(gate(sqrt(volume_price_corr), momentum, oi_change)))",
+          "time": 92.26366257667542
+        },
+        {
+          "generation": 9,
+          "best_fitness": 6.665671545089745,
+          "best_ic": -0.31775460499955777,
+          "best_icir": -5.929462691514262,
+          "avg_fitness": -67.12541236780554,
+          "best_expression": "sign(sqrt(ts_momentum(sqrt(oi_change))))",
+          "time": 93.32031154632568
+        },
+        {
+          "generation": 10,
+          "best_fitness": 6.665671545089745,
+          "best_ic": -0.31775460499955777,
+          "best_icir": -5.929462691514262,
+          "avg_fitness": -120.1692639041447,
+          "best_expression": "sign(sqrt(ts_momentum(sqrt(oi_change))))",
+          "time": 134.9807641506195
+        },
+        {
+          "generation": 11,
+          "best_fitness": 6.665671545089745,
+          "best_ic": -0.31775460499955777,
+          "best_icir": -5.929462691514262,
+          "avg_fitness": -117.18096233076312,
+          "best_expression": "sign(sqrt(ts_momentum(sqrt(oi_change))))",
+          "time": 251.1479208469391
+        },
+        {
+          "generation": 12,
+          "best_fitness": 6.665671545089745,
+          "best_ic": -0.31775460499955777,
+          "best_icir": -5.929462691514262,
+          "avg_fitness": -89.90822333643767,
+          "best_expression": "sign(sqrt(ts_momentum(sqrt(oi_change))))",
+          "time": 493.81158423423767
+        },
+        {
+          "generation": 13,
+          "best_fitness": 6.665671545089745,
+          "best_ic": -0.31775460499955777,
+          "best_icir": -5.929462691514262,
+          "avg_fitness": -102.73128225799627,
+          "best_expression": "sign(sqrt(ts_momentum(sqrt(oi_change))))",
+          "time": 507.7026174068451
+        },
+        {
+          "generation": 14,
+          "best_fitness": 90.33650501434049,
+          "best_ic": 0.11606896955207024,
+          "best_icir": 90.29581028817417,
+          "avg_fitness": -106.16667904820125,
+          "best_expression": "sign(delay(sqrt(ts_momentum(delay(sqrt(oi_change))))))",
+          "time": 409.7748682498932
+        },
+        {
+          "generation": 15,
+          "best_fitness": 90.33650501434049,
+          "best_ic": 0.11606896955207024,
+          "best_icir": 90.29581028817417,
+          "avg_fitness": -89.72046853598816,
+          "best_expression": "sign(delay(sqrt(ts_momentum(delay(sqrt(oi_change))))))",
+          "time": 311.54942202568054
+        },
+        {
+          "generation": 16,
+          "best_fitness": 90.33650501434049,
+          "best_ic": 0.11606896955207024,
+          "best_icir": 90.29581028817417,
+          "avg_fitness": -59.052803585831676,
+          "best_expression": "sign(delay(sqrt(ts_momentum(delay(sqrt(oi_change))))))",
+          "time": 208.60112714767456
+        },
+        {
+          "generation": 17,
+          "best_fitness": 90.33650501434049,
+          "best_ic": 0.11606896955207024,
+          "best_icir": 90.29581028817417,
+          "avg_fitness": -38.35331238586949,
+          "best_expression": "sign(delay(sqrt(ts_momentum(delay(sqrt(oi_change))))))",
+          "time": 233.36829924583435
+        },
+        {
+          "generation": 18,
+          "best_fitness": 90.33650501434049,
+          "best_ic": 0.11606896955207024,
+          "best_icir": 90.29581028817417,
+          "avg_fitness": -47.209287029226374,
+          "best_expression": "sign(delay(sqrt(ts_momentum(delay(sqrt(oi_change))))))",
+          "time": 226.7281768321991
+        },
+        {
+          "generation": 19,
+          "best_fitness": 90.33650501434049,
+          "best_ic": 0.11606896955207024,
+          "best_icir": 90.29581028817417,
+          "avg_fitness": -47.01563707072111,
+          "best_expression": "sign(delay(sqrt(ts_momentum(delay(sqrt(oi_change))))))",
+          "time": 260.59068155288696
+        }
+      ],
+      "gp_config": {
+        "population_size": 1000,
+        "max_generations": 100,
+        "max_depth": 10,
+        "crossover_rate": 0.7,
+        "mutation_rate": 0.2
+      }
+    },
+    "status": "completed",
+    "completed_time": "2026-05-12T14:52:00.665690"
   }
 }

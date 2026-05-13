@@ -5,7 +5,7 @@
 {% block content %}
 <div class="row mb-2">
     <div class="col-12">
-        <h2>📥 数据下载</h2>
+        <h2 class="page-title mb-4">📥 数据下载</h2>
         <p class="text-muted">从交易所下载历史行情数据</p>
     </div>
 </div>
@@ -13,11 +13,11 @@
 <div class="row">
     <!-- 左侧：交易所和产品选择 -->
     <div class="col-md-4">
-        <div class="card h-100">
-            <div class="card-header">
+        <div class="card h-100 shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h6 class="mb-0">⚙️ 数据源配置</h6>
             </div>
-            <div class="card-body" style="overflow-y: auto;">
+            <div class="card-body shadow-sm border-0" style="overflow-y: auto;">
                 <form id="dataConfigForm">
                     <div class="mb-2">
                         <label for="exchange" class="form-label small mb-1">交易所</label>
@@ -68,7 +68,7 @@
                     </div>
                     
                     <div class="mb-2">
-                        <button type="button" class="btn btn-outline-info btn-sm w-100" onclick="getDownloadSuggestions()">
+                        <button type="button" class="btn btn-outline-info btn-sm w-100" id="queryDataBtn" onclick="getDownloadSuggestions()">
                             🔍 查询现有数据
                         </button>
                     </div>
@@ -105,7 +105,7 @@
                         </div>
                     </div>
                     
-                    <button type="submit" class="btn btn-primary btn-sm w-100">
+                    <button type="submit" class="btn btn-primary btn-sm w-100" id="startDownloadBtn">
                         🚀 开始下载
                     </button>
                 </form>
@@ -158,7 +158,7 @@
                                     <span id="batchSelectionStats">未选择</span>
                                 </div>
                             </div>
-                            <button type="button" class="btn btn-outline-warning btn-sm w-100" onclick="startBatchDownload()">
+                            <button type="button" class="btn btn-outline-warning btn-sm w-100" id="startBatchDownloadBtn" onclick="startBatchDownload()">
                                 🚀 开始批量下载
                             </button>
                         </div>
@@ -176,11 +176,11 @@
                 <div class="row">
                     <!-- 数据覆盖情况 -->
                     <div class="col-6 h-100">
-                        <div class="card h-100">
-                            <div class="card-header">
+                        <div class="card h-100 shadow-sm border-0">
+                            <div class="card-header shadow-sm border-0">
                                 <h6 class="mb-0">📊 数据覆盖情况</h6>
                             </div>
-                            <div class="card-body" style="overflow-y: auto;">
+                            <div class="card-body shadow-sm border-0" style="overflow-y: auto;">
                                 <div id="dataCoverage">
                                     <p class="text-muted">选择交易对和时间框架后，点击"查询现有数据"查看覆盖情况</p>
                                 </div>
@@ -190,11 +190,11 @@
                     
                     <!-- 下载建议 -->
                     <div class="col-6 h-100">
-                        <div class="card h-100">
-                            <div class="card-header">
+                        <div class="card h-100 shadow-sm border-0">
+                            <div class="card-header shadow-sm border-0">
                                 <h6 class="mb-0">💡 智能下载建议</h6>
                             </div>
-                            <div class="card-body" style="overflow-y: auto;">
+                            <div class="card-body shadow-sm border-0" style="overflow-y: auto;">
                                 <div id="downloadSuggestions">
                                     <p class="text-muted">基于现有数据生成智能下载建议</p>
                                 </div>
@@ -206,11 +206,11 @@
             
             <!-- 下半部分：下载进度和历史 -->
             <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
+                <div class="card shadow-sm border-0">
+                    <div class="card-header shadow-sm border-0">
                         <h6 class="mb-0">📈 下载进度</h6>
                     </div>
-                    <div class="card-body" style="overflow-y: auto;">
+                    <div class="card-body shadow-sm border-0" style="overflow-y: auto;">
                         <div id="downloadProgress" style="display: none;">
                             <div class="progress mb-3">
                                 <div class="progress-bar progress-bar-striped progress-bar-animated" 
@@ -419,14 +419,6 @@ async function forceRefreshSymbols() {
     }
 }
 
-async function updateSymbols() {
-    await refreshSymbols();
-}
-
-async function updateBatchSymbols() {
-    await refreshSymbols();
-}
-
 async function loadTimeframesData(exchange, tradeType) {
     const response = await fetch(`/api/data/timeframes?exchange=${exchange}&trade_type=${tradeType}`);
     return response.json();
@@ -476,17 +468,11 @@ async function refreshTimeframes() {
     }
 }
 
-async function updateTimeframes() {
-    await refreshTimeframes();
-}
-
-async function updateBatchTimeframes() {
-    await refreshTimeframes();
-}
-
 async function startDownload() {
     const form = document.getElementById('dataConfigForm');
     const formData = new FormData(form);
+    const downloadBtn = document.getElementById('startDownloadBtn');
+    const originalBtnHtml = downloadBtn.innerHTML;
     
     const downloadData = {
         exchange: formData.get('exchange'),
@@ -496,16 +482,14 @@ async function startDownload() {
         start_date: formData.get('startDate'),
         end_date: formData.get('endDate'),
         merge_with_existing: document.getElementById('mergeWithExisting').checked,
-        merge_strategy: 'smart'  // 固定使用智能合并策略
+        merge_strategy: 'smart'
     };
     
-    // 验证必填字段
     if (!downloadData.exchange || !downloadData.trade_type || !downloadData.symbol || !downloadData.timeframe) {
         alert('请填写所有必填字段：交易所、交易类型、交易对、时间框架');
         return;
     }
     
-    // 验证日期
     if (!downloadData.start_date || !downloadData.end_date) {
         alert('请选择开始和结束日期');
         return;
@@ -516,7 +500,9 @@ async function startDownload() {
         return;
     }
     
-    // 显示下载进度
+    downloadBtn.disabled = true;
+    downloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>启动中...';
+    
     document.getElementById('downloadProgress').style.display = 'block';
     document.getElementById('progressText').textContent = '正在启动下载...';
     
@@ -532,14 +518,12 @@ async function startDownload() {
         const result = await response.json();
         
         if (result.success) {
-            // 显示合并信息
             if (result.data.merge_info) {
                 const mergeInfo = result.data.merge_info;
                 document.getElementById('progressText').textContent = 
                     `检测到现有数据，将使用${mergeInfo.merge_strategy}模式合并`;
             }
             
-            // 使用统一轮询机制更新下载状态
             ensureDownloadStatusPolling();
         } else {
             console.error('下载启动失败:', result.error);
@@ -550,71 +534,21 @@ async function startDownload() {
         console.error('下载失败:', error);
         alert('下载失败: ' + error.message);
         document.getElementById('downloadProgress').style.display = 'none';
+    } finally {
+        downloadBtn.disabled = false;
+        downloadBtn.innerHTML = originalBtnHtml;
     }
-}
-
-async function monitorDownloadProgress(downloadId, downloadData) {
-    const progressBar = document.querySelector('.progress-bar');
-    const progressText = document.getElementById('progressText');
-    
-    const interval = setInterval(async () => {
-        try {
-            const response = await fetch(`/api/data/download-status/${downloadId}`);
-            const result = await response.json();
-            
-            if (result.success) {
-                const status = result.data;
-                progressBar.style.width = status.progress + '%';
-                progressText.textContent = status.message;
-                
-                if (status.status === 'completed') {
-                    clearInterval(interval);
-                    
-                    // 添加到下载历史
-                    addToDownloadHistory(downloadData);
-                    
-                    setTimeout(() => {
-                        document.getElementById('downloadProgress').style.display = 'none';
-                    }, 1000);
-                } else if (status.status === 'failed') {
-                    clearInterval(interval);
-                    progressText.textContent = status.message || '下载失败';
-                    alert('下载失败: ' + (status.message || '未知错误'));
-                }
-            } else {
-                clearInterval(interval);
-                alert('获取下载状态失败: ' + result.error);
-                document.getElementById('downloadProgress').style.display = 'none';
-            }
-        } catch (error) {
-            clearInterval(interval);
-            console.error('监控下载进度失败:', error);
-            document.getElementById('downloadProgress').style.display = 'none';
-        }
-    }, 1000);
-}
-
-function addToDownloadHistory(downloadData) {
-    const historyList = document.getElementById('historyList');
-    const historyItem = document.createElement('div');
-    historyItem.className = 'list-group-item d-flex justify-content-between align-items-center';
-    
-    const tradeTypeText = tradeTypeToText(downloadData.trade_type);
-    
-    historyItem.innerHTML = `
-        <div>
-            <strong>${downloadData.exchange.toUpperCase()}</strong> - ${downloadData.symbol} (${tradeTypeText}, ${downloadData.timeframe})
-            <br><small class="text-muted">${downloadData.start_date} 到 ${downloadData.end_date}</small>
-        </div>
-        <span class="badge bg-success">完成</span>
-    `;
-    
-    historyList.insertBefore(historyItem, historyList.firstChild);
 }
 
 function clearDataCoverage() {
     document.getElementById('dataCoverage').innerHTML = '<p class="text-muted">选择交易对和时间框架后，点击"查询现有数据"查看覆盖情况</p>';
     document.getElementById('downloadSuggestions').innerHTML = '<p class="text-muted">基于现有数据生成智能下载建议</p>';
+    window.currentSuggestionsData = null;
+    const btn = document.getElementById('queryDataBtn');
+    if (btn && btn.disabled) {
+        btn.disabled = false;
+        btn.innerHTML = '🔍 查询现有数据';
+    }
 }
 
 // 将内部 trade_type 转换为中文展示文本
@@ -642,6 +576,14 @@ async function getDownloadSuggestions() {
         return;
     }
     
+    const btn = document.getElementById('queryDataBtn');
+    const originalBtnHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status"></span>查询中...';
+    
+    document.getElementById('dataCoverage').innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm me-1" role="status"></span>正在查询数据覆盖情况...</div>';
+    document.getElementById('downloadSuggestions').innerHTML = '<div class="text-center py-3"><span class="spinner-border spinner-border-sm me-1" role="status"></span>正在生成下载建议...</div>';
+    
     try {
         const response = await fetch('/api/data/download-suggestions', {
             method: 'POST',
@@ -659,16 +601,20 @@ async function getDownloadSuggestions() {
         const result = await response.json();
         
         if (result.success) {
-            // 保存建议数据到全局变量，供applySuggestion使用
             window.currentSuggestionsData = result.data;
             displayDataCoverage(result.data);
             displayDownloadSuggestions(result.data);
         } else {
-            alert('获取数据建议失败: ' + result.error);
+            document.getElementById('dataCoverage').innerHTML = '<div class="alert alert-danger">查询失败: ' + result.error + '</div>';
+            document.getElementById('downloadSuggestions').innerHTML = '<div class="alert alert-danger">获取建议失败: ' + result.error + '</div>';
         }
     } catch (error) {
         console.error('获取数据建议失败:', error);
-        alert('获取数据建议失败: ' + error.message);
+        document.getElementById('dataCoverage').innerHTML = '<div class="alert alert-danger">查询失败: ' + error.message + '</div>';
+        document.getElementById('downloadSuggestions').innerHTML = '<div class="alert alert-danger">获取建议失败: ' + error.message + '</div>';
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalBtnHtml;
     }
 }
 
@@ -676,11 +622,12 @@ function displayDataCoverage(data) {
     const coverageDiv = document.getElementById('dataCoverage');
     
     const tradeTypeText = tradeTypeToText(data.trade_type);
+    const timeframeText = data.timeframe || '所有时间框架';
     
     if (data.existing_data.length === 0) {
         coverageDiv.innerHTML = `
             <div class="alert alert-info">
-                <h6>📊 ${data.symbol} (${tradeTypeText}, ${data.timeframe}) 数据覆盖情况</h6>
+                <h6>📊 ${data.symbol} (${tradeTypeText}, ${timeframeText}) 数据覆盖情况</h6>
                 <p>暂无现有数据</p>
             </div>
         `;
@@ -689,16 +636,17 @@ function displayDataCoverage(data) {
     
     let coverageHtml = `
         <div class="alert alert-success">
-            <h6>📊 ${data.symbol} (${tradeTypeText}, ${data.timeframe}) 数据覆盖情况</h6>
+            <h6>📊 ${data.symbol} (${tradeTypeText}, ${timeframeText}) 数据覆盖情况</h6>
             <div class="row">
     `;
     
     data.existing_data.forEach(item => {
+        const itemDataTypeText = tradeTypeToText(item.data_type) || item.data_type;
         coverageHtml += `
             <div class="col-md-6 mb-2">
-                <div class="card">
-                    <div class="card-body p-2">
-                        <h6 class="card-title">${item.data_type}</h6>
+                <div class="card shadow-sm border-0">
+                    <div class="card-body p-2 shadow-sm border-0">
+                        <h6 class="card-title">${itemDataTypeText}</h6>
                         <p class="card-text small">
                             <strong>时间范围:</strong> ${item.start_date} 到 ${item.end_date}<br>
                             <strong>数据点数:</strong> ${item.data_points.toLocaleString()}<br>
@@ -743,8 +691,8 @@ function displayDownloadSuggestions(data) {
         const dataTypeText = tradeTypeToText(suggestion.data_type);
         suggestionsHtml += `
             <div class="col-12 mb-2">
-                <div class="card">
-                    <div class="card-body p-2">
+                <div class="card shadow-sm border-0">
+                    <div class="card-body p-2 shadow-sm border-0">
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <h6 class="card-title">${dataTypeText} (${suggestion.data_type})</h6>
@@ -788,7 +736,6 @@ function displayDownloadSuggestions(data) {
 }
 
 function applySuggestion(index) {
-    // 获取建议数据
     const suggestionsData = window.currentSuggestionsData;
     if (!suggestionsData || !suggestionsData.recommended_downloads || !suggestionsData.recommended_downloads[index]) {
         alert('建议数据不可用');
@@ -796,7 +743,6 @@ function applySuggestion(index) {
     }
     
     const suggestion = suggestionsData.recommended_downloads[index];
-    
     const currentExchange = suggestionsData.exchange || document.getElementById('exchange').value || 'binance';
     const symbolFromSuggestion = suggestionsData.symbol || document.getElementById('symbol').value;
     const timeframeFromSuggestion = suggestionsData.timeframe || document.getElementById('timeframe').value;
@@ -811,11 +757,27 @@ function applySuggestion(index) {
             refreshTimeframes()
         ]);
 
+        const symbolSelect = document.getElementById('symbol');
+        const timeframeSelect = document.getElementById('timeframe');
+        
         if (symbolFromSuggestion) {
-            document.getElementById('symbol').value = symbolFromSuggestion;
+            const symbolOptionExists = Array.from(symbolSelect.options).some(o => o.value === symbolFromSuggestion);
+            if (symbolOptionExists) {
+                symbolSelect.value = symbolFromSuggestion;
+            } else {
+                const fuzzyMatch = Array.from(symbolSelect.options).find(o => 
+                    o.value && normalizeSymbolForMatch(o.value) === normalizeSymbolForMatch(symbolFromSuggestion)
+                );
+                if (fuzzyMatch) {
+                    symbolSelect.value = fuzzyMatch.value;
+                }
+            }
         }
         if (timeframeFromSuggestion) {
-            document.getElementById('timeframe').value = timeframeFromSuggestion;
+            const tfOptionExists = Array.from(timeframeSelect.options).some(o => o.value === timeframeFromSuggestion);
+            if (tfOptionExists) {
+                timeframeSelect.value = timeframeFromSuggestion;
+            }
         }
         
         if (suggestion.start_date) {
@@ -972,13 +934,24 @@ function updateDownloadHistory(downloads) {
         }
         
         let failedDetailsHtml = '';
+        let retryBtnHtml = '';
         if (download.type === 'batch' && download.task_results && download.task_results.length > 0) {
             const failedTasks = download.task_results.filter(t => t.status === 'failed');
             if (failedTasks.length > 0) {
                 failedDetailsHtml = '<div class="mt-1"><small class="text-danger">失败: ' + 
                     failedTasks.map(t => `${t.symbol}(${t.timeframe}): ${t.message}`).join('; ') + 
                     '</small></div>';
+                if (download.status === 'completed' || download.status === 'failed') {
+                    retryBtnHtml = `<button class="btn btn-outline-warning btn-sm mt-1" onclick="retryBatchDownload('${download.id}')" title="重试 ${failedTasks.length} 个失败任务">
+                        <i class="fas fa-redo"></i> 重试失败 (${failedTasks.length})
+                    </button>`;
+                }
             }
+        }
+        if (download.type !== 'batch' && download.status === 'failed') {
+            retryBtnHtml = `<button class="btn btn-outline-warning btn-sm mt-1" onclick="retrySingleDownload('${download.id}')" title="重试下载">
+                <i class="fas fa-redo"></i> 重试
+            </button>`;
         }
         
         listItem.innerHTML = `
@@ -987,6 +960,7 @@ function updateDownloadHistory(downloads) {
                     <strong>${downloadInfo}</strong><br>
                     <small class="text-muted">${download.message}</small>
                     ${failedDetailsHtml}
+                    ${retryBtnHtml}
                 </div>
                 ${statusBadge}
             </div>
@@ -997,6 +971,53 @@ function updateDownloadHistory(downloads) {
     
     if (recentDownloads.length === 0) {
         historyList.innerHTML = '<div class="text-muted text-center">暂无下载历史</div>';
+    }
+}
+
+async function retryBatchDownload(downloadId) {
+    try {
+        const r = await fetch(`/api/data/retry/${downloadId}`, { method: 'POST' });
+        const j = await r.json();
+        if (!j.success) {
+            alert('重试失败: ' + (j.error || '未知错误'));
+            return;
+        }
+        alert(`已启动重试，共 ${j.data.retried_tasks} 个任务`);
+    } catch (e) {
+        alert('重试请求失败: ' + e.message);
+    }
+}
+
+async function retrySingleDownload(downloadId) {
+    try {
+        const r = await fetch(`/api/data/download-status/${downloadId}`);
+        const j = await r.json();
+        if (!j.success) {
+            alert('获取任务信息失败: ' + (j.error || '未知错误'));
+            return;
+        }
+        const info = j.data;
+        const payload = {
+            exchange: info.exchange,
+            symbol: info.symbol,
+            timeframe: info.timeframe,
+            start_date: info.start_date,
+            end_date: info.end_date,
+            trade_type: info.trade_type,
+        };
+        const resp = await fetch('/api/data/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+        const result = await resp.json();
+        if (!result.success) {
+            alert('重试失败: ' + (result.error || '未知错误'));
+            return;
+        }
+        alert('已启动重试下载');
+    } catch (e) {
+        alert('重试请求失败: ' + e.message);
     }
 }
 
@@ -1311,8 +1332,7 @@ async function startBatchDownload() {
         end_date: endDate
     };
     
-    // 在 try 块之前保存按钮引用和原始文本
-    const batchButton = document.querySelector('button[onclick="startBatchDownload()"]');
+    const batchButton = document.getElementById('startBatchDownloadBtn');
     const originalText = batchButton.textContent;
     
     try {

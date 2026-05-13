@@ -1,7 +1,7 @@
 {
   "factor_id": "basis_ma_deviation",
   "name": "基差对均值的偏离",
-  "description": "basis 减去其 window 滚动均值。低频 mean-reversion 信号。",
+  "description": "basis（mark_close - index_close）/ index_close 减去其 window 滚动均值。低频 mean-reversion 信号。使用 mark_close 计算基差以避免虚假相关。",
   "category": "derivatives",
   "subcategory": "basis",
   "computation_type": "function",
@@ -23,7 +23,7 @@
     "created_at": "2026-04-23T12:43:43.222960",
     "source_family": "derivatives",
     "requires_extras": [
-      "derivatives"
+      "basis"
     ]
   }
 }

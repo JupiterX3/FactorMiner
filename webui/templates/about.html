@@ -17,91 +17,96 @@
 
 <div class="row mt-5">
     <div class="col-md-8">
-        <h3><i class="fas fa-book text-success me-2"></i>项目介绍</h3>
-        <p>FactorMiner 是一个专业的量化因子挖掘平台，旨在帮助量化交易者和研究人员构建、评估和优化高质量的量化因子。</p>
+        <h3 class="mb-4"><i class="fas fa-book text-success me-2"></i>项目介绍</h3>
+        <p class="lead" style="font-size: 1.1rem; line-height: 1.8;"><strong>FactorMiner</strong> 是一个专为高度复杂的量化策略研究而生的全链路因子挖掘与机器学习平台。我们不仅提供基础的技术指标计算，更深入时序特征与截面阿尔法的探索，致力于利用前沿的遗传规划（GP）、强化学习（RL）及集成树模型，实现因子的自动化发掘、高标准防泄漏验证与实盘级部署。</p>
         
-        <h4 class="mt-4">核心功能</h4>
-        <ul>
-            <li><strong>因子构建</strong>：支持技术因子、统计因子、机器学习因子等多种类型的因子构建</li>
-            <li><strong>因子评估</strong>：使用IC、IR、胜率等多种指标全面评估因子有效性</li>
-            <li><strong>因子优化</strong>：提供贪婪算法、遗传算法、Lasso回归等多种优化方法</li>
-            <li><strong>因子组合</strong>：支持等权重、IC加权、ML加权等多种组合方式</li>
-            <li><strong>可视化分析</strong>：提供丰富的图表和报告展示因子表现</li>
-        </ul>
-        
-        <h4 class="mt-4">技术特色</h4>
-        <ul>
-            <li><strong>模块化设计</strong>：清晰的代码结构，便于扩展和维护</li>
-            <li><strong>高性能计算</strong>：优化的算法实现，支持大规模因子计算</li>
-            <li><strong>Web界面</strong>：直观的用户界面，降低使用门槛</li>
-            <li><strong>API接口</strong>：提供完整的API接口，支持程序化调用</li>
-        </ul>
+        <h4 class="mt-4"><i class="fas fa-rocket text-primary me-2"></i>核心功能模块</h4>
+        <div class="mt-3">
+            <h5 class="text-info">1. 自动化因子挖掘引擎 (Auto-Mining Engine)</h5>
+            <ul>
+                <li><strong>时序挖掘 (Time-Series)</strong>：从单一资产的历史切片中提取统计学特征、波动率与高阶矩指标。</li>
+                <li><strong>遗传规划截面挖掘 (Cross-Sectional GP)</strong>：基于树状表达式，在跨币种/跨资产截面中利用进化算法自动繁衍与交叉出高 IC 因子。</li>
+                <li><strong>强化学习截面挖掘 (Cross-Sectional RL)</strong>：通过智能体不断试错，在预设的算子空间中寻找夏普比率最大化的复合截面表达式。</li>
+            </ul>
+
+            <h5 class="text-info mt-3">2. 工业级因子评估体系 (Evaluation System)</h5>
+            <ul>
+                <li><strong>高并发截面评估</strong>：支持多进程加速，计算大规模截面的 IC、Rank IC、IR 以及分层收益率（Quantile Return）。</li>
+                <li><strong>严格防数据泄露</strong>：内置多周期的滑点、信号延迟（Signal Delay）处理机制与 OOS (Out-of-sample) 验证。</li>
+                <li><strong>时序表现追踪</strong>：完整评估因子的多空收益、最大回撤与胜率衰减。</li>
+            </ul>
+
+            <h5 class="text-info mt-3">3. 机器学习集成训练 (Machine Learning)</h5>
+            <ul>
+                <li><strong>前沿模型集成</strong>：无缝对接 LightGBM、XGBoost 等梯度提升树模型进行标签预测。</li>
+                <li><strong>深度验证策略</strong>：支持 Walk-Forward 滚动回测，内置多种自定义损失函数（如加权 IC Loss）。</li>
+            </ul>
+
+            <h5 class="text-info mt-3">4. 全栈生态闭环 (Full-Stack Pipeline)</h5>
+            <ul>
+                <li><strong>数据中台</strong>：支持现货、U本位/币本位合约数据的一键拉取及本地化 Viewer 检视。</li>
+                <li><strong>因子中台</strong>：自动入库清洗过的优质因子，支持因子表达式语法树降解与实时扫描报警（Realtime Scan）。</li>
+            </ul>
+        </div>
     </div>
     
     <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
+        <div class="card shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h5><i class="fas fa-cog me-2"></i>技术栈</h5>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <ul class="list-group list-group-flush">
                     <li class="list-group-item">
                         <i class="fab fa-python text-primary me-2"></i>
-                        Python 3.8+
+                        Python 3.10+ (后端引擎)
                     </li>
                     <li class="list-group-item">
-                        <i class="fas fa-database text-success me-2"></i>
-                        Pandas & NumPy
+                        <i class="fas fa-project-diagram text-success me-2"></i>
+                        GP/RL 自研框架 (算法核)
                     </li>
                     <li class="list-group-item">
                         <i class="fas fa-brain text-warning me-2"></i>
-                        Scikit-learn
+                        LightGBM & XGBoost (模型层)
                     </li>
                     <li class="list-group-item">
-                        <i class="fab fa-js text-info me-2"></i>
-                        Flask & Bootstrap
+                        <i class="fab fa-bootstrap text-info me-2"></i>
+                        Flask + SSE + Bootstrap 5 (前端响应)
                     </li>
                     <li class="list-group-item">
-                        <i class="fas fa-chart-line text-danger me-2"></i>
-                        Matplotlib & Plotly
+                        <i class="fas fa-database text-danger me-2"></i>
+                        Pandas & Polars (数据层)
                     </li>
                 </ul>
             </div>
         </div>
         
-        <div class="card mt-3">
-            <div class="card-header">
+        <div class="card mt-4 shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h5><i class="fas fa-users me-2"></i>版本信息</h5>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <p><strong>版本：</strong>{{ config.version }}</p>
-                <p><strong>作者：</strong>{{ config.author }}</p>
+                <p><strong>内核状态：</strong>Beta (Production Ready)</p>
                 <p><strong>许可证：</strong>MIT</p>
-                <p><strong>更新时间：</strong>2024年</p>
             </div>
         </div>
     </div>
 </div>
 
-<div class="row mt-5">
+<div class="row mt-5 mb-5">
     <div class="col-12">
-        <h3><i class="fas fa-question-circle text-info me-2"></i>使用指南</h3>
-        <div class="accordion" id="usageGuide">
+        <h3 class="mb-4"><i class="fas fa-question-circle text-info me-2"></i>使用指南 (Workflow)</h3>
+        <div class="accordion shadow-sm" id="usageGuide">
             <div class="accordion-item">
                 <h2 class="accordion-header">
                     <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseOne">
-                        如何开始使用？
+                        01. 数据准备与检视
                     </button>
                 </h2>
                 <div id="collapseOne" class="accordion-collapse collapse show" data-bs-parent="#usageGuide">
                     <div class="accordion-body">
-                        <ol>
-                            <li>选择交易对和时间框架</li>
-                            <li>选择要构建的因子类型</li>
-                            <li>点击"开始构建"按钮</li>
-                            <li>等待构建完成，查看结果</li>
-                            <li>进行因子评估和优化</li>
-                        </ol>
+                        在<strong>数据下载</strong>面板拉取对应标的（如 BTC/ETH）在特定时间框架（如 1h/4h/1d）下的历史行情数据；随后可在<strong>数据查看</strong>模块中以 K 线图的形式验证数据的连续性与完整度。
                     </div>
                 </div>
             </div>
@@ -109,17 +114,16 @@
             <div class="accordion-item">
                 <h2 class="accordion-header">
                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseTwo">
-                        支持的因子类型
+                        02. 选择挖掘模式并生成因子
                     </button>
                 </h2>
                 <div id="collapseTwo" class="accordion-collapse collapse" data-bs-parent="#usageGuide">
                     <div class="accordion-body">
                         <ul>
-                            <li><strong>技术因子</strong>：SMA、EMA、RSI、MACD、布林带等</li>
-                            <li><strong>统计因子</strong>：滚动统计、分布特征、波动率等</li>
-                            <li><strong>高级因子</strong>：交互因子、比率因子、滞后因子等</li>
-                            <li><strong>机器学习因子</strong>：随机森林、梯度提升、PCA等</li>
+                            <li><strong>针对单标的轮动：</strong>前往时序挖掘，配置延迟特征及波动率算子，挖掘趋势/反转信号。</li>
+                            <li><strong>针对多标的选品：</strong>前往截面挖掘，设定种群大小与适应度函数，利用遗传算法（GP）或强化学习（RL）自动繁衍截面预测因子。</li>
                         </ul>
+                        挖掘产生的高质量因子会自动保存进“因子库”以供调阅。
                     </div>
                 </div>
             </div>
@@ -127,17 +131,25 @@
             <div class="accordion-item">
                 <h2 class="accordion-header">
                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseThree">
-                        评估指标说明
+                        03. 严苛的防范泄漏与交叉评估
                     </button>
                 </h2>
                 <div id="collapseThree" class="accordion-collapse collapse" data-bs-parent="#usageGuide">
                     <div class="accordion-body">
-                        <ul>
-                            <li><strong>IC (信息系数)</strong>：因子与未来收益的相关性</li>
-                            <li><strong>IR (信息比率)</strong>：IC的稳定性指标</li>
-                            <li><strong>胜率</strong>：因子预测正确的比例</li>
-                            <li><strong>有效性得分</strong>：综合评估指标</li>
-                        </ul>
+                        因子库中的表达式仅是中间产物。必须进入<strong>因子评估</strong>模块。系统将使用进程池对所有因子执行多维打分（IC / Rank IC / IR），并通过调整信号延迟（Signal Delay），剔除掉那些因为未来函数导致“假阳性”的劣质因子，保留真正具有前瞻预测能力的强 Alpha。
+                    </div>
+                </div>
+            </div>
+            
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseFour">
+                        04. 模型训练与实时扫描
+                    </button>
+                </h2>
+                <div id="collapseFour" class="accordion-collapse collapse" data-bs-parent="#usageGuide">
+                    <div class="accordion-body">
+                        将优质因子组合成特征矩阵，丢入<strong>模型训练</strong>模块。使用集成树模型拟合多空概率。最后在<strong>实时扫描 (Realtime Scan)</strong> 模块中接入实盘接口，捕捉最实时的交易信号。
                     </div>
                 </div>
             </div>

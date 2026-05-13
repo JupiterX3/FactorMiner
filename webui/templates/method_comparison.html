@@ -15,13 +15,22 @@
 .metric-card {
     border-left: 4px solid #0d6efd;
     padding: 0.75rem 1rem;
-    background: #f8f9fa;
+    background: var(--bg-panel-hover);
     border-radius: 0.25rem;
     margin-bottom: 0.75rem;
 }
 .metric-card.eq { border-left-color: #6c757d; }
 .metric-card.ic { border-left-color: #0d6efd; }
 .metric-card.icir { border-left-color: #198754; }
+.factor-category .collapse-icon {
+    transition: transform 0.2s ease;
+}
+.factor-category .collapse-icon.rotated {
+    transform: rotate(-90deg);
+}
+.factor-category .form-check-label {
+    cursor: pointer;
+}
 
 .mc-metric-value {
     font-size: 1.25rem;
@@ -39,7 +48,7 @@
 {% block content %}
 <div class="row">
     <div class="col-12">
-        <h2>⚖️ 方法对比（walk-forward）</h2>
+        <h2 class="page-title mb-4">⚖️ 方法对比（walk-forward）</h2>
         <p class="text-muted mb-2">
             在完全相同的 rolling (train→oos) 切分上，逐段为 <code>equal_weight</code> / <code>ic_weight</code> /
             <code>max_icir_weight</code> 估计权重并在样本外评估，最终输出聚合指标、净值曲线与两两配对 t 检验。
@@ -50,11 +59,11 @@
 <div class="row">
     <!-- ───────────────── 左侧：参数 ───────────────── -->
     <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
+        <div class="card shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h5 class="mb-0"><i class="fas fa-cog me-2"></i>实验参数</h5>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <form id="mcForm">
                     <!-- 因子选择 -->
                     <div class="mb-3">
@@ -239,11 +248,11 @@
             </div>
         </div>
 
-        <div class="card mt-3">
-            <div class="card-header">
+        <div class="card mt-3 shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h6 class="mb-0"><i class="fas fa-info-circle me-2"></i>口径说明</h6>
             </div>
-            <div class="card-body small text-muted">
+            <div class="card-body small text-muted shadow-sm border-0">
                 <ul class="mb-0">
                     <li>所有方法共用同一套 (train, oos) 切分，切分仅按日历日计算，不按 bar 数。</li>
                     <li>权重估计口径：<strong>train 段每日 Rank IC</strong>（截面 Spearman）。</li>
@@ -257,8 +266,8 @@
 
     <!-- ───────────────── 右侧：结果 ───────────────── -->
     <div class="col-md-8">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card shadow-sm border-0">
+            <div class="card-header d-flex justify-content-between align-items-center shadow-sm border-0">
                 <h5 class="mb-0"><i class="fas fa-chart-line me-2"></i>对比结果</h5>
                 <div class="btn-group btn-group-sm">
                     <a href="/cross-sectional-evaluation" class="btn btn-outline-secondary">
@@ -269,7 +278,7 @@
                     </button>
                 </div>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div id="mcPlaceholder" class="text-center text-muted py-5">
                     <i class="fas fa-balance-scale fa-3x mb-3"></i>
                     <p>选择因子 / 交易对 / 日期范围后点击"开始对比"。</p>
@@ -283,7 +292,7 @@
                     <div class="mb-3">
                         <h6>OOS 汇总指标</h6>
                         <div class="table-responsive">
-                            <table class="table table-sm table-bordered table-striped" id="mcSummaryTable">
+                            <table class="table table-sm table-bordered table-striped table-hover align-middle text-center" id="mcSummaryTable">
                                 <thead class="table-light">
                                     <tr>
                                         <th>方法</th>
@@ -321,7 +330,7 @@
                     <div class="mb-3">
                         <h6>两两配对 t 检验（ls_after_cost，同日期对齐）</h6>
                         <div class="table-responsive">
-                            <table class="table table-sm table-bordered" id="mcPairTable">
+                            <table class="table table-sm table-bordered table-hover align-middle text-center" id="mcPairTable">
                                 <thead class="table-light">
                                     <tr>
                                         <th>A</th>
@@ -347,7 +356,7 @@
                     <details class="mb-2">
                         <summary>walk-forward 切分明细（<span id="mcSplitCount">0</span>）</summary>
                         <div class="table-responsive mt-2">
-                            <table class="table table-sm table-bordered" id="mcSplitTable">
+                            <table class="table table-sm table-bordered table-hover align-middle text-center" id="mcSplitTable">
                                 <thead class="table-light">
                                     <tr>
                                         <th>#</th>
@@ -376,6 +385,12 @@ let mcLastResult = null;
 let mcChart = null;
 let mcCurrentAbort = null;
 let mcCurrentRequestId = null;
+const MC_BASIC_KLINE_SUBGROUPS = [
+    'basic_kline_general',
+    'basic_kline_qlib158',
+    'basic_kline_qlib360',
+    'basic_kline_wq101'
+];
 
 const MC_METHOD_LABEL = {
     equal_weight: 'equal_weight',
@@ -434,14 +449,186 @@ function mcRenderFactors(list) {
         box.html('<div class="text-muted small">无可用因子</div>');
         return;
     }
-    box.html(list.map(f => `
-        <div class="form-check">
-            <input class="form-check-input mc-factor-cb" type="checkbox" value="${f.id}" id="mcf_${f.id}" onchange="mcUpdateFactorCount()">
-            <label class="form-check-label small" for="mcf_${f.id}" title="${(f.description || '').replace(/"/g,'&quot;')}">
-                ${f.name || f.id} <span class="text-muted">(${f.type || 'unknown'})</span>
-            </label>
-        </div>
-    `).join(''));
+
+    function isMinedFactor(factor) {
+        const factorType = String(factor.type || '').toLowerCase();
+        const factorId = String(factor.id || '').toLowerCase();
+        const req = String(factor.data_requirement || '').toLowerCase();
+        return (
+            req === 'mined_factor' ||
+            factorType === 'gp_cs' ||
+            factorType === 'rl_cs' ||
+            factorType === 'mined_factor' ||
+            factorId.startsWith('gp_cs_') ||
+            factorId.startsWith('rl_cs_') ||
+            factorId.startsWith('mined_')
+        );
+    }
+
+    function getAlphaFamily(factor) {
+        const fam = String(factor.source_family || factor.type || '').toLowerCase();
+        if (fam === 'qlib158' || fam === 'qlib360' || fam === 'wq101') return fam;
+        const fid = String(factor.id || '').toLowerCase();
+        if (fid.startsWith('alpha158_')) return 'qlib158';
+        if (fid.startsWith('alpha360_')) return 'qlib360';
+        if (fid.startsWith('wq101_')) return 'wq101';
+        return null;
+    }
+
+    const categories = {
+        'basic_kline': {
+            name: '基础K线因子',
+            icon: 'fa-chart-candlestick',
+            color: 'primary',
+            desc: '仅需OHLCV数据即可计算',
+            factors: [],
+            subgroups: {
+                basic_kline_general: { name: '通用技术因子', factors: [] },
+                basic_kline_qlib158: { name: 'qlib Alpha158', factors: [] },
+                basic_kline_qlib360: { name: 'qlib Alpha360', factors: [] },
+                basic_kline_wq101: { name: 'WorldQuant Alpha101', factors: [] }
+            }
+        },
+        'mined_factor': {
+            name: '挖掘因子',
+            icon: 'fa-hammer',
+            color: 'success',
+            desc: '来自GP/RL/手动入库',
+            factors: []
+        },
+        'derivatives': {
+            name: '衍生品微观结构因子',
+            icon: 'fa-database',
+            color: 'warning',
+            desc: '需要持仓/多空比/基差等数据',
+            factors: []
+        },
+        'funding': {
+            name: '资金费率因子',
+            icon: 'fa-coins',
+            color: 'info',
+            desc: '需要Funding数据',
+            factors: []
+        },
+        'onchain': {
+            name: '链上数据因子',
+            icon: 'fa-link',
+            color: 'success',
+            desc: '需要链上数据（流通供应量等）',
+            factors: []
+        },
+        'event_factor': {
+            name: '事件因子',
+            icon: 'fa-exclamation-triangle',
+            color: 'danger',
+            desc: '离散事件类，不建议优先',
+            factors: []
+        }
+    };
+
+    list.forEach(f => {
+        if (isMinedFactor(f)) {
+            categories.mined_factor.factors.push(f);
+            return;
+        }
+        const req = f.data_requirement || 'basic_kline';
+        if (req === 'basic_kline') {
+            const fam = getAlphaFamily(f);
+            const sg = fam === 'qlib158'
+                ? 'basic_kline_qlib158'
+                : fam === 'qlib360'
+                    ? 'basic_kline_qlib360'
+                    : fam === 'wq101'
+                        ? 'basic_kline_wq101'
+                        : 'basic_kline_general';
+            categories.basic_kline.subgroups[sg].factors.push(f);
+            categories.basic_kline.factors.push(f);
+            return;
+        }
+        if (categories[req]) {
+            categories[req].factors.push(f);
+        } else {
+            categories.basic_kline.subgroups.basic_kline_general.factors.push(f);
+            categories.basic_kline.factors.push(f);
+        }
+    });
+
+    let html = '';
+    Object.entries(categories).forEach(([key, cat]) => {
+        if (!cat.factors.length) return;
+        const collapseId = `mc_factor_collapse_${key}`;
+        let factorsHtml = '';
+        if (key === 'basic_kline') {
+            const subgroupOrder = [
+                'basic_kline_general',
+                'basic_kline_qlib158',
+                'basic_kline_qlib360',
+                'basic_kline_wq101'
+            ];
+            const parts = [];
+            subgroupOrder.forEach((sg) => {
+                const sub = cat.subgroups[sg];
+                if (!sub || !sub.factors.length) return;
+                const sep = parts.length > 0 ? '<hr class="my-2">' : '';
+                parts.push(`
+                    ${sep}
+                    <div class="d-flex justify-content-between align-items-center small text-muted mb-1">
+                        <div><strong>${sub.name}</strong> (${sub.factors.length})</div>
+                        <div class="form-check m-0">
+                            <input class="form-check-input" type="checkbox"
+                                   id="mc_subgroup_toggle_${sg}"
+                                   onchange="mcToggleSubgroupSelection('${sg}', this.checked)">
+                            <label class="form-check-label" for="mc_subgroup_toggle_${sg}">全选</label>
+                        </div>
+                    </div>
+                    ${sub.factors.map(f => `
+                        <div class="form-check">
+                            <input class="form-check-input mc-factor-cb" type="checkbox"
+                                   value="${f.id}" id="mcf_${f.id}" data-category="${sg}" onchange="mcUpdateFactorCount()">
+                            <label class="form-check-label small" for="mcf_${f.id}" title="${(f.description || '').replace(/"/g, '&quot;')}">
+                                ${f.name || f.id} <span class="text-muted">(${f.type || 'unknown'})</span>
+                            </label>
+                        </div>
+                    `).join('')}
+                `);
+            });
+            factorsHtml = parts.join('');
+        } else {
+            factorsHtml = cat.factors.map(f => `
+                <div class="form-check">
+                    <input class="form-check-input mc-factor-cb" type="checkbox"
+                           value="${f.id}" id="mcf_${f.id}" data-category="${key}" onchange="mcUpdateFactorCount()">
+                    <label class="form-check-label small" for="mcf_${f.id}" title="${(f.description || '').replace(/"/g, '&quot;')}">
+                        ${f.name || f.id} <span class="text-muted">(${f.type || 'unknown'})</span>
+                    </label>
+                </div>
+            `).join('');
+        }
+        html += `
+            <div class="factor-category border-bottom">
+                <div class="d-flex justify-content-between align-items-center p-2 bg-light"
+                     style="cursor:pointer;" onclick="mcToggleCategory('${collapseId}', this)">
+                    <div>
+                        <i class="fas ${cat.icon} text-${cat.color} me-2"></i>
+                        <strong>${cat.name}</strong>
+                        <span class="badge bg-secondary ms-2">${cat.factors.length}</span>
+                        <small class="text-muted ms-2 d-none d-sm-inline">${cat.desc}</small>
+                    </div>
+                    <div class="d-flex align-items-center">
+                        <button type="button" class="btn btn-link btn-sm p-0 me-2"
+                                onclick="event.stopPropagation(); mcToggleCategorySelection('${key}');">
+                            <i class="fas fa-check-square"></i>
+                        </button>
+                        <i class="fas fa-chevron-down collapse-icon"></i>
+                    </div>
+                </div>
+                <div id="${collapseId}" class="p-2">
+                    ${factorsHtml}
+                </div>
+            </div>
+        `;
+    });
+    box.html(html);
     mcUpdateFactorCount();
 }
 
@@ -454,13 +641,15 @@ function mcFilterFactors() {
     mcAllFactors.forEach(f => {
         const hit = (f.name || '').toLowerCase().includes(q)
                  || (f.id || '').toLowerCase().includes(q)
-                 || (f.type || '').toLowerCase().includes(q);
+                 || (f.type || '').toLowerCase().includes(q)
+                 || (f.description || '').toLowerCase().includes(q);
         $(`#mcf_${f.id}`).closest('.form-check').toggle(!!hit);
     });
 }
 
 function mcUpdateFactorCount() {
     $('#mcFactorCount').text($('.mc-factor-cb:checked').length);
+    MC_BASIC_KLINE_SUBGROUPS.forEach(sg => mcSyncSubgroupToggleState(sg));
 }
 
 function mcSelectAllFactors() {
@@ -472,6 +661,46 @@ function mcSelectAllFactors() {
 function mcClearFactors() {
     $('.mc-factor-cb').prop('checked', false);
     mcUpdateFactorCount();
+}
+
+function mcToggleCategory(collapseId, headerEl) {
+    const body = document.getElementById(collapseId);
+    if (!body) return;
+    const icon = $(headerEl).find('.collapse-icon').get(0);
+    const isHidden = body.style.display === 'none';
+    body.style.display = isHidden ? '' : 'none';
+    if (icon) {
+        icon.classList.toggle('rotated', !isHidden);
+    }
+}
+
+function mcToggleCategorySelection(category) {
+    let checkboxes = $(`.mc-factor-cb[data-category="${category}"]`);
+    if (category === 'basic_kline') {
+        const selector = MC_BASIC_KLINE_SUBGROUPS.map(sg => `.mc-factor-cb[data-category="${sg}"]`).join(', ');
+        checkboxes = $(selector);
+    }
+    const allChecked = checkboxes.length > 0 && checkboxes.filter(':checked').length === checkboxes.length;
+    checkboxes.prop('checked', !allChecked);
+    mcUpdateFactorCount();
+}
+
+function mcToggleSubgroupSelection(subgroupCategory, checked) {
+    const checkboxes = $(`.mc-factor-cb[data-category="${subgroupCategory}"]`);
+    checkboxes.prop('checked', !!checked);
+    mcUpdateFactorCount();
+}
+
+function mcSyncSubgroupToggleState(subgroupCategory) {
+    const checkboxes = $(`.mc-factor-cb[data-category="${subgroupCategory}"]`);
+    const toggle = $(`#mc_subgroup_toggle_${subgroupCategory}`);
+    if (!toggle.length) return;
+    if (!checkboxes.length) {
+        toggle.prop('checked', false);
+        return;
+    }
+    const allChecked = checkboxes.filter(':checked').length === checkboxes.length;
+    toggle.prop('checked', allChecked);
 }
 
 function mcImportFactors() {
@@ -744,10 +973,10 @@ function mcRenderResults(data) {
     const cfg = data.config || {};
     const overview = `
         <div class="row g-2">
-            <div class="col-md-3"><div class="metric-card"><div class="mc-metric-label">切分数</div><div class="mc-metric-value">${data.n_splits}</div></div></div>
-            <div class="col-md-3"><div class="metric-card"><div class="mc-metric-label">因子数（成功）</div><div class="mc-metric-value">${(data.factor_ids || []).length}</div></div></div>
-            <div class="col-md-3"><div class="metric-card"><div class="mc-metric-label">窗口 (train/oos/step)</div><div class="mc-metric-value" style="font-size:1rem">${cfg.train_window_days}d / ${cfg.oos_window_days}d / ${cfg.step_days}d</div></div></div>
-            <div class="col-md-3"><div class="metric-card"><div class="mc-metric-label">交易成本 / TF</div><div class="mc-metric-value" style="font-size:1rem">${cfg.transaction_cost} / ${cfg.timeframe}</div></div></div>
+            <div class="col-md-3"><div class="metric-card shadow-sm border-0"><div class="mc-metric-label">切分数</div><div class="mc-metric-value">${data.n_splits}</div></div></div>
+            <div class="col-md-3"><div class="metric-card shadow-sm border-0"><div class="mc-metric-label">因子数（成功）</div><div class="mc-metric-value">${(data.factor_ids || []).length}</div></div></div>
+            <div class="col-md-3"><div class="metric-card shadow-sm border-0"><div class="mc-metric-label">窗口 (train/oos/step)</div><div class="mc-metric-value" style="font-size:1rem">${cfg.train_window_days}d / ${cfg.oos_window_days}d / ${cfg.step_days}d</div></div></div>
+            <div class="col-md-3"><div class="metric-card shadow-sm border-0"><div class="mc-metric-label">交易成本 / TF</div><div class="mc-metric-value" style="font-size:1rem">${cfg.transaction_cost} / ${cfg.timeframe}</div></div></div>
         </div>
     `;
     $('#mcOverview').html(overview);

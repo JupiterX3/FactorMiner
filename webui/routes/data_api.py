@@ -838,6 +838,146 @@ def get_all_downloads():
         return jsonify({'success': False, 'error': str(e)})
 
 
+@bp.route('/retry/<download_id>', methods=['POST'])
+def retry_batch_download(download_id):
+    """重试批量下载中失败的子任务。"""
+    try:
+        with DOWNLOADS_LOCK:
+            task = DOWNLOADS.get(download_id)
+            if task is None:
+                return jsonify({'success': False, 'error': '任务不存在'}), 404
+            if task.get('type') != 'batch':
+                return jsonify({'success': False, 'error': '仅支持重试批量下载任务'})
+            if task.get('status') not in ('completed', 'failed'):
+                return jsonify({'success': False, 'error': '当前任务状态不支持重试'})
+
+            task_results = task.get('task_results', [])
+            failed_items = [r for r in task_results if r.get('status') == 'failed']
+            if not failed_items:
+                return jsonify({'success': False, 'error': '没有失败的子任务可重试'})
+
+            retry_symbols = [r['symbol'] for r in failed_items]
+            retry_timeframes = list(set(r['timeframe'] for r in failed_items))
+            exchange = task.get('exchange', 'binance')
+            trade_type = task.get('trade_type', 'futures')
+            start_date = task.get('start_date', '')
+            end_date = task.get('end_date', '')
+
+            task['status'] = 'downloading'
+            task['progress'] = 0
+            task['message'] = f'正在重试 {len(failed_items)} 个失败子任务...'
+            task['failed_tasks'] = 0
+            task['completed_tasks'] = task.get('completed_tasks', 0)
+            task['task_results'] = [r for r in task_results if r.get('status') != 'failed']
+            task['total_tasks'] = len(task['task_results']) + len(failed_items)
+
+        total_tasks = len(failed_items)
+
+        def retry_task():
+            try:
+                import time
+                from factor_miner.core.batch_downloader import SmartBatchDownloader
+                downloader = SmartBatchDownloader()
+                downloader.trade_type = trade_type
+                _ = downloader.get_cached_exchange()
+
+                completed_count = 0
+                failed_count = 0
+
+                for item in failed_items:
+                    symbol = item['symbol']
+                    timeframe = item['timeframe']
+                    try:
+                        with DOWNLOADS_LOCK:
+                            if download_id in DOWNLOADS:
+                                current = completed_count + failed_count + 1
+                                progress = int((task['completed_tasks'] + current - 1) / task['total_tasks'] * 100)
+                                DOWNLOADS[download_id]['progress'] = progress
+                                DOWNLOADS[download_id]['message'] = f'重试下载 {symbol} {timeframe} ({current}/{total_tasks})'
+
+                        formatted_symbol = format_symbol_for_download(symbol, trade_type)
+                        result = downloader.download_ohlcv_batch(
+                            config_id=None,
+                            symbol=formatted_symbol,
+                            timeframe=timeframe,
+                            start_date=start_date,
+                            end_date=end_date,
+                            trade_type=trade_type,
+                            progress_callback=None,
+                        )
+
+                        task_result = {
+                            'task_id': f"{symbol}_{timeframe}",
+                            'symbol': symbol,
+                            'timeframe': timeframe,
+                            'success': result.get('success', False),
+                            'message': result.get('message') or result.get('error', '未知状态'),
+                            'records': result.get('total_records', 0),
+                            'file_path': result.get('file_path', ''),
+                        }
+
+                        if result.get('success'):
+                            completed_count += 1
+                            task_result['status'] = 'completed'
+                        else:
+                            failed_count += 1
+                            task_result['status'] = 'failed'
+
+                        with DOWNLOADS_LOCK:
+                            if download_id in DOWNLOADS:
+                                DOWNLOADS[download_id]['task_results'].append(task_result)
+                                DOWNLOADS[download_id]['completed_tasks'] += (1 if task_result['status'] == 'completed' else 0)
+                                DOWNLOADS[download_id]['failed_tasks'] += (1 if task_result['status'] == 'failed' else 0)
+                                progress = int((DOWNLOADS[download_id]['completed_tasks'] + DOWNLOADS[download_id]['failed_tasks']) / DOWNLOADS[download_id]['total_tasks'] * 100)
+                                DOWNLOADS[download_id]['progress'] = progress
+
+                        time.sleep(0.5)
+
+                    except Exception as e:
+                        failed_count += 1
+                        task_result = {
+                            'task_id': f"{symbol}_{timeframe}",
+                            'symbol': symbol,
+                            'timeframe': timeframe,
+                            'success': False,
+                            'message': f'任务异常: {str(e)}',
+                            'records': 0,
+                            'file_path': '',
+                            'status': 'failed',
+                        }
+                        with DOWNLOADS_LOCK:
+                            if download_id in DOWNLOADS:
+                                DOWNLOADS[download_id]['task_results'].append(task_result)
+                                DOWNLOADS[download_id]['failed_tasks'] += 1
+                                progress = int((DOWNLOADS[download_id]['completed_tasks'] + DOWNLOADS[download_id]['failed_tasks']) / DOWNLOADS[download_id]['total_tasks'] * 100)
+                                DOWNLOADS[download_id]['progress'] = progress
+
+                with DOWNLOADS_LOCK:
+                    if download_id in DOWNLOADS:
+                        final_failed = DOWNLOADS[download_id]['failed_tasks']
+                        final_completed = DOWNLOADS[download_id]['completed_tasks']
+                        DOWNLOADS[download_id]['status'] = 'completed' if final_failed == 0 else 'completed'
+                        DOWNLOADS[download_id]['progress'] = 100
+                        DOWNLOADS[download_id]['message'] = f'重试完成！成功: {final_completed}, 失败: {final_failed}'
+                        DOWNLOADS[download_id]['end_time'] = datetime.now().isoformat()
+
+            except Exception as e:
+                with DOWNLOADS_LOCK:
+                    if download_id in DOWNLOADS:
+                        DOWNLOADS[download_id]['status'] = 'failed'
+                        DOWNLOADS[download_id]['message'] = f'重试异常: {str(e)}'
+                        DOWNLOADS[download_id]['end_time'] = datetime.now().isoformat()
+
+        thread = threading.Thread(target=retry_task)
+        thread.daemon = True
+        thread.start()
+
+        return jsonify({'success': True, 'data': {'retried_tasks': len(failed_items)}})
+    except Exception as e:
+        logger.exception('retry batch download 异常')
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @bp.route('/batch-download', methods=['POST'])
 def start_batch_download():
     """开始批量下载数据"""
@@ -1267,12 +1407,23 @@ def delete_data():
 EXTRA_DOWNLOADS = {}
 EXTRA_DOWNLOADS_LOCK = threading.Lock()
 
-_EXTRA_SUPPORTED_TYPES = ('metrics', 'funding', 'mark', 'index')
+_EXTRA_SUPPORTED_TYPES = (
+    'metrics',
+    'funding',
+    'mark',
+    'index',
+    'liquidations',
+    'macro',
+    'sentiment',
+)
 _EXTRA_TYPE_LABELS = {
     'metrics': '持仓量/多空比/主动买入占比',
     'funding': '资金费率',
     'mark': 'Mark Price K 线',
     'index': 'Index Price K 线',
+    'liquidations': '大额清算（Liquidations）',
+    'macro': '宏观与货币因子（DXY/SPX/IXIC/Gold/10Y）',
+    'sentiment': '情绪与波动率因子（VIX/稳定币购买力）',
 }
 
 
@@ -1375,6 +1526,24 @@ def _run_single_extra_task(
                     start_date=start_date, end_date=end_date, kind='index',
                     progress_callback=_cb,
                 )
+            elif dt == 'liquidations':
+                res = downloader.download_liquidations(
+                    symbol=ccxt_symbol, timeframe=timeframe or '1h',
+                    start_date=start_date, end_date=end_date,
+                    progress_callback=_cb,
+                )
+            elif dt == 'macro':
+                res = downloader.download_macro_factors(
+                    symbol=ccxt_symbol, timeframe=timeframe or '1h',
+                    start_date=start_date, end_date=end_date,
+                    progress_callback=_cb,
+                )
+            elif dt == 'sentiment':
+                res = downloader.download_sentiment_factors(
+                    symbol=ccxt_symbol, timeframe=timeframe or '1h',
+                    start_date=start_date, end_date=end_date,
+                    progress_callback=_cb,
+                )
             else:
                 res = {'success': False, 'error': f'不支持的数据类型: {dt}'}
         except Exception as e:
@@ -1408,30 +1577,33 @@ def _run_single_extra_task(
 
 @bp.route('/extra/download', methods=['POST'])
 def start_extra_download():
-    """单个 symbol 的额外数据下载（可多选 data_types）。"""
+    """单个 symbol 的额外数据下载（可多选 data_types）。macro/sentiment 为全局数据，无需 symbol。"""
     try:
         payload = request.get_json() or {}
-        symbol = payload.get('symbol')
+        symbol = payload.get('symbol') or ''
         timeframe = payload.get('timeframe') or '1h'
         start_date = payload.get('start_date')
         end_date = payload.get('end_date')
         data_types = payload.get('data_types') or []
 
-        if not symbol:
-            return jsonify({'success': False, 'error': '缺少 symbol'})
-        if not start_date or not end_date:
-            return jsonify({'success': False, 'error': '缺少 start_date/end_date'})
         data_types = [dt for dt in data_types if dt in _EXTRA_SUPPORTED_TYPES]
         if not data_types:
             return jsonify({'success': False, 'error': '未选择任何数据类型'})
 
-        ccxt_symbol = _extra_normalize_symbol_to_ccxt(symbol)
-        task_id = f"extra_{symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
+        global_types = {'macro', 'sentiment'}
+        per_symbol_types = [dt for dt in data_types if dt not in global_types]
+        has_global = bool(set(data_types) & global_types)
+
+        if per_symbol_types and not symbol:
+            return jsonify({'success': False, 'error': f'缺少 symbol（{per_symbol_types} 需要 symbol）'})
+
+        ccxt_symbol = _extra_normalize_symbol_to_ccxt(symbol) if symbol else ''
+        task_id = f"extra_{symbol or 'global'}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
         with EXTRA_DOWNLOADS_LOCK:
             EXTRA_DOWNLOADS[task_id] = {
                 'id': task_id,
                 'kind': 'single',
-                'symbol': symbol,
+                'symbol': symbol or 'GLOBAL',
                 'ccxt_symbol': ccxt_symbol,
                 'timeframe': timeframe,
                 'start_date': start_date,
@@ -1478,10 +1650,45 @@ def start_extra_batch_download():
         if not data_types:
             return jsonify({'success': False, 'error': '未选择任何数据类型'})
 
+        global_types = {'macro', 'sentiment'}
+        per_symbol_types = [dt for dt in data_types if dt not in global_types]
+        has_global = bool(set(data_types) & global_types)
+
         batch_id = f"extra_batch_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
         task_ids = []
+
+        if has_global:
+            global_task_id = f"{batch_id}_global"
+            with EXTRA_DOWNLOADS_LOCK:
+                EXTRA_DOWNLOADS[global_task_id] = {
+                    'id': global_task_id,
+                    'kind': 'batch-child',
+                    'batch_id': batch_id,
+                    'symbol': 'GLOBAL',
+                    'ccxt_symbol': '',
+                    'timeframe': timeframe,
+                    'start_date': start_date,
+                    'end_date': end_date,
+                    'data_types': sorted(set(data_types) & global_types),
+                    'status': 'starting',
+                    'progress': 0,
+                    'message': '等待执行全局数据...',
+                    'start_time': datetime.now().isoformat(),
+                    'subtasks': {dt: {'status': 'pending', 'progress': 0} for dt in sorted(set(data_types) & global_types)},
+                }
+            task_ids.append(global_task_id)
+            thread = threading.Thread(
+                target=_run_single_extra_task,
+                args=(global_task_id, '', timeframe, start_date, end_date, sorted(set(data_types) & global_types)),
+                daemon=True,
+            )
+            thread.start()
+
         for i, sym in enumerate(symbols):
             ccxt_symbol = _extra_normalize_symbol_to_ccxt(sym)
+            sym_types = per_symbol_types
+            if not sym_types:
+                continue
             task_id = f"{batch_id}_{i}_{sym}"
             with EXTRA_DOWNLOADS_LOCK:
                 EXTRA_DOWNLOADS[task_id] = {
@@ -1493,18 +1700,18 @@ def start_extra_batch_download():
                     'timeframe': timeframe,
                     'start_date': start_date,
                     'end_date': end_date,
-                    'data_types': list(data_types),
+                    'data_types': list(sym_types),
                     'status': 'starting',
                     'progress': 0,
                     'message': '等待执行...',
                     'start_time': datetime.now().isoformat(),
-                    'subtasks': {dt: {'status': 'pending', 'progress': 0} for dt in data_types},
+                    'subtasks': {dt: {'status': 'pending', 'progress': 0} for dt in sym_types},
                 }
             task_ids.append(task_id)
 
             thread = threading.Thread(
                 target=_run_single_extra_task,
-                args=(task_id, ccxt_symbol, timeframe, start_date, end_date, list(data_types)),
+                args=(task_id, ccxt_symbol, timeframe, start_date, end_date, list(sym_types)),
                 daemon=True,
             )
             thread.start()
@@ -1551,6 +1758,43 @@ def list_extra_downloads():
         return jsonify({'success': False, 'error': str(e)})
 
 
+@bp.route('/extra/retry/<task_id>', methods=['POST'])
+def retry_extra_download(task_id):
+    """重试指定任务中失败的子任务。"""
+    try:
+        with EXTRA_DOWNLOADS_LOCK:
+            task = EXTRA_DOWNLOADS.get(task_id)
+            if task is None:
+                return jsonify({'success': False, 'error': '任务不存在'}), 404
+            if task.get('status') not in ('partial_failed', 'failed'):
+                return jsonify({'success': False, 'error': '当前任务状态不支持重试'})
+            ccxt_symbol = task.get('ccxt_symbol', '')
+            timeframe = task.get('timeframe', '1h')
+            start_date = task.get('start_date', '')
+            end_date = task.get('end_date', '')
+            subtasks = task.get('subtasks', {})
+            failed_types = [dt for dt, s in subtasks.items() if s.get('status') == 'failed']
+            if not failed_types:
+                return jsonify({'success': False, 'error': '没有失败的子任务可重试'})
+            for dt in failed_types:
+                task['subtasks'][dt] = {'status': 'pending', 'progress': 0}
+            task['status'] = 'downloading'
+            task['progress'] = 0
+            task['message'] = f'正在重试 {len(failed_types)} 个失败子任务...'
+
+        thread = threading.Thread(
+            target=_run_single_extra_task,
+            args=(task_id, ccxt_symbol, timeframe, start_date, end_date, failed_types),
+            daemon=True,
+        )
+        thread.start()
+
+        return jsonify({'success': True, 'data': {'retried_types': failed_types}})
+    except Exception as e:
+        logger.exception('extra/retry 异常')
+        return jsonify({'success': False, 'error': str(e)})
+
+
 @bp.route('/extra/inventory', methods=['GET'])
 def list_extra_inventory():
     """
@@ -1565,18 +1809,35 @@ def list_extra_inventory():
             'funding': root / 'futures_funding',
             'mark': root / 'futures_markprice',
             'index': root / 'futures_indexprice',
+            'liquidations': root / 'futures_liquidations',
+            'macro': root / 'futures_macro',
+            'sentiment': root / 'futures_sentiment',
         }
+        global_types = {'macro', 'sentiment'}
+        global_items = []
         inventory: Dict = {}
         for kind, d in sub_dirs.items():
             if not d.exists():
                 continue
             for f in d.glob('*.feather'):
                 stem = f.stem
-                # 命名约定：
-                # metrics:  {SAFE_SYM}-{tf}-metrics
-                # funding:  {SAFE_SYM}-funding
-                # mark:     {SAFE_SYM}-{tf}-mark
-                # index:    {SAFE_SYM}-{tf}-index
+                try:
+                    size_kb = round(f.stat().st_size / 1024, 1)
+                except Exception:
+                    size_kb = None
+
+                if kind in global_types:
+                    parts = stem.split('-')
+                    tf = parts[0] if len(parts) >= 2 else None
+                    global_items.append({
+                        'data_type': kind,
+                        'label': _EXTRA_TYPE_LABELS.get(kind, kind),
+                        'timeframe': tf,
+                        'file': str(f),
+                        'size_kb': size_kb,
+                    })
+                    continue
+
                 parts = stem.split('-')
                 if kind == 'funding':
                     safe_sym = '-'.join(parts[:-1]) if len(parts) >= 2 else parts[0]
@@ -1588,10 +1849,6 @@ def list_extra_inventory():
                     else:
                         tf = None
                         safe_sym = stem
-                try:
-                    size_kb = round(f.stat().st_size / 1024, 1)
-                except Exception:
-                    size_kb = None
                 entry = inventory.setdefault(safe_sym, {
                     'symbol': safe_sym,
                     'items': [],
@@ -1604,7 +1861,6 @@ def list_extra_inventory():
                     'size_kb': size_kb,
                 })
 
-        # 补充起止时间（延迟到用户点击"详情"再查，避免全量读取 feather 太慢）
         items = list(inventory.values())
         items.sort(key=lambda x: x['symbol'])
         return jsonify({
@@ -1615,6 +1871,7 @@ def list_extra_inventory():
                     for k, v in _EXTRA_TYPE_LABELS.items()
                 ],
                 'symbols': items,
+                'global': global_items,
             },
         })
     except Exception as e:
@@ -1631,3 +1888,452 @@ def get_extra_supported_types():
             for k in _EXTRA_SUPPORTED_TYPES
         ],
     })
+
+
+UNIVERSE_STABLECOINS = {
+    "USDT", "USDC", "USDE", "BUSD", "DAI", "TUSD", "FDUSD",
+    "USDP", "GUSD", "USDD", "LUSD", "FRAX", "USD1",
+}
+
+UNIVERSE_BLACKLIST = {
+    "USDT", "USDC", "BUSD", "DAI", "TUSD", "FDUSD",
+    "WBTC", "WETH", "STETH", "RETH", "BFUSD", "PAXG",
+}
+
+UNIVERSE_SYMBOL_ALIASES = {
+    "RENDER": "RNDR",
+    "THE": "TON",
+    "THE-OPEN-NETWORK": "TON",
+    "BINANCE-PEG-BSC-USD": "BUSD",
+    "BINANCECOIN": "BNB",
+    "BINANCE-USD": "BUSD",
+    "POLYGON-ECOSYSTEM-TOKEN": "POL",
+    "MATIC": "POL",
+    "POLYGON": "POL",
+    "FANTOM": "FTM",
+    "CHAINLINK": "LINK",
+    "UNISWAP": "UNI",
+    "AVALANCHE": "AVAX",
+    "COSMOS": "ATOM",
+    "POLKADOT": "DOT",
+    "NEAR-PROTOCOL": "NEAR",
+    "FLOW": "FLOW",
+    "ALGORAND": "ALGO",
+    "FILECOIN": "FIL",
+    "QUANT": "QNT",
+    "ARBITRUM": "ARB",
+    "OPTIMISM": "OP",
+    "STACKS": "STX",
+    "CELESTIA": "TIA",
+    "SEI": "SEI",
+    "SUI": "SUI",
+    "APTOS": "APT",
+    "STARKNET": "STRK",
+    "MANTLE": "MNT",
+    "WORLDCOIN": "WLD",
+    "JUPITER": "JUP",
+    "PENDLE": "PENDLE",
+    "BONK": "BONK",
+    "DOGECOIN": "DOGE",
+    "SHIBA-INU": "SHIB",
+    "BITCOIN-CASH": "BCH",
+    "BITCOIN-SV": "BSV",
+    "LITECOIN": "LTC",
+    "ETHEREUM-CLASSIC": "ETC",
+    "MONERO": "XMR",
+    "ZCASH": "ZEC",
+    "DASH": "DASH",
+    "DECENTRALAND": "MANA",
+    "SANDBOX": "SAND",
+    "AXIE-INFINITY": "AXS",
+    "AAVE": "AAVE",
+    "MAKER": "MKR",
+    "COMPOUND": "COMP",
+    "CURVE": "CRV",
+    "SYNTHETIX": "SNX",
+    "1INCH": "1INCH",
+    "ENJINCOIN": "ENJ",
+    "BASIC-ATTENTION-TOKEN": "BAT",
+    "HOLORCHAIN": "HOT",
+    "IOTA": "IOTA",
+    "ZILLIQA": "ZIL",
+    "ICON": "ICX",
+    "VECHAIN": "VET",
+    "THETA": "THETA",
+    "HEDERA": "HBAR",
+    "KAVA": "KAVA",
+    "TEZOS": "XTZ",
+    "ELROND": "EGLD",
+    "HARMONY": "ONE",
+    "KUSAMA": "KSM",
+    "OCEAN-PROTOCOL": "OCEAN",
+    "REN": "REN",
+    "BALANCER": "BAL",
+    "UNSTOPPABLE-DOMAINS": "UD",
+    "PEPE": "PEPE",
+    "FLOKI": "FLOKI",
+    "BRETT": "BRETT",
+    "TURBO": "TURBO",
+    "MEME": "MEME",
+    "ORDI": "ORDI",
+    "SATS": "SATS",
+    "RATS": "RATS",
+    "BLUR": "BLUR",
+    "LOOKS": "LOOKS",
+    "ENS": "ENS",
+    "GAS": "GAS",
+    "LEVER": "LEVER",
+    "HOOK": "HOOK",
+    "MAGIC": "MAGIC",
+    "GMX": "GMX",
+    "DYDX": "DYDX",
+    "SNX": "SNX",
+    "PERP": "PERP",
+    "GNO": "GNO",
+    "RPL": "RPL",
+    "LDO": "LDO",
+    "FXS": "FXS",
+    "RDN": "RDN",
+    "WOO": "WOO",
+    "AGLD": "AGLD",
+    "PRIME": "PRIME",
+    "HIGH": "HIGH",
+    "NMR": "NMR",
+    "SUPER": "SUPER",
+    "CYBER": "CYBER",
+    "ARKHAM": "ARKM",
+    "WLD": "WLD",
+    "PIXEL": "PIXEL",
+    "PORTAL": "PORTAL",
+    "AEVO": "AEVO",
+    "ENA": "ENA",
+    "ETHFI": "ETHFI",
+    "W": "W",
+    "OMNI": "OMNI",
+    "REZ": "REZ",
+    "SAGA": "SAGA",
+    "TAO": "TAO",
+    "ONDO": "ONDO",
+    "ALT": "ALT",
+    "MANTA": "MANTA",
+    "DYM": "DYM",
+    "XAI": "XAI",
+    "JTO": "JTO",
+}
+
+_UNIVERSE_CACHE = {}
+_UNIVERSE_CACHE_LOCK = threading.Lock()
+_UNIVERSE_CACHE_TTL = 3600
+
+
+@bp.route('/universe-filter', methods=['POST'])
+def universe_filter():
+    """
+    币种池筛选：参考 CoinGecko 市值 + Binance 上市时间/成交额 过滤，
+    返回筛选后的币种列表，可直接适配截面评估的币种列表导入。
+
+    请求体 JSON:
+      - min_market_cap_rank: int, 市值排名上限（默认 200）
+      - min_avg_volume_usd: float, 30天日均成交额下限（默认 1_000_000）
+      - min_age_days: int, 上市最少天数（默认 90）
+      - exclude_stablecoins: bool, 排除稳定币（默认 True）
+      - exclude_blacklist: bool, 排除黑名单（默认 True）
+      - trade_type: str, 'futures' | 'spot'（默认 'futures'）
+      - exchange: str, 交易所（默认 'binance'）
+    """
+    try:
+        data = request.get_json() or {}
+        min_rank = int(data.get('min_market_cap_rank', 200))
+        min_vol = float(data.get('min_avg_volume_usd', 1_000_000))
+        min_age = int(data.get('min_age_days', 90))
+        exclude_stable = data.get('exclude_stablecoins', True)
+        exclude_black = data.get('exclude_blacklist', True)
+        trade_type = str(data.get('trade_type', 'futures')).lower()
+        exchange_id = str(data.get('exchange', 'binance')).lower()
+
+        if isinstance(exclude_stable, str):
+            exclude_stable = exclude_stable.strip().lower() in ('1', 'true', 'yes')
+        else:
+            exclude_stable = bool(exclude_stable)
+        if isinstance(exclude_black, str):
+            exclude_black = exclude_black.strip().lower() in ('1', 'true', 'yes')
+        else:
+            exclude_black = bool(exclude_black)
+
+        import requests as _requests
+
+        cache_key = (min_rank, trade_type, exchange_id)
+        now_ts = time.time()
+        with _UNIVERSE_CACHE_LOCK:
+            cached = _UNIVERSE_CACHE.get(cache_key)
+            if cached and (now_ts - cached['ts'] < _UNIVERSE_CACHE_TTL):
+                coin_df = cached['df']
+            else:
+                coin_df = None
+
+        if coin_df is None:
+            cg_url = "https://api.coingecko.com/api/v3/coins/markets"
+            try:
+                from config.webui_config import PROXY_CONFIG as _proxy_cfg
+                _proxies = {}
+                if _proxy_cfg.get('http'):
+                    _proxies['http'] = _proxy_cfg['http']
+                if _proxy_cfg.get('https'):
+                    _proxies['https'] = _proxy_cfg['https']
+            except Exception:
+                _proxies = {}
+
+            _PER_PAGE = 100
+            _total_pages = max(1, (min_rank + _PER_PAGE - 1) // _PER_PAGE)
+            _total_pages = min(_total_pages, 5)
+
+            all_coins = []
+            _pages_ok = 0
+            for _page in range(1, _total_pages + 1):
+                cg_params = {
+                    "vs_currency": "usd",
+                    "order": "market_cap_desc",
+                    "per_page": _PER_PAGE,
+                    "page": _page,
+                }
+                try:
+                    resp = _requests.get(cg_url, params=cg_params, proxies=_proxies or None, timeout=30)
+                    if resp.status_code == 429:
+                        logger.warning(f"CoinGecko API 第{_page}页被限频(429)，等待后重试")
+                        time.sleep(60)
+                        resp = _requests.get(cg_url, params=cg_params, proxies=_proxies or None, timeout=30)
+                    resp.raise_for_status()
+                    page_data = resp.json()
+                    if not page_data:
+                        break
+                    for coin in page_data:
+                        all_coins.append({
+                            "id": coin.get("id", ""),
+                            "symbol": (coin.get("symbol") or "").upper(),
+                            "market_cap": coin.get("market_cap", 0),
+                            "market_cap_rank": coin.get("market_cap_rank", 9999),
+                        })
+                    _pages_ok += 1
+                    if len(page_data) < _PER_PAGE:
+                        break
+                    if _page < _total_pages:
+                        time.sleep(1.5)
+                except Exception as e:
+                    logger.warning(f"CoinGecko API 第{_page}页请求失败: {e}")
+                    if _page == 1:
+                        return jsonify({
+                            'success': False,
+                            'error': f'CoinGecko API 请求失败: {str(e)}'
+                        }), 502
+                    break
+
+            logger.info(f"CoinGecko 分页获取: 请求{_total_pages}页, 成功{_pages_ok}页, 共{len(all_coins)}条")
+            coin_df = pd.DataFrame(all_coins)
+            with _UNIVERSE_CACHE_LOCK:
+                _UNIVERSE_CACHE[cache_key] = {'df': coin_df, 'ts': now_ts}
+
+        is_futures = trade_type == 'futures'
+        try:
+            markets = load_markets_cached(exchange_id, is_futures=is_futures)
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'error': f'加载交易所市场数据失败: {str(e)}'
+            }), 502
+
+        exchange_inst = get_exchange_instance(exchange_id, is_futures=is_futures)
+        if not exchange_inst:
+            return jsonify({
+                'success': False,
+                'error': '无法初始化交易所实例'
+            }), 502
+
+        usdt_bases = set()
+        for mkt_id, mkt_info in markets.items():
+            if mkt_info.get('quote') == 'USDT':
+                usdt_bases.add(mkt_info.get('base', '').upper())
+
+        def _resolve_symbol(sym_base, coin_id=""):
+            _FUTURES_PREFIXES = ["1000", "10000", "100000"]
+
+            def _try_ccxt(base):
+                if is_futures:
+                    c = f"{base}/USDT:USDT"
+                else:
+                    c = f"{base}/USDT"
+                return c if c in markets else None
+
+            ccxt_sym = _try_ccxt(sym_base)
+            if ccxt_sym:
+                return sym_base, ccxt_sym
+
+            for prefix in _FUTURES_PREFIXES:
+                ccxt_sym = _try_ccxt(f"{prefix}{sym_base}")
+                if ccxt_sym:
+                    return f"{prefix}{sym_base}", ccxt_sym
+
+            alias = UNIVERSE_SYMBOL_ALIASES.get(sym_base)
+            if alias:
+                ccxt_sym = _try_ccxt(alias)
+                if ccxt_sym:
+                    return alias, ccxt_sym
+                for prefix in _FUTURES_PREFIXES:
+                    ccxt_sym = _try_ccxt(f"{prefix}{alias}")
+                    if ccxt_sym:
+                        return f"{prefix}{alias}", ccxt_sym
+
+            if coin_id:
+                alias2 = UNIVERSE_SYMBOL_ALIASES.get(coin_id.upper())
+                if alias2:
+                    ccxt_sym = _try_ccxt(alias2)
+                    if ccxt_sym:
+                        return alias2, ccxt_sym
+                    for prefix in _FUTURES_PREFIXES:
+                        ccxt_sym = _try_ccxt(f"{prefix}{alias2}")
+                        if ccxt_sym:
+                            return f"{prefix}{alias2}", ccxt_sym
+
+            for base in usdt_bases:
+                if base == sym_base:
+                    ccxt_sym = _try_ccxt(base)
+                    if ccxt_sym:
+                        return base, ccxt_sym
+
+            sym_lower = sym_base.lower()
+            coin_id_lower = coin_id.lower() if coin_id else ""
+            candidates = []
+            for base in usdt_bases:
+                base_lower = base.lower()
+                if base_lower == sym_lower or base_lower == coin_id_lower:
+                    ccxt_sym = _try_ccxt(base)
+                    if ccxt_sym:
+                        return base, ccxt_sym
+                if (sym_lower in base_lower or base_lower in sym_lower) and len(sym_lower) >= 3:
+                    candidates.append(base)
+                if coin_id_lower and (coin_id_lower in base_lower or base_lower in coin_id_lower) and len(coin_id_lower) >= 3:
+                    if base not in candidates:
+                        candidates.append(base)
+
+            if len(candidates) == 1:
+                base = candidates[0]
+                ccxt_sym = _try_ccxt(base)
+                if ccxt_sym:
+                    return base, ccxt_sym
+
+            return None, None
+
+        results = []
+        total_scanned = 0
+        skipped_stable = 0
+        skipped_black = 0
+        skipped_no_market = 0
+        skipped_volume = 0
+        skipped_age = 0
+        no_market_details = []
+
+        for _, row in coin_df.iterrows():
+            if row.get('market_cap_rank', 9999) > min_rank:
+                continue
+
+            symbol_base = str(row.get("symbol", "")).upper()
+            coin_id = str(row.get("id", ""))
+            total_scanned += 1
+
+            if exclude_stable and symbol_base in UNIVERSE_STABLECOINS:
+                skipped_stable += 1
+                continue
+
+            if exclude_black and symbol_base in UNIVERSE_BLACKLIST:
+                skipped_black += 1
+                continue
+
+            resolved_base, ccxt_sym = _resolve_symbol(symbol_base, coin_id)
+
+            if resolved_base is None:
+                skipped_no_market += 1
+                no_market_details.append({
+                    "symbol": symbol_base,
+                    "coin_id": coin_id,
+                    "rank": int(row.get('market_cap_rank', 0)),
+                })
+                continue
+
+            local_sym = f"{resolved_base}_USDT"
+
+            avg_vol = None
+            try:
+                ohlcv = exchange_inst.fetch_ohlcv(ccxt_sym, timeframe='1d', limit=30)
+                if ohlcv and len(ohlcv) > 0:
+                    vol_df = pd.DataFrame(
+                        ohlcv,
+                        columns=["timestamp", "open", "high", "low", "close", "volume"]
+                    )
+                    vol_df["dollar_volume"] = vol_df["close"] * vol_df["volume"]
+                    avg_vol = vol_df["dollar_volume"].mean()
+            except Exception:
+                avg_vol = None
+
+            if avg_vol is None or avg_vol < min_vol:
+                skipped_volume += 1
+                continue
+
+            age_days = None
+            first_date = None
+            try:
+                ohlcv_full = exchange_inst.fetch_ohlcv(ccxt_sym, timeframe='1d', limit=1000)
+                if ohlcv_full and len(ohlcv_full) > 0:
+                    first_ts = ohlcv_full[0][0]
+                    first_date = datetime.utcfromtimestamp(first_ts / 1000)
+                    age_days = (datetime.utcnow() - first_date).days
+            except Exception:
+                age_days = None
+
+            if age_days is None or age_days < min_age:
+                skipped_age += 1
+                continue
+
+            results.append({
+                "symbol": local_sym,
+                "ccxt_symbol": ccxt_sym,
+                "base": symbol_base,
+                "market_cap_rank": int(row.get('market_cap_rank', 0)),
+                "avg_30d_volume": round(avg_vol, 2) if avg_vol else None,
+                "age_days": age_days,
+                "first_trade_date": first_date.strftime('%Y-%m-%d') if first_date else None,
+            })
+
+        results.sort(key=lambda x: x.get('market_cap_rank', 9999))
+
+        return jsonify({
+            'success': True,
+            'data': {
+                'symbols': results,
+                'total_scanned': total_scanned,
+                'total_fetched_from_cg': len(coin_df),
+                'skipped_stable': skipped_stable,
+                'skipped_black': skipped_black,
+                'skipped_no_market': skipped_no_market,
+                'no_market_details': no_market_details,
+                'skipped_volume': skipped_volume,
+                'skipped_age': skipped_age,
+                'passed': len(results),
+            },
+            'params': {
+                'min_market_cap_rank': min_rank,
+                'min_avg_volume_usd': min_vol,
+                'min_age_days': min_age,
+                'exclude_stablecoins': exclude_stable,
+                'exclude_blacklist': exclude_black,
+                'trade_type': trade_type,
+                'exchange': exchange_id,
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"币种池筛选失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': f'币种池筛选失败: {str(e)}'
+        }), 500

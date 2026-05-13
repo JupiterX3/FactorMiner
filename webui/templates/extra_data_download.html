@@ -5,9 +5,9 @@
 {% block content %}
 <div class="row mb-2">
     <div class="col-12">
-        <h2>📊 额外数据下载</h2>
+        <h2 class="page-title mb-4">📊 额外数据下载</h2>
         <p class="text-muted">
-            下载 U 本位合约的衍生品/资金面数据，供
+            下载 U 本位合约衍生品/资金面数据，以及宏观与情绪辅助数据，供
             <code>factorlib/derivatives/</code> 与 <code>factorlib/funding/</code>
             下的因子使用。仅支持 Binance Futures，与主 K 线数据独立落盘。
         </p>
@@ -17,8 +17,8 @@
 <div class="row">
     <!-- 左侧：单 symbol 下载 / 批量下载 / 数据类型 -->
     <div class="col-md-5">
-        <div class="card mb-3">
-            <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-header d-flex justify-content-between align-items-center shadow-sm border-0">
                 <h6 class="mb-0">🎯 数据类型选择（所有任务共用）</h6>
                 <div>
                     <button type="button" class="btn btn-outline-secondary btn-sm"
@@ -27,7 +27,7 @@
                             onclick="extraClearAllTypes()">清空</button>
                 </div>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div id="extraTypesContainer" class="d-flex flex-column gap-2">
                     <!-- 数据类型复选框动态渲染 -->
                     <div class="text-muted">加载中...</div>
@@ -37,15 +37,19 @@
                     勾选 <strong>Mark</strong> + <strong>Index</strong> 后，
                     因子可直接使用 <code>basis = (close - index_close) / index_close</code>；
                     <strong>Funding</strong> 是事件级（8h/部分 4h），忽略时间框架选择。
+                    <br>
+                    <strong>Macro/Sentiment</strong> 是<strong>全局数据</strong>（与交易对无关），
+                    下载时无需选择 symbol，所有交易对共享同一份文件。
+                    使用 yfinance + CoinGecko，按所选时间框架重采样并前向填充后落盘。
                 </div>
             </div>
         </div>
 
-        <div class="card mb-3">
-            <div class="card-header">
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h6 class="mb-0">⚙️ 时间范围与时间框架</h6>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div class="row mb-2">
                     <div class="col-6">
                         <label class="form-label small mb-1">开始日期</label>
@@ -91,11 +95,28 @@
             </div>
         </div>
 
-        <div class="card mb-3">
-            <div class="card-header">
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
+                <h6 class="mb-0">🌍 全局数据下载（Macro / Sentiment）</h6>
+            </div>
+            <div class="card-body shadow-sm border-0">
+                <div class="alert alert-info small mb-2">
+                    <i class="fas fa-globe"></i>
+                    Macro（DXY/SPX/IXIC/Gold/10Y）和 Sentiment（VIX/稳定币购买力）是<strong>全局数据</strong>，
+                    与交易对无关，所有币种共享同一份文件。只需下载一次即可。
+                </div>
+                <button class="btn btn-success btn-sm w-100" id="extraStartGlobalBtn"
+                        onclick="extraStartGlobalDownload()">
+                    🌍 下载全局数据
+                </button>
+            </div>
+        </div>
+
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h6 class="mb-0">🚀 单 symbol 下载</h6>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div class="mb-2">
                     <label class="form-label small mb-1">交易对</label>
                     <div class="d-flex align-items-center mb-1">
@@ -126,11 +147,11 @@
             </div>
         </div>
 
-        <div class="card mb-3">
-            <div class="card-header">
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h6 class="mb-0">📦 批量下载（按 symbol 多选）</h6>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div class="mb-2">
                     <div class="input-group input-group-sm">
                         <input type="text" class="form-control form-control-sm"
@@ -169,30 +190,30 @@
 
     <!-- 右侧：进度 + 清单 -->
     <div class="col-md-7">
-        <div class="card mb-3">
-            <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card mb-3 shadow-sm border-0">
+            <div class="card-header d-flex justify-content-between align-items-center shadow-sm border-0">
                 <h6 class="mb-0">📈 下载任务</h6>
                 <button class="btn btn-outline-secondary btn-sm"
                         onclick="extraRefreshTasks()">
                     <i class="fas fa-sync-alt"></i> 刷新
                 </button>
             </div>
-            <div class="card-body" style="max-height: 520px; overflow-y: auto;">
+            <div class="card-body shadow-sm border-0" style="max-height: 520px; overflow-y: auto;">
                 <div id="extraTaskList" class="d-flex flex-column gap-2">
                     <div class="text-muted small">暂无任务</div>
                 </div>
             </div>
         </div>
 
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card shadow-sm border-0">
+            <div class="card-header d-flex justify-content-between align-items-center shadow-sm border-0">
                 <h6 class="mb-0">🗂 本地已下载清单</h6>
                 <button class="btn btn-outline-secondary btn-sm"
                         onclick="extraRefreshInventory()">
                     <i class="fas fa-sync-alt"></i> 刷新
                 </button>
             </div>
-            <div class="card-body" style="max-height: 380px; overflow-y: auto;">
+            <div class="card-body shadow-sm border-0" style="max-height: 380px; overflow-y: auto;">
                 <div id="extraInventory">
                     <div class="text-muted small">加载中...</div>
                 </div>
@@ -448,6 +469,52 @@ document.addEventListener('change', (e) => {
     if (e.target.id === 'extraBatchSymbols') extraUpdateBatchStats();
 });
 
+async function extraStartGlobalDownload() {
+    const start_date = document.getElementById('extraStartDate').value;
+    const end_date = document.getElementById('extraEndDate').value;
+    const timeframe = document.getElementById('extraTimeframe').value;
+    if (!start_date || !end_date) { alert('请填写日期范围'); return; }
+
+    const btn = document.getElementById('extraStartGlobalBtn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 启动中...';
+    }
+
+    try {
+        const r = await fetch('/api/data/extra/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                symbol: '',
+                timeframe,
+                start_date,
+                end_date,
+                data_types: ['macro', 'sentiment'],
+            }),
+        });
+        const j = await r.json();
+        if (!j.success) throw new Error(j.error);
+        EXTRA_ACTIVE_TASKS.add(j.data.id);
+        await extraRefreshTasks();
+        ensureExtraPolling();
+
+        if (btn) {
+            btn.innerHTML = '✅ 已启动';
+            setTimeout(() => {
+                btn.innerHTML = '🌍 下载全局数据';
+                btn.disabled = false;
+            }, 2000);
+        }
+    } catch (e) {
+        alert('启动失败: ' + e.message);
+        if (btn) {
+            btn.innerHTML = '🌍 下载全局数据';
+            btn.disabled = false;
+        }
+    }
+}
+
 async function extraStartSingleDownload() {
     const symbol = document.getElementById('extraSymbol').value;
     if (!symbol) { alert('请选择交易对'); return; }
@@ -579,6 +646,8 @@ function renderExtraTaskCard(task) {
     };
     const st = statusMap[task.status] || { text: task.status, cls: 'secondary' };
     const subtasks = task.subtasks || {};
+    const canRetry = ['partial_failed', 'failed'].includes(task.status);
+    const failedCount = Object.values(subtasks).filter(s => s.status === 'failed').length;
     const subHtml = Object.keys(subtasks).map(dt => {
         const s = subtasks[dt];
         const ss = statusMap[s.status] || { text: s.status, cls: 'secondary' };
@@ -596,6 +665,11 @@ function renderExtraTaskCard(task) {
     }).join('');
     const kindBadge = task.kind === 'batch-child'
         ? '<span class="badge bg-info ms-1">batch</span>' : '';
+    const retryBtn = canRetry
+        ? `<button class="btn btn-outline-warning btn-sm ms-2" onclick="extraRetryTask('${task.id}')" title="重试 ${failedCount} 个失败子任务">
+               <i class="fas fa-redo"></i> 重试
+           </button>`
+        : '';
     return `
         <div class="border rounded p-2">
             <div class="d-flex justify-content-between align-items-center">
@@ -604,12 +678,31 @@ function renderExtraTaskCard(task) {
                     <small class="text-muted ms-1">${task.timeframe || ''}</small>
                     ${kindBadge}
                 </div>
-                <span class="badge bg-${st.cls}">${st.text} ${task.progress || 0}%</span>
+                <div class="d-flex align-items-center">
+                    <span class="badge bg-${st.cls}">${st.text} ${task.progress || 0}%</span>
+                    ${retryBtn}
+                </div>
             </div>
             <div class="small text-muted">${task.start_date} → ${task.end_date}</div>
             ${subHtml}
         </div>
     `;
+}
+
+async function extraRetryTask(taskId) {
+    try {
+        const r = await fetch(`/api/data/extra/retry/${taskId}`, { method: 'POST' });
+        const j = await r.json();
+        if (!j.success) {
+            alert('重试失败: ' + (j.error || '未知错误'));
+            return;
+        }
+        EXTRA_ACTIVE_TASKS.add(taskId);
+        await extraRefreshTasks();
+        ensureExtraPolling();
+    } catch (e) {
+        alert('重试请求失败: ' + e.message);
+    }
 }
 
 function ensureExtraPolling() {
@@ -661,35 +754,67 @@ async function extraRefreshInventory() {
         const j = await r.json();
         if (!j.success) throw new Error(j.error);
         const symbols = j.data.symbols || [];
-        if (symbols.length === 0) {
-            box.innerHTML = '<div class="text-muted small">尚未下载任何额外数据</div>';
-            return;
+        const globalItems = j.data.global || [];
+
+        let html = '';
+
+        if (globalItems.length > 0) {
+            html += `
+                <div class="mb-3">
+                    <h6 class="small fw-bold text-primary"><i class="fas fa-globe"></i> 全局数据（所有交易对共享）</h6>
+                    <div class="d-flex flex-wrap gap-2">
+                        ${globalItems.map(it => {
+                            const tf = it.timeframe || '';
+                            const size = it.size_kb != null ? ` · ${it.size_kb} KB` : '';
+                            return `<span class="badge bg-primary-subtle text-primary border">
+                                ${it.data_type}${tf ? ' · ' + tf : ''}${size}
+                            </span>`;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
         }
-        box.innerHTML = `
-            <div class="table-responsive">
-                <table class="table table-sm align-middle mb-0">
-                    <thead>
-                        <tr>
-                            <th>Symbol</th>
-                            <th>metrics</th>
-                            <th>funding</th>
-                            <th>mark</th>
-                            <th>index</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${symbols.map(renderInventoryRow).join('')}
-                    </tbody>
-                </table>
-            </div>
-        `;
+
+        if (symbols.length > 0) {
+            html += `
+                <h6 class="small fw-bold text-secondary">按交易对数据</h6>
+                <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0 table-hover text-center">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>metrics</th>
+                                <th>funding</th>
+                                <th>mark</th>
+                                <th>index</th>
+                                <th>liquidations</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${symbols.map(renderInventoryRow).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+
+        if (!html) {
+            html = '<div class="text-muted small">尚未下载任何额外数据</div>';
+        }
+        box.innerHTML = html;
     } catch (e) {
         box.innerHTML = `<div class="text-danger small">刷新失败: ${e.message}</div>`;
     }
 }
 
 function renderInventoryRow(entry) {
-    const slot = { metrics: [], funding: [], mark: [], index: [] };
+    const slot = {
+        metrics: [],
+        funding: [],
+        mark: [],
+        index: [],
+        liquidations: [],
+    };
     (entry.items || []).forEach(it => {
         if (slot[it.data_type] === undefined) return;
         slot[it.data_type].push(it);
@@ -709,6 +834,7 @@ function renderInventoryRow(entry) {
             <td>${cell(slot.funding)}</td>
             <td>${cell(slot.mark)}</td>
             <td>${cell(slot.index)}</td>
+            <td>${cell(slot.liquidations)}</td>
         </tr>
     `;
 }

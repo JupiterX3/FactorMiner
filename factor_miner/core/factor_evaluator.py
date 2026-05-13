@@ -218,17 +218,26 @@ class FactorStatistics:
         # 为与现有输出兼容保留该字段（原始收益波动）
         returns_std = returns.std()
 
-        # 使用分组组合收益序列估计“组合口径”Sharpe，避免分子/分母口径不一致
-        # 说明：单序列分位回测信息有限，此处给出近似口径，优于直接除以原始收益std
+        # 条件 Sharpe：仅计算有持仓（多头或空头）时段的收益序列，
+        # 排除中性期（既非多头也非空头）的零值，避免大量零值压低波动率导致 Sharpe 失真。
+        # 这给出的是"因子信号有效时段"的 Sharpe，而非全时段组合 Sharpe。
         factor_rank = factor_quantiles.astype(float)
         long_mask = factor_rank == factor_rank.max()
         short_mask = factor_rank == factor_rank.min()
-        ls_series = returns.where(long_mask, 0.0) - returns.where(short_mask, 0.0)
+        both_mask = long_mask | short_mask
+        ls_series_raw = returns.where(long_mask, -returns.where(short_mask, 0.0))
+        ls_series = ls_series_raw.loc[both_mask]
         ls_std = ls_series.std()
         if ls_std is None or (not np.isfinite(ls_std)) or ls_std <= 0:
             sharpe_ratio = np.nan
         else:
             sharpe_ratio = ls_series.mean() / ls_std
+
+        full_ls_std = ls_series_raw.std()
+        if full_ls_std is None or (not np.isfinite(full_ls_std)) or full_ls_std <= 0:
+            sharpe_ratio_full = np.nan
+        else:
+            sharpe_ratio_full = ls_series_raw.mean() / full_ls_std
         
         return {
             'long_short_return': long_short_return,
@@ -236,6 +245,7 @@ class FactorStatistics:
             'short_return': short_return,
             'returns_std': returns_std,
             'sharpe_ratio': sharpe_ratio,
+            'sharpe_ratio_full': sharpe_ratio_full,
             'group_returns': group_returns.to_dict()
         }
     
@@ -264,14 +274,16 @@ class FactorStatistics:
     def calculate_factor_decay(self, factor: pd.Series, returns: pd.Series, 
                              max_lag: int = 10) -> Dict[str, float]:
         """
-        计算因子衰减特征
+        计算因子衰减特征（无前瞻偏差版本）
         
-        分析因子值对不同期限未来收益的预测能力衰减情况。
-        lag=0: 因子值预测当期收益
-        lag=N: 因子值预测N期后的收益
+        分析 t-1 时刻因子值对不同期限未来收益的预测能力衰减情况。
+        lag=0: t-1 因子预测 t 收益（等价于 factor.shift(1) vs returns）
+        lag=N: t-1 因子预测 t+N 收益（等价于 factor.shift(1) vs returns.shift(N)）
+        
+        所有计算仅使用历史数据，不引入未来信息。
         
         Args:
-            factor: 因子值序列
+            factor: 因子值序列（原始，未 shift）
             returns: 收益率序列
             max_lag: 最大滞后期数
             
@@ -280,12 +292,14 @@ class FactorStatistics:
         """
         ic_decay = {}
         
+        lagged_factor = factor.shift(1)
+        
         for lag in range(max_lag + 1):
             if lag == 0:
-                ic = self.calculate_ic(factor, returns)
+                ic = self.calculate_ic(lagged_factor, returns)
             else:
-                lagged_returns = returns.shift(-lag)
-                ic = self.calculate_ic(factor, lagged_returns)
+                future_returns = returns.shift(lag)
+                ic = self.calculate_ic(lagged_factor, future_returns)
             
             ic_decay[f'ic_lag_{lag}'] = ic
         
@@ -358,34 +372,40 @@ class FactorStatistics:
     def calculate_factor_win_rate(self, factor: pd.Series, returns: pd.Series, 
                                 threshold: float = 0.5) -> float:
         """
-        计算因子胜率（修复：使用历史因子预测当期收益）
+        计算因子胜率（多空方向正确率）
+        
+        当因子值 > 0 时预测收益为正（做多），因子值 < 0 时预测收益为负（做空），
+        因子值 = 0 时视为无信号，不计入胜率统计。
         
         Args:
             factor: 因子值序列
             returns: 收益率序列
-            threshold: 胜率阈值
+            threshold: 未使用，保留兼容
             
         Returns:
-            float: 胜率
+            float: 胜率（0~1）
         """
-        # 对齐数据
         factor = factor.dropna()
         returns = returns.loc[factor.index]
         
         if len(factor) < 10:
             return np.nan
         
-        # 因子与收益已在上游完成时点对齐，这里直接计算方向一致率
         factor_sign = np.sign(factor)
         returns_sign = np.sign(returns)
         
-        # 计算胜率（历史因子预测当期收益的正确性）
-        win_rate = (factor_sign == returns_sign).mean()
+        signal_mask = factor_sign != 0
+        if signal_mask.sum() < 10:
+            return np.nan
+        
+        win_rate = (factor_sign[signal_mask] == returns_sign[signal_mask]).mean()
         
         return win_rate
     
     def comprehensive_factor_analysis(self, factor: pd.Series, returns: pd.Series,
-                                    factor_name: str = "factor") -> Dict[str, Union[float, Dict]]:
+                                    factor_name: str = "factor",
+                                    ic_decay_max_lag: int = 5,
+                                    n_groups: int = 5) -> Dict[str, Union[float, Dict]]:
         """
         综合因子分析
         
@@ -393,6 +413,8 @@ class FactorStatistics:
             factor: 因子值序列
             returns: 收益率序列
             factor_name: 因子名称
+            ic_decay_max_lag: IC衰减最大滞后期数
+            n_groups: 分组数量
             
         Returns:
             Dict: 包含所有统计指标的综合分析结果
@@ -411,7 +433,7 @@ class FactorStatistics:
         analysis['mutual_information'] = self.calculate_mutual_information(aligned_factor, returns)
         
         # 因子收益率分析
-        factor_returns = self.calculate_factor_returns(aligned_factor, returns)
+        factor_returns = self.calculate_factor_returns(aligned_factor, returns, n_groups=n_groups)
         analysis.update(factor_returns)
         
         # 因子特征
@@ -430,9 +452,9 @@ class FactorStatistics:
         
         # 因子衰减特征（使用原始factor，因为需要分析对不同期限收益的预测能力）
         # 注意：这里不shift，因为是分析因子对不同滞后期收益的预测能力
-        factor_decay = self.calculate_factor_decay(factor, returns, max_lag=5)
+        factor_decay = self.calculate_factor_decay(factor, returns, max_lag=ic_decay_max_lag)
         analysis['decay_rate'] = factor_decay.get('decay_rate')
-        for lag in range(1, 6):
+        for lag in range(0, ic_decay_max_lag + 1):
             analysis[f'ic_lag_{lag}'] = factor_decay.get(f'ic_lag_{lag}')
         
         return analysis
@@ -478,6 +500,10 @@ class FactorStatistics:
         Returns:
             pd.Series: 滚动IC序列
         """
+        common_idx = factor.index.intersection(returns.index)
+        factor = factor.reindex(common_idx)
+        returns = returns.reindex(common_idx)
+        
         rolling_ic = pd.Series(index=factor.index, dtype=float)
         
         for i in range(window, len(factor)):
@@ -764,7 +790,7 @@ class CrossSectionalEvaluator:
     def __init__(
         self,
         n_groups: int = 5,
-        normalize_method: str = 'rank_centered',
+        normalize_method: str = 'rank',
         predict_step: int = 1,
         sample_step: int = 1,
         base_timeframe: str = '1h',
@@ -807,6 +833,7 @@ class CrossSectionalEvaluator:
                 - 'completed': 仅使用已完成的高周期K线
                 - 'intrabar': 使用当前高周期桶内的盘中快照（近似）
                 - 'intrabar_strict': 严格按交易所边界做盘中重放（高精度，较慢）
+                - 'offset_resample': 偏移重采样，按base周期偏移构造多组高周期K线（高精度，快速扩展样本）
             max_lookback: intrabar_strict 模式回放时保留的最大历史bar数量
             min_coverage: 每个截面的最小覆盖率阈值（有效样本/截面样本）
             min_valid_count: 每个截面的最小有效样本数阈值
@@ -826,7 +853,8 @@ class CrossSectionalEvaluator:
         self.base_timeframe = str(base_timeframe or '1h').lower()
         self.factor_timeframe = str(factor_timeframe or self.base_timeframe).lower()
         self.factor_bar_mode = str(factor_bar_mode or 'completed').lower()
-        if self.factor_bar_mode not in ('completed', 'intrabar', 'intrabar_strict'):
+        valid_modes = ('completed', 'intrabar', 'intrabar_strict', 'offset_resample')
+        if self.factor_bar_mode not in valid_modes:
             self.factor_bar_mode = 'completed'
         try:
             self.max_lookback = max(1, int(max_lookback))
@@ -985,6 +1013,8 @@ class CrossSectionalEvaluator:
         说明：使用右闭右标注 (a, b]，并丢弃最后未完成桶。
         """
         freq = self._timeframe_to_pandas_freq(timeframe)
+        ohlcv_cols = ['open', 'high', 'low', 'close', 'volume']
+        extra_cols = [c for c in market_data.columns if c not in ohlcv_cols]
         agg = {
             'open': 'first',
             'high': 'max',
@@ -992,7 +1022,15 @@ class CrossSectionalEvaluator:
             'close': 'last',
             'volume': 'sum',
         }
-        bars = market_data[['open', 'high', 'low', 'close', 'volume']].resample(
+        _FLOW_EXTRA = frozenset({
+            'taker_buy_base', 'taker_buy_quote',
+        })
+        for col in extra_cols:
+            if col in _FLOW_EXTRA:
+                agg[col] = 'sum'
+            else:
+                agg[col] = 'last'
+        bars = market_data[ohlcv_cols + extra_cols].resample(
             freq, label='right', closed='right'
         ).agg(agg)
         bars = bars.dropna(subset=['open', 'high', 'low', 'close'])
@@ -1006,6 +1044,89 @@ class CrossSectionalEvaluator:
         except Exception:
             pass
         return bars
+
+    def _build_offset_resampled_factor_series(
+        self,
+        market_data: pd.DataFrame,
+        factor_id: str,
+        engine,
+    ) -> Optional[pd.Series]:
+        """
+        偏移重采样（offset resample）：
+        将低周期K线按不同偏移量重采样为高周期K线，分别计算因子后交错合并。
+
+        例如 base=15m, factor=1h 时，构造 4 组偏移1h K线：
+          offset 0:   [0:00-1:00), [1:00-2:00), ...
+          offset 15m: [0:15-1:15), [1:15-2:15), ...
+          offset 30m: [0:30-1:30), [1:30-2:30), ...
+          offset 45m: [0:45-1:45), [1:45-2:45), ...
+        每组都是完整的1h bar，因子计算精度等同于 completed 模式，
+        但样本量扩展 n_offsets 倍。
+
+        非 OHLCV 列（open_interest / funding_rate / lsr_* 等）也会被重采样：
+        流量型列（volume, taker_buy_base）用 sum；存量型列（open_interest,
+        funding_rate, lsr_*, mark_close, index_close, basis）用 last。
+        """
+        base_delta = self._timeframe_to_timedelta(self.base_timeframe)
+        factor_delta = self._timeframe_to_timedelta(self.factor_timeframe)
+        if base_delta is None or factor_delta is None:
+            return None
+        if factor_delta <= base_delta:
+            return None
+        if factor_delta % base_delta != pd.Timedelta(0):
+            return None
+        n_offsets = int(factor_delta / base_delta)
+        if n_offsets < 2:
+            return None
+
+        ohlcv_cols = ['open', 'high', 'low', 'close', 'volume']
+        extra_cols = [c for c in market_data.columns if c not in ohlcv_cols]
+        base = market_data[ohlcv_cols + extra_cols].copy()
+        if base.empty:
+            return None
+
+        factor_freq = self._timeframe_to_pandas_freq(self.factor_timeframe)
+        agg_dict = {
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum',
+        }
+        _FLOW_EXTRA = frozenset({
+            'taker_buy_base', 'taker_buy_quote',
+        })
+        for col in extra_cols:
+            if col in _FLOW_EXTRA:
+                agg_dict[col] = 'sum'
+            else:
+                agg_dict[col] = 'last'
+
+        all_series = []
+        for offset_idx in range(n_offsets):
+            offset = offset_idx * base_delta
+            shifted = base.copy()
+            shifted.index = shifted.index + offset
+            resampled = shifted.resample(
+                factor_freq, label='right', closed='right'
+            ).agg(agg_dict)
+            resampled = resampled.dropna(subset=['open', 'high', 'low', 'close'])
+            if resampled.empty:
+                continue
+            resampled.index = resampled.index - offset
+
+            factor_raw = self._to_series(
+                engine.compute_single_factor(factor_id, resampled)
+            )
+            if factor_raw is not None and not factor_raw.empty:
+                all_series.append(factor_raw)
+
+        if not all_series:
+            return None
+
+        combined = pd.concat(all_series).sort_index()
+        combined = combined[~combined.index.duplicated(keep='last')]
+        return combined
 
     def _build_intrabar_snapshots(self, market_data: pd.DataFrame, timeframe: str) -> pd.DataFrame:
         """
@@ -1037,8 +1158,10 @@ class CrossSectionalEvaluator:
 
     def _apply_liquidity_filter(self, data_dict: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
         """
-        按日均成交额过滤低流动性标的：
+        按滚动月均成交额过滤低流动性标的：
         liquidity_filter_ratio=0.5 表示过滤后 50%，仅保留前 50%。
+        使用30日滚动窗口计算动态成交额，取中位数作为该标的的代表流动性，
+        避免全段均值被早期低流动性时期拉低导致误判。
         """
         if (not self.enable_data_cleaning) or self.liquidity_filter_ratio <= 0:
             return data_dict
@@ -1046,10 +1169,16 @@ class CrossSectionalEvaluator:
         for symbol, md in data_dict.items():
             if md is None or md.empty or ('close' not in md.columns) or ('volume' not in md.columns):
                 continue
-            amount = (md['close'] * md['volume']).replace([np.inf, -np.inf], np.nan).dropna()
+            amount = (md['close'] * md['volume']).replace([np.inf, -np.inf], np.nan)
             if len(amount) == 0:
                 continue
-            liquidity.append((symbol, float(amount.mean())))
+            if len(amount) >= 30:
+                rolling_amount = amount.rolling(window=30, min_periods=10).mean()
+                rep_liquidity = float(rolling_amount.median())
+            else:
+                rep_liquidity = float(amount.mean())
+            if np.isfinite(rep_liquidity):
+                liquidity.append((symbol, rep_liquidity))
         if len(liquidity) < 2:
             return data_dict
         keep_ratio = 1.0 - self.liquidity_filter_ratio
@@ -1174,10 +1303,9 @@ class CrossSectionalEvaluator:
         shift_n = default_trade_lag
 
         try:
-            if not hasattr(engine, "storage") or engine.storage is None:
-                return int(shift_n)
-
-            factor_def = engine.storage.load_factor_definition(factor_id)
+            from factor_miner.core.factor_repository import FactorRepository
+            _repo = FactorRepository()
+            factor_def = _repo.load_definition(factor_id)
             if not factor_def:
                 return int(shift_n)
 
@@ -1240,7 +1368,8 @@ class CrossSectionalEvaluator:
         self, 
         data_dict: Dict[str, pd.DataFrame],
         factor_id: str,
-        engine
+        engine,
+        eval_start_date: Optional[pd.Timestamp] = None,
     ) -> pd.DataFrame:
         """
         准备截面评估数据
@@ -1249,6 +1378,8 @@ class CrossSectionalEvaluator:
             data_dict: {symbol: market_data} 字典
             factor_id: 因子ID
             engine: 因子引擎
+            eval_start_date: 评估起始日期。提供时，因子计算使用全部数据（含预热区），
+                但仅输出该日期之后的行用于评估。用于 OOS 模式下保留 lookback 预热。
             
         Returns:
             DataFrame with columns: [date, symbol, factor_value, returns]
@@ -1281,6 +1412,10 @@ class CrossSectionalEvaluator:
                 if use_same_tf:
                     factor_input = market_data
                     factor_on_base = self._to_series(engine.compute_single_factor(factor_id, factor_input))
+                elif self.factor_bar_mode == 'offset_resample':
+                    factor_on_base = self._build_offset_resampled_factor_series(
+                        market_data, factor_id, engine
+                    )
                 elif self.factor_bar_mode == 'intrabar_strict':
                     factor_on_base = self._build_intrabar_strict_factor_series(
                         market_data, factor_id, engine
@@ -1329,6 +1464,13 @@ class CrossSectionalEvaluator:
         if self.sample_step > 1 and not df.empty:
             sampled_dates = pd.DatetimeIndex(sorted(df['date'].drop_duplicates())).to_series().iloc[::self.sample_step]
             df = df[df['date'].isin(sampled_dates.values)]
+        if eval_start_date is not None and not df.empty:
+            eval_start = pd.Timestamp(eval_start_date)
+            if df['date'].dt.tz is not None and eval_start.tz is None:
+                eval_start = eval_start.tz_localize(df['date'].dt.tz)
+            elif df['date'].dt.tz is None and eval_start.tz is not None:
+                eval_start = eval_start.tz_localize(None)
+            df = df[df['date'] >= eval_start]
         return df
     
     def calculate_cross_sectional_ic(
@@ -1346,6 +1488,7 @@ class CrossSectionalEvaluator:
         Returns:
             Dict: 包含IC均值、IC标准差、ICIR等
         """
+        cs_data = cs_data.sort_values('date')
         ic_series = []
         date_counts = []
         coverage_series = []
@@ -1572,7 +1715,6 @@ class CrossSectionalEvaluator:
         self, 
         cs_data: pd.DataFrame,
         timeframe: Optional[str] = None,
-        transaction_cost: float = 0.001
     ) -> Dict[str, float]:
         """
         计算截面多空收益
@@ -1582,22 +1724,32 @@ class CrossSectionalEvaluator:
         Args:
             cs_data: 截面数据 DataFrame
             timeframe: 时间框架
-            transaction_cost: 单边交易成本费率（默认0.001），用于计算扣成本后指标
             
         Returns:
             Dict: 包含多空收益、胜率、夏普比率等
         """
+        cs_data = cs_data.sort_values('date')
+        transaction_cost = self.transaction_cost
         period_returns = []
         coverage_series = []
         monotonicity_values = []
+        group_mono_ratios = []
+        group_mono_perfect_count = 0
+        group_mono_total_count = 0
         turnover_values = []
         fsc_values = []
         prev_long_symbols = None
         prev_short_symbols = None
         prev_exposure = None
         
+        min_group_samples = max(
+            int(self.min_valid_count),
+            int(self.n_groups) * int(self.min_group_size),
+            10,
+        )
+
         for date, group in cs_data.groupby('date'):
-            if len(group) < self.n_groups:
+            if len(group) < min_group_samples:
                 continue
             
             total_count = len(group)
@@ -1606,10 +1758,10 @@ class CrossSectionalEvaluator:
             coverage = (valid_count / total_count) if total_count > 0 else 0.0
             if coverage < self.min_coverage or valid_count < self.min_valid_count:
                 continue
-            if valid_count < self.n_groups * self.min_group_size:
+            if valid_count < min_group_samples:
                 continue
             group = group.loc[valid_mask].copy()
-            if len(group) < self.n_groups:
+            if len(group) < min_group_samples:
                 continue
             
             try:
@@ -1653,6 +1805,17 @@ class CrossSectionalEvaluator:
                                 monotonicity_values.append(float(mono))
                         except Exception:
                             pass
+
+                    if len(group_returns) >= 2 and long_short != 0:
+                        n_adj = len(group_returns) - 1
+                        diffs = np.diff(group_returns.values)
+                        direction = 1.0 if long_short > 0 else -1.0
+                        consistent = np.sum(np.sign(diffs) == direction)
+                        ratio = consistent / n_adj
+                        group_mono_ratios.append(float(ratio))
+                        group_mono_total_count += 1
+                        if consistent == n_adj:
+                            group_mono_perfect_count += 1
 
                     if self.compute_fsc:
                         exposure = group.set_index('symbol')['factor_normalized'].astype(float)
@@ -1744,6 +1907,10 @@ class CrossSectionalEvaluator:
             float(np.mean(np.asarray(monotonicity_values) > 0)) if monotonicity_values else np.nan
         )
         fsc_mean = float(np.mean(fsc_values)) if fsc_values else np.nan
+        group_mono_ratio = float(np.mean(group_mono_ratios)) if group_mono_ratios else np.nan
+        group_mono_perfect_ratio = (
+            float(group_mono_perfect_count / group_mono_total_count) if group_mono_total_count > 0 else np.nan
+        )
         
         result = {
             'long_short_return': avg_long_short,
@@ -1760,21 +1927,27 @@ class CrossSectionalEvaluator:
             'monotonicity_mean': monotonicity_mean,
             'monotonicity_abs_mean': monotonicity_abs_mean,
             'monotonicity_positive_ratio': monotonicity_positive_ratio,
+            'group_mono_ratio': group_mono_ratio,
+            'group_mono_perfect_ratio': group_mono_perfect_ratio,
             'fsc': fsc_mean,
             'avg_coverage': float(np.mean(coverage_series)) if coverage_series else np.nan,
         }
 
         if turnover_mean is not None and np.isfinite(turnover_mean) and turnover_mean > 0:
             turnover_cost_per_period = float(turnover_mean) * transaction_cost
+            turnover_estimated = False
         elif np.isfinite(avg_long_short):
             turnover_cost_per_period = 2.0 * transaction_cost
+            turnover_estimated = True
         else:
             turnover_cost_per_period = np.nan
+            turnover_estimated = True
 
         if np.isfinite(avg_long_short) and np.isfinite(turnover_cost_per_period):
             avg_ls_after_cost = float(avg_long_short) - turnover_cost_per_period
             result['long_short_return_after_cost'] = avg_ls_after_cost
             result['turnover_cost_per_period'] = turnover_cost_per_period
+            result['turnover_estimated'] = turnover_estimated
 
             if returns_std is not None and np.isfinite(returns_std) and returns_std > 0:
                 result['sharpe_ratio_after_cost'] = avg_ls_after_cost / float(returns_std)
@@ -1797,6 +1970,7 @@ class CrossSectionalEvaluator:
         else:
             result['long_short_return_after_cost'] = np.nan
             result['turnover_cost_per_period'] = np.nan
+            result['turnover_estimated'] = turnover_estimated
             result['sharpe_ratio_after_cost'] = np.nan
             result['annualized_sharpe_after_cost'] = np.nan
             result['total_return_after_cost'] = np.nan
@@ -1811,8 +1985,14 @@ class CrossSectionalEvaluator:
         max_lag: Optional[int] = None
     ) -> Dict[str, Union[float, List[Dict[str, float]]]]:
         """
-        计算截面 IC 衰减曲线（可选复杂指标）：
+        计算截面 IC 衰减曲线：
         对每个 lag，按 symbol 将 returns 向后平移，再做按日截面 Rank IC。
+
+        注意 lag 语义：cs_data 中的 returns 已经是 future_returns（t→t+predict_step），
+        因此 lag=k 衡量的是因子对 t+predict_step+k 期收益的预测能力，而非对 t+k 期。
+        这意味着 IC 衰减曲线反映的是"因子信号的持续性/自相关衰减"，
+        而非"因子对不同绝对 horizon 收益的预测力"。若需后者，应在
+        prepare_cross_sectional_data 中构造不同 predict_step 的 returns。
         """
         if max_lag is None:
             max_lag = self.ic_decay_max_lag
@@ -1870,7 +2050,8 @@ class CrossSectionalEvaluator:
         data_dict: Dict[str, pd.DataFrame],
         factor_id: str,
         engine,
-        timeframe: Optional[str] = None
+        timeframe: Optional[str] = None,
+        eval_start_date: Optional[pd.Timestamp] = None,
     ) -> Dict:
         """
         综合截面评估
@@ -1879,11 +2060,15 @@ class CrossSectionalEvaluator:
             data_dict: {symbol: market_data} 字典
             factor_id: 因子ID
             engine: 因子引擎
+            timeframe: 时间框架
+            eval_start_date: 评估起始日期。提供时，因子计算使用全部数据（含预热区），
+                但仅评估该日期之后的截面。用于 OOS 模式下保留 lookback 预热，
+                避免大窗口因子在 OOS 段因子值全 NaN。
             
         Returns:
             Dict: 综合评估结果
         """
-        cs_data = self.prepare_cross_sectional_data(data_dict, factor_id, engine)
+        cs_data = self.prepare_cross_sectional_data(data_dict, factor_id, engine, eval_start_date=eval_start_date)
         
         if cs_data.empty:
             return {
@@ -1893,7 +2078,7 @@ class CrossSectionalEvaluator:
             }
         
         ic_results = self.calculate_cross_sectional_ic(cs_data)
-        return_results = self.calculate_cross_sectional_returns(cs_data, timeframe=timeframe, transaction_cost=self.transaction_cost)
+        return_results = self.calculate_cross_sectional_returns(cs_data, timeframe=timeframe)
         ic_decay_results = None
         if self.compute_ic_decay_curve:
             try:
@@ -1949,6 +2134,8 @@ class CrossSectionalEvaluator:
                 'long_short_return_after_cost': return_results.get('long_short_return_after_cost'),
                 'sharpe_ratio': return_results.get('sharpe_ratio'),
                 'sharpe_ratio_after_cost': return_results.get('sharpe_ratio_after_cost'),
+                'annualized_sharpe': return_results.get('annualized_sharpe'),
+                'annualized_sharpe_after_cost': return_results.get('annualized_sharpe_after_cost'),
                 'win_rate': return_results.get('win_rate'),
                 'win_rate_after_cost': return_results.get('win_rate_after_cost'),
                 'max_drawdown': return_results.get('max_drawdown'),
@@ -1959,6 +2146,8 @@ class CrossSectionalEvaluator:
                 'turnover_cost_per_period': return_results.get('turnover_cost_per_period'),
                 'fsc': return_results.get('fsc'),
                 'monotonicity_abs_mean': return_results.get('monotonicity_abs_mean'),
+                'group_mono_ratio': return_results.get('group_mono_ratio'),
+                'group_mono_perfect_ratio': return_results.get('group_mono_perfect_ratio'),
                 'avg_coverage': avg_coverage_returns,
                 'skip_rate': returns_skip_rate,
             },
@@ -2032,7 +2221,7 @@ def evaluate_cross_sectional(
         predict_step: 预测时间步（N），收益定义为 t -> t+N
         sample_step: 采样时间步（M），每隔 M 个时间点参与评估
         factor_timeframe: 因子计算时间框架（为空则与 timeframe 相同）
-        factor_bar_mode: 因子K线口径 ('completed' | 'intrabar' | 'intrabar_strict')
+        factor_bar_mode: 因子K线口径 ('completed' | 'intrabar' | 'intrabar_strict' | 'offset_resample')
         max_lookback: intrabar_strict 模式回放时保留的最大历史bar数量
         min_coverage: 每个截面的最小覆盖率阈值（有效样本/截面样本）
         min_valid_count: 每个截面的最小有效样本数阈值

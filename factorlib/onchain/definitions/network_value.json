@@ -1,0 +1,21 @@
+{
+  "factor_id": "network_value",
+  "name": "网络价值指标",
+  "description": "Network Value - 流通市值 = circulating_supply × close。需要链上 circulating_supply 数据（CoinGecko Enterprise API 或其他链上数据源）。",
+  "category": "onchain",
+  "subcategory": "valuation",
+  "computation_type": "function",
+  "computation_data": {
+    "function_file": "onchain/functions/network_value.py",
+    "entry_point": "calculate"
+  },
+  "parameters": {},
+  "dependencies": [],
+  "output_type": "series",
+  "metadata": {
+    "created_at": "2025-08-09T23:35:39.330679",
+    "migrated_to_onchain": "2026-04-27",
+    "requires_extras": ["onchain"],
+    "data_source_note": "需要 circulating_supply（流通供应量）数据。CoinGecko Enterprise API 提供 /coins/{id}/circulating_supply_chart 端点。免费 API 不支持此端点。"
+  }
+}

@@ -1,7 +1,7 @@
 {
   "factor_id": "basis_zscore",
   "name": "基差 z-score",
-  "description": "basis = (close - index_close) / index_close，相对自身的 z-score。正向高=期货升水；负向高=期货贴水。",
+  "description": "basis = (mark_close - index_close) / index_close，相对自身的 z-score。正向高=期货升水；负向高=期货贴水。使用 mark_close 而非 close 以避免 close 同时出现在因子和收益率计算中导致的机械性虚假相关。",
   "category": "derivatives",
   "subcategory": "basis",
   "computation_type": "function",
@@ -23,7 +23,7 @@
     "created_at": "2026-04-23T12:43:43.221821",
     "source_family": "derivatives",
     "requires_extras": [
-      "derivatives"
+      "basis"
     ]
   }
 }

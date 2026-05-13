@@ -18,6 +18,16 @@
 .factor-category .form-check-input {
     margin-top: 0.15rem;
 }
+#rangeSlider {
+    overflow: visible;
+}
+#rangeSlider .noUi-tooltip {
+    z-index: 1;
+}
+#oosStartDate {
+    position: relative;
+    z-index: 10;
+}
 .factor-category .form-check-label {
     cursor: pointer;
 }
@@ -38,18 +48,18 @@
 
 <div class="row">
     <div class="col-12">
-        <h2>📊 截面因子评估</h2>
+        <h2 class="page-title mb-4">📊 截面因子评估</h2>
         <p class="text-muted">多币种截面评估：每个时间点按因子值对币种排名分组，计算多空收益</p>
     </div>
 </div>
 
 <div class="row">
     <div class="col-md-4">
-        <div class="card">
-            <div class="card-header">
+        <div class="card shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h5><i class="fas fa-cog me-2"></i>评估参数</h5>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <form id="csEvaluationForm">
                     <div class="mb-3">
                         <label class="form-label">因子（可多选，按数据需求分类）</label>
@@ -116,6 +126,72 @@
                                 列表中隐藏稳定币交易对
                             </label>
                         </div>
+                        <hr class="my-2">
+                        <div>
+                            <label class="form-label fw-bold"><i class="fas fa-filter me-1"></i>币种池筛选</label>
+                            <div class="form-text small mb-2">基于 CoinGecko 市值排名 + 30天成交额 + 上市时间筛选，结果可直接导入上方交易对列表</div>
+                            <div class="row g-2 mb-2">
+                                <div class="col-4">
+                                    <label class="form-label small text-muted mb-0">市值排名 ≤</label>
+                                    <input type="number" class="form-control form-control-sm" id="universeMinRank" value="200" min="10" max="500" step="1">
+                                </div>
+                                <div class="col-4">
+                                    <label class="form-label small text-muted mb-0">30日均额 ≥ (USD)</label>
+                                    <input type="number" class="form-control form-control-sm" id="universeMinVolume" value="1000000" min="0" step="any">
+                                </div>
+                                <div class="col-4">
+                                    <label class="form-label small text-muted mb-0">上市天数 ≥</label>
+                                    <input type="number" class="form-control form-control-sm" id="universeMinAge" value="90" min="1" step="1">
+                                </div>
+                            </div>
+                            <div class="row g-2 mb-2">
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="universeExcludeStable" checked>
+                                        <label class="form-check-label small" for="universeExcludeStable">排除稳定币</label>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="universeExcludeBlack" checked>
+                                        <label class="form-check-label small" for="universeExcludeBlack">排除黑名单(WBTC等)</label>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2 mb-2">
+                                <button type="button" class="btn btn-outline-primary btn-sm flex-fill" id="universeFilterBtn" onclick="runUniverseFilter()">
+                                    <i class="fas fa-search me-1"></i>筛选币种池
+                                </button>
+                                <button type="button" class="btn btn-outline-success btn-sm" id="universeExportBtn" style="display:none;" onclick="exportUniverseToSymbolList()">
+                                    <i class="fas fa-file-export me-1"></i>导出币种池
+                                </button>
+                            </div>
+                            <div id="universeFilterStatus" class="small text-muted" style="display:none;"></div>
+                            <div id="universeFilterResults" class="mt-2" style="display:none;">
+                                <div class="d-flex justify-content-between align-items-center mb-1">
+                                    <span class="small fw-bold">筛选结果: <span id="universeResultCount">0</span> 个币种</span>
+                                    <div class="btn-group btn-group-sm">
+                                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="applyUniverseToSymbols()">应用至交易对</button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleUniverseDetail()">详情</button>
+                                    </div>
+                                </div>
+                                <div id="universeDetailTable" style="display:none; max-height: 250px; overflow-y: auto;">
+                                    <table class="table table-sm table-bordered table-hover align-middle text-center mb-0" style="font-size: 0.8rem;">
+                                        <thead class="table-light sticky-top">
+                                            <tr>
+                                                <th>#</th>
+                                                <th>交易对</th>
+                                                <th>市值排名</th>
+                                                <th>30日均额</th>
+                                                <th>上市天数</th>
+                                                <th>首交易日</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="universeDetailBody"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     
                     <div class="mb-3">
@@ -152,10 +228,11 @@
                             <option value="completed" selected>仅已完成K线（推荐）</option>
                             <option value="intrabar">盘中快照（仅适用于单bar因子，窗口因子有误差）</option>
                             <option value="intrabar_strict">严格整点重放（高精度，较慢，推荐窗口因子使用）</option>
+                            <option value="offset_resample">偏移重采样（高精度，快速扩展样本，需base周期 &lt; factor周期）</option>
                         </select>
                         <div class="form-text small">
-                            intrabar 适合 <code>body_ratio</code>、<code>volume</code> 等单bar因子；
-                            MA/EMA/RSI 等窗口因子必须使用 strict 模式。
+                            <span id="barModeHintDefault">intrabar 适合 <code>body_ratio</code>、<code>volume</code> 等单bar因子；MA/EMA/RSI 等窗口因子必须使用 strict 模式。</span>
+                            <span id="barModeHintOffsetResample" style="display:none;">偏移重采样将低周期K线按不同偏移量重采样为高周期K线，每组都是完整的高周期bar，因子精度等同于 completed 模式，样本量扩展 <code>factor周期/base周期</code> 倍。例如 base=15m + factor=1h 时样本量扩展4倍。</span>
                         </div>
                     </div>
 
@@ -171,7 +248,12 @@
                         <div class="row g-2 mb-2">
                             <div class="col-6">
                                 <label class="form-label small">开始日期</label>
-                                <input type="date" class="form-control form-control-sm" id="startDate">
+                                <div class="input-group input-group-sm">
+                                    <input type="date" class="form-control" id="startDate">
+                                    <button type="button" class="btn btn-outline-secondary" onclick="recommendStartDate()" title="根据已选交易对的数据覆盖范围，推荐能覆盖所有交易对的最早开始日期">
+                                        <i class="fas fa-magic"></i>
+                                    </button>
+                                </div>
                             </div>
                             <div class="col-6">
                                 <label class="form-label small">结束日期</label>
@@ -203,8 +285,8 @@
                     <div class="mb-3">
                         <label class="form-label">分组数量</label>
                         <select class="form-select" id="nGroupsSelect">
-                            <option value="3">3组</option>
-                            <option value="5" selected>5组</option>
+                            <option value="3" selected>3组</option>
+                            <option value="5">5组</option>
                             <option value="10">10组</option>
                         </select>
                         <div class="form-text small">按因子值将币种分成N组，做多最高组、做空最低组</div>
@@ -215,7 +297,7 @@
                         <div class="row g-2">
                             <div class="col-4">
                                 <input type="number" class="form-control form-control-sm"
-                                       id="minCoverageInput" min="0" max="1" step="0.01" value="0.30" placeholder="0.30">
+                                       id="minCoverageInput" min="0" max="1" step="any" value="0.30" placeholder="0.30">
                                 <div class="form-text small">最小覆盖率</div>
                             </div>
                             <div class="col-4">
@@ -230,7 +312,7 @@
                             </div>
                         </div>
                         <div class="form-check mt-2">
-                            <input class="form-check-input" type="checkbox" id="treatZeroAsInvalidCheck" checked>
+                            <input class="form-check-input" type="checkbox" id="treatZeroAsInvalidCheck">
                             <label class="form-check-label small" for="treatZeroAsInvalidCheck">
                                 将因子 0 值视为无效信号（稀疏因子推荐）
                             </label>
@@ -263,6 +345,34 @@
                         </div>
                     </div>
                     
+                    <div class="mb-3">
+                        <label class="form-label">数据清洗</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="enableDataCleaningCheck">
+                            <label class="form-check-label small" for="enableDataCleaningCheck">
+                                启用数据清洗（零量过滤 + 流动性过滤）
+                            </label>
+                        </div>
+                        <div id="dataCleaningOptions" class="mt-2 ms-3" style="display:none;">
+                            <div class="form-check mb-2">
+                                <input class="form-check-input" type="checkbox" id="removeZeroVolumeCheck" checked>
+                                <label class="form-check-label small" for="removeZeroVolumeCheck">
+                                    过滤零成交量K线
+                                </label>
+                            </div>
+                            <div class="row g-2 align-items-center">
+                                <div class="col-8">
+                                    <input type="number" class="form-control form-control-sm"
+                                           id="liquidityFilterRatioInput" min="0" max="1" step="any" value="0.50" placeholder="0.50">
+                                    <div class="form-text small">流动性过滤比例（0=不过滤，0.5=过滤后50%低流动性币种）</div>
+                                </div>
+                                <div class="col-4">
+                                    <span class="small text-muted" id="liquidityFilterHint">保留前50%</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <label class="form-label">并行策略</label>
                         <select class="form-select form-select-sm" id="parallelBackendSelect">
@@ -306,11 +416,11 @@
             </div>
         </div>
 
-        <div class="card mt-3">
-            <div class="card-header">
+        <div class="card mt-3 shadow-sm border-0">
+            <div class="card-header shadow-sm border-0">
                 <h5><i class="fas fa-info-circle me-2"></i>截面评估说明</h5>
             </div>
-            <div class="card-body small">
+            <div class="card-body small shadow-sm border-0">
                 <p><strong>截面评估 vs 时间序列评估：</strong></p>
                 <ul class="mb-2">
                     <li><strong>截面评估</strong>：每个时间点，按因子值对多个币种排名分组</li>
@@ -327,13 +437,16 @@
     </div>
 
     <div class="col-md-8">
-        <div class="card">
-            <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card shadow-sm border-0">
+            <div class="card-header d-flex justify-content-between align-items-center shadow-sm border-0">
                 <h5><i class="fas fa-chart-bar me-2"></i>评估结果</h5>
                 <div class="btn-group btn-group-sm">
                     <a class="btn btn-outline-primary" href="/method-comparison" title="走 walk-forward 严格样本外框架比较 equal_weight / ic_weight / max_icir_weight 三种组合方式，检验哪一种在扣费后真的赢">
                         <i class="fas fa-balance-scale me-1"></i>方法对比
                     </a>
+                    <button class="btn btn-outline-success" id="filterResultsBtn" style="display:none;" onclick="filterRunningResults()" title="将当前评估结果加入因子列表（已有因子会自动合并）">
+                        <i class="fas fa-filter me-1"></i>筛选并合并
+                    </button>
                     <button class="btn btn-outline-danger" id="batchDeleteBtn" style="display:none;" onclick="batchDeleteSelectedFactors()">
                         <i class="fas fa-trash-alt me-1"></i>批量删除因子
                     </button>
@@ -342,7 +455,7 @@
                     </button>
                 </div>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div id="resultsPlaceholder" class="text-center text-muted py-5">
                     <i class="fas fa-chart-line fa-3x mb-3"></i>
                     <p>选择因子和交易对后点击"开始截面评估"</p>
@@ -355,24 +468,28 @@
                         <span class="ms-1">当前 OOS 切点：<code id="oosBannerDate">-</code>。下面的核心指标单元格按 <span class="text-muted">IS</span> → <span class="text-primary fw-bold">OOS</span> 顺序并排显示；筛选默认以 OOS 为准。</span>
                     </div>
                     <div class="table-responsive">
-                        <table class="table table-sm table-hover" id="resultsTable">
+                        <table class="table table-sm table-hover align-middle text-center" id="resultsTable">
                             <thead>
                                 <tr>
                                     <th><input type="checkbox" id="selectAllResultFactors" onchange="toggleSelectAll(this)"></th>
                                     <th>因子</th>
                                     <th>币种数</th>
                                     <th>时间点</th>
-                                    <th>覆盖率</th>
-                                    <th>跳过率</th>
+                                    <th title="OOS 模式下为 IS→OOS 并排">覆盖率</th>
+                                    <th title="OOS 模式下为 IS→OOS 并排">跳过率</th>
                                     <th title="OOS 模式下为 IS→OOS 并排">IC均值</th>
                                     <th title="OOS 模式下为 IS→OOS 并排">Rank IC</th>
                                     <th title="OOS 模式下为 IS→OOS 并排">ICIR</th>
+                                    <th title="OOS 模式下为 IS→OOS 并排">Rank ICIR</th>
                                     <th title="IC t 值：ic_mean × sqrt(n) / ic_std，|t|>2 近似显著；OOS 模式下为 IS→OOS 并排">IC t值</th>
                                     <th title="按时间等分 N 段后，IC 均值与整体 IC 同号的段数 / 总段数；OOS 模式下为 IS→OOS 并排">子段一致</th>
-                                    <th title="组合换手率（summary.turnover）：每期多空端口仓位变动比例；0≈不换仓，1≈完全换仓；OOS 模式下为 IS→OOS 并排">换手率</th>
+                                    <th title="组合换手率（summary.turnover）：每期多空端口仓位变动比例；0≈不换仓，1≈完全换仓；*表示仅1个时间点估算值；OOS 模式下为 IS→OOS 并排">换手率</th>
                                     <th title="OOS 模式下为 IS→OOS 并排">多空收益</th>
-                                    <th title="OOS 模式下为 IS→OOS 并排">夏普比率</th>
+                                    <th title="年化夏普比率（Rf=0）；OOS 模式下为 IS→OOS 并排">年化夏普</th>
                                     <th title="OOS 模式下为 IS→OOS 并排">胜率</th>
+                                    <th title="分组单调比例：每期中相邻分组收益排序与多空方向一致的比例均值；1.0=完全单调；OOS 模式下为 IS→OOS 并排">分组单调</th>
+                                    <th title="完全单调比例：所有期中分组收益完全单调递增/递减的期数占比；OOS 模式下为 IS→OOS 并排">完全单调</th>
+                                    <th title="Spearman 单调性：组编号与组收益的 Spearman 秩相关绝对值均值；1.0=完全单调；OOS 模式下为 IS→OOS 并排">Spearman单调</th>
                                     <th>操作</th>
                                 </tr>
                             </thead>
@@ -383,50 +500,51 @@
             </div>
         </div>
 
-        <div class="card mt-3" id="detailCard" style="display:none;">
-            <div class="card-header">
+        <div class="card mt-3 shadow-sm border-0" id="detailCard" style="display:none;">
+            <div class="card-header shadow-sm border-0">
                 <h5><i class="fas fa-info-circle me-2"></i>因子详情: <span id="detailFactorName"></span></h5>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div class="alert alert-info py-2 px-3 mb-3" id="detailOosSummary" style="display:none;">
                     <div class="d-flex align-items-center justify-content-between flex-wrap">
                         <div class="me-3">
                             <i class="fas fa-columns me-1"></i>
-                            <strong>OOS 模式</strong>：下面三列指标显示的是 <span class="text-primary fw-bold">OOS 段</span>；
-                            <span class="text-muted">IS 段</span> 简报如右侧。
+                            <strong>IS / OOS 并排模式</strong>：下面核心指标展示按 <span class="text-muted">IS 段</span> → <span class="text-primary fw-bold">OOS 段</span> 顺序并排显示。
                         </div>
-                        <div class="small">
-                            <span class="me-3">
-                                <span class="text-muted">IS IC:</span>
-                                <code id="detailIsIcMean">-</code>
-                                <span class="text-muted mx-1">/</span>
-                                <span class="text-muted">Rank IC:</span>
-                                <code id="detailIsRankIc">-</code>
-                            </span>
-                            <span class="me-3">
-                                <span class="text-muted">IS ICIR:</span>
-                                <code id="detailIsIcir">-</code>
-                            </span>
-                            <span class="me-3">
-                                <span class="text-muted">IS 多空:</span>
-                                <code id="detailIsLsReturn">-</code>
-                            </span>
-                            <span class="me-3">
-                                <span class="text-muted">IS 夏普:</span>
-                                <code id="detailIsSharpe">-</code>
-                            </span>
+                        <div id="detailIsSegmentsWrapper" class="mt-1" style="display:none;">
+                            <a href="#" onclick="$('#detailIsSegmentsTable').toggle(); return false;" class="small text-decoration-none">
+                                <i class="fas fa-chevron-right me-1"></i>IS 段子段分布
+                            </a>
+                            <div class="table-responsive mt-1" style="display:none;" id="detailIsSegmentsTable">
+                                <table class="table table-sm table-bordered mb-0 table-hover align-middle text-center">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width:80px;">段</th>
+                                            <th>时间范围</th>
+                                            <th style="width:120px;">样本数</th>
+                                            <th style="width:140px;">IC 均值</th>
+                                            <th style="width:140px;">Rank IC 均值</th>
+                                            <th style="width:80px;">同号</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="detailIsIcSegmentsBody"></tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
                 <div class="row">
                     <div class="col-md-4">
-                        <h6>IC指标</h6>
-                        <table class="table table-sm">
+                        <h6>IC指标
+                            <small class="text-muted d-block" style="font-size:0.7em;">IC 衡量因子对 t+predict_step 期收益的截面预测力；IC 衰减(lag)反映信号持续性而非对不同绝对 horizon 的预测力</small>
+                        </h6>
+                        <table class="table table-sm table-hover align-middle text-center">
                             <tr><td>IC均值</td><td id="detailIcMean">-</td></tr>
                             <tr><td>IC标准差</td><td id="detailIcStd">-</td></tr>
-                            <tr><td>ICIR</td><td id="detailIcir">-</td></tr>
+                            <tr><td>ICIR (Pearson)</td><td id="detailIcir">-</td></tr>
                             <tr><td title="IC t 值 = ic_mean × sqrt(n) / ic_std；|t|>2 通常可认为 IC 显著不为 0">IC t值</td><td id="detailIcTstat">-</td></tr>
                             <tr><td>Rank IC均值</td><td id="detailRankIcMean">-</td></tr>
+                            <tr><td>Rank ICIR</td><td id="detailRankIcir">-</td></tr>
                             <tr><td title="Rank IC t 值">Rank IC t值</td><td id="detailRankIcTstat">-</td></tr>
                             <tr><td>IC正比例</td><td id="detailIcPositiveRatio">-</td></tr>
                             <tr><td title="按时间等分 N 段，IC 均值与整体同号的段数 / 总段数">子段一致性</td><td id="detailIcSegConsistency">-</td></tr>
@@ -434,19 +552,22 @@
                     </div>
                     <div class="col-md-4">
                         <h6>收益指标</h6>
-                        <table class="table table-sm">
+                        <table class="table table-sm table-hover align-middle text-center">
                             <tr><td>多空收益</td><td id="detailLsReturn">-</td></tr>
                             <tr><td>多头收益</td><td id="detailLongReturn">-</td></tr>
                             <tr><td>空头收益</td><td id="detailShortReturn">-</td></tr>
-                            <tr><td>夏普比率</td><td id="detailSharpe">-</td></tr>
+                            <tr><td>年化夏普(Rf=0)</td><td id="detailSharpe">-</td></tr>
                             <tr><td>胜率</td><td id="detailWinRate">-</td></tr>
                             <tr><td title="每期多空端口仓位变动比例；0≈完全不换仓，1≈100% 换仓；高换手率会显著放大交易成本">组合换手率</td><td id="detailTurnover">-</td></tr>
                             <tr><td title="每期换手带来的单边成本估算（= turnover × transaction_cost）">换手成本/期</td><td id="detailTurnoverCost">-</td></tr>
+                            <tr><td title="分组单调比例：每期中相邻分组收益排序与多空方向一致的比例均值；1.0=完全单调，0.5=随机">分组单调比例</td><td id="detailGroupMonoRatio">-</td></tr>
+                            <tr><td title="完全单调比例：所有期中分组收益完全单调递增/递减的期数占比">完全单调比例</td><td id="detailGroupMonoPerfectRatio">-</td></tr>
+                            <tr><td title="Spearman 单调性：组编号与组平均收益的 Spearman 秩相关系数绝对值均值；1.0=完全单调，0=无单调关系">Spearman 单调性</td><td id="detailMonotonicityAbsMean">-</td></tr>
                         </table>
                     </div>
                     <div class="col-md-4">
                         <h6>覆盖率诊断</h6>
-                        <table class="table table-sm">
+                        <table class="table table-sm table-hover align-middle text-center">
                             <tr><td>IC平均覆盖率</td><td id="detailCoverageIc">-</td></tr>
                             <tr><td>收益平均覆盖率</td><td id="detailCoverageReturns">-</td></tr>
                             <tr><td>IC跳过率</td><td id="detailSkipRateIc">-</td></tr>
@@ -463,7 +584,7 @@
                             <small class="text-muted">（按时间等分，每段 IC 均值同号表示因子方向在子时段内一致）</small>
                         </h6>
                         <div class="table-responsive">
-                            <table class="table table-sm table-bordered mb-0" id="detailIcSegmentsTable">
+                            <table class="table table-sm table-bordered mb-0 table-hover align-middle text-center" id="detailIcSegmentsTable">
                                 <thead class="table-light">
                                     <tr>
                                         <th style="width:80px;">段</th>
@@ -486,35 +607,56 @@
 
 <div class="row mt-3">
     <div class="col-12">
-        <div class="card" id="csvImportCard">
-            <div class="card-header">
+        <div class="card shadow-sm border-0" id="csvImportCard">
+            <div class="card-header shadow-sm border-0">
                 <h5><i class="fas fa-file-csv me-2"></i>导入评估结果</h5>
-                <small class="text-muted">可直接导入之前导出的CSV文件，无需重新评估</small>
+                <small class="text-muted">导入之前导出的CSV文件，支持与当前因子列表合并</small>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div class="row">
                     <div class="col-md-4">
                         <label class="form-label">导入截面评估CSV文件</label>
                         <input type="file" class="form-control" id="csvFileInput" accept=".csv">
                         <div class="form-text">支持导入截面评估导出的CSV文件</div>
+                        <div class="mt-2">
+                            <label class="form-label small text-muted mb-1">导入模式</label>
+                            <select class="form-select form-select-sm" id="csvImportMode" style="max-width: 200px;">
+                                <option value="replace">替换（清空已有再导入）</option>
+                                <option value="merge">合并（与已有因子合并，重复因子更新）</option>
+                            </select>
+                            <div class="form-text small">合并模式下，重复因子ID将以CSV中的数据覆盖</div>
+                        </div>
                         <div class="form-text mt-1" id="importFactorValidationMsg"></div>
                     </div>
                     <div class="col-md-8">
-                        <div class="card card-body bg-light py-2">
+                        <div class="card card-body bg-light py-2 shadow-sm border-0">
                             <div class="d-flex justify-content-between align-items-center mb-2">
                                 <label class="form-label mb-0 fw-bold">筛选参数</label>
                                 <button class="btn btn-sm btn-outline-success" onclick="selectGoodFactors()">
                                     <i class="fas fa-filter me-1"></i>按条件筛选
                                 </button>
                             </div>
+                            <div class="mb-2"><span class="badge bg-primary">OOS / 整段</span></div>
                             <div class="row g-2">
                                 <div class="col-md-2 col-4">
                                     <label class="form-label small text-muted mb-0" title="Rank IC 更稳健（对异常值与非线性单调关系不敏感），默认口径已由 |IC| 切换为 |Rank IC|">|Rank IC| &gt;</label>
-                                    <input type="number" class="form-control form-control-sm" id="filterIcThreshold" value="0.02" step="0.01">
+                                    <input type="number" class="form-control form-control-sm" id="filterIcThreshold" value="0.01" step="any">
                                 </div>
                                 <div class="col-md-2 col-4">
                                     <label class="form-label small text-muted mb-0" title="ICIR 使用 Rank ICIR（基于 Rank IC 均值 / 标准差）">|Rank ICIR| &gt;</label>
-                                    <input type="number" class="form-control form-control-sm" id="filterIcirThreshold" value="0.1" step="0.05">
+                                    <input type="number" class="form-control form-control-sm" id="filterIcirThreshold" value="0.08" step="any">
+                                </div>
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0" title="Pearson IC 均值绝对值">|IC均值| &gt;</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterIcMeanThreshold" value="0" step="any">
+                                </div>
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0" title="IC t 值绝对值，|t|>2 近似显著">|IC t值| &gt;</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterIcTstatThreshold" value="0" step="any">
+                                </div>
+                                <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0" title="子段一致性：IC 序列按时间等分 N 段后，与整体 IC 同号的段数占比">子段一致 &gt;</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterSegConsistencyThreshold" value="0" step="any" min="0" max="1">
                                 </div>
                                 <div class="col-md-2 col-4">
                                     <label class="form-label small text-muted mb-0">胜率 &gt;</label>
@@ -522,29 +664,72 @@
                                     <div class="form-text small">%</div>
                                 </div>
                                 <div class="col-md-2 col-4">
+                                    <label class="form-label small text-muted mb-0" title="年化夏普比率（Rf=0），反向因子自动取负值后筛选">年化夏普 &gt;</label>
+                                    <input type="number" class="form-control form-control-sm" id="filterSharpeThreshold" value="0" step="any">
+                                </div>
+                                <div class="col-md-2 col-4">
                                     <label class="form-label small text-muted mb-0">多空收益 &gt;</label>
-                                    <input type="number" class="form-control form-control-sm" id="filterLsReturnThreshold" value="0.01" step="0.01">
+                                    <input type="number" class="form-control form-control-sm" id="filterLsReturnThreshold" value="0" step="any">
                                     <div class="form-text small">%</div>
                                 </div>
                                 <div class="col-md-2 col-4">
                                     <label class="form-label small text-muted mb-0" title="组合换手率（summary.turnover）：每期多空端口仓位变动比例；越低越稳">换手率 &lt;</label>
-                                    <input type="number" class="form-control form-control-sm" id="filterTurnoverThreshold" value="1.0" step="0.05" min="0" max="2">
+                                    <input type="number" class="form-control form-control-sm" id="filterTurnoverThreshold" value="1.0" step="any" min="0" max="2">
                                 </div>
                                 <div class="col-md-2 col-4">
                                     <label class="form-label small text-muted mb-0">时间点 &gt;=</label>
-                                    <input type="number" class="form-control form-control-sm" id="filterDataPointsThreshold" value="30" step="10">
+                                    <input type="number" class="form-control form-control-sm" id="filterDataPointsThreshold" value="500" step="1">
                                 </div>
                                 <div class="col-md-2 col-4">
                                     <label class="form-label small text-muted mb-0">筛选逻辑</label>
                                     <select class="form-select form-select-sm" id="filterLogic">
                                         <option value="or">满足任一条件</option>
-                                        <option value="and">满足所有条件</option>
+                                        <option value="and" selected>满足所有条件</option>
                                     </select>
+                                </div>
+                            </div>
+                            <div id="isFilterSection" style="display:none;" class="mt-2">
+                                <div class="mb-1"><span class="badge bg-secondary">IS 段</span> <small class="text-muted">OOS 模式下可对 IS 段指标额外筛选</small></div>
+                                <div class="row g-2">
+                                    <div class="col-md-2 col-4">
+                                        <label class="form-label small text-muted mb-0">IS |Rank IC| &gt;</label>
+                                        <input type="number" class="form-control form-control-sm" id="filterIsIcThreshold" value="0" step="any">
+                                    </div>
+                                    <div class="col-md-2 col-4">
+                                        <label class="form-label small text-muted mb-0">IS |IC均值| &gt;</label>
+                                        <input type="number" class="form-control form-control-sm" id="filterIsIcMeanThreshold" value="0" step="any">
+                                    </div>
+                                    <div class="col-md-2 col-4">
+                                        <label class="form-label small text-muted mb-0">IS |ICIR| &gt;</label>
+                                        <input type="number" class="form-control form-control-sm" id="filterIsIcirThreshold" value="0" step="any">
+                                    </div>
+                                    <div class="col-md-2 col-4">
+                                        <label class="form-label small text-muted mb-0">IS 子段一致 &gt;</label>
+                                        <input type="number" class="form-control form-control-sm" id="filterIsSegConsistencyThreshold" value="0" step="any" min="0" max="1">
+                                    </div>
+                                    <div class="col-md-2 col-4">
+                                        <label class="form-label small text-muted mb-0">IS |IC t值| &gt;</label>
+                                        <input type="number" class="form-control form-control-sm" id="filterIsIcTstatThreshold" value="0" step="any">
+                                    </div>
+                                    <div class="col-md-2 col-4">
+                                        <label class="form-label small text-muted mb-0">IS |年化夏普| &gt;</label>
+                                        <input type="number" class="form-control form-control-sm" id="filterIsSharpeThreshold" value="0" step="any">
+                                    </div>
+                                    <div class="col-md-2 col-4">
+                                        <label class="form-label small text-muted mb-0">IS 胜率 &gt;</label>
+                                        <input type="number" class="form-control form-control-sm" id="filterIsWinRateThreshold" value="0" step="1">
+                                        <div class="form-text small">%</div>
+                                    </div>
+                                    <div class="col-md-2 col-4">
+                                        <label class="form-label small text-muted mb-0">IS 多空收益 &gt;</label>
+                                        <input type="number" class="form-control form-control-sm" id="filterIsLsReturnThreshold" value="0" step="any">
+                                        <div class="form-text small">%</div>
+                                    </div>
                                 </div>
                             </div>
                             <div class="form-text small mt-2">
                                 <strong>当前优质标准：</strong>
-                                <span id="filterDescription">(|Rank IC| &gt; 0.02 且 |Rank ICIR| &gt; 0.1) 或 (胜率 &gt; 52% 且 多空收益 &gt; 0.01%)，且换手率 &lt; 1.0，且时间点 &gt;= 30</span>
+                                <span id="filterDescription">|Rank IC| &gt; 0.01 且 |Rank ICIR| &gt; 0.08 且 胜率 &gt; 52% 且 多空收益 &gt; 0% 且 换手率 &lt; 1.0 且 时间点 &gt;= 500</span>
                             </div>
                         </div>
                     </div>
@@ -553,14 +738,15 @@
                 <div id="importedFactorsContainer" style="display:none;" class="mt-3">
                     <div class="mb-3">
                         <div class="d-flex justify-content-between align-items-center mb-2">
-                            <label class="form-label mb-0">导入的因子列表 <span id="importedFactorStats" class="badge bg-secondary"></span></label>
+                            <label class="form-label mb-0">因子列表 <span id="importedFactorStats" class="badge bg-secondary"></span></label>
                             <div>
                                 <button class="btn btn-sm btn-outline-secondary" onclick="selectAllImported()">全选</button>
-                                <button class="btn btn-sm btn-outline-secondary" onclick="deselectAllImported()">清空</button>
+                                <button class="btn btn-sm btn-outline-secondary" onclick="deselectAllImported()">取消全选</button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="clearImportedFactors()">清空列表</button>
                             </div>
                         </div>
                         <div class="table-responsive" style="max-height: 300px; overflow-y: auto;">
-                            <table class="table table-sm table-hover" id="importedFactorsTable">
+                            <table class="table table-sm table-hover align-middle text-center" id="importedFactorsTable">
                                 <thead class="table-light sticky-top">
                                     <tr>
                                         <th style="width: 40px;"><input type="checkbox" id="selectAllImported" onchange="toggleSelectAllImported(this)"></th>
@@ -569,9 +755,13 @@
                                         <th>IC均值</th>
                                         <th title="Rank IC 均值（Spearman）">Rank IC</th>
                                         <th title="ICIR（若 CSV 提供 Rank ICIR 则取 Rank ICIR）">ICIR</th>
+                                        <th title="IC t 值">IC t值</th>
+                                        <th title="子段一致性">子段一致</th>
                                         <th>多空收益</th>
                                         <th>胜率</th>
                                         <th title="组合换手率（summary.turnover）">换手率</th>
+                                        <th title="OOS 模式下 IS 段 Rank IC">IS Rank IC</th>
+                                        <th title="OOS 模式下 IS 段子段一致性">IS 子段一致</th>
                                         <th>状态</th>
                                     </tr>
                                 </thead>
@@ -587,12 +777,12 @@
 
 <div class="row mt-3">
     <div class="col-12">
-        <div class="card" id="ensembleCard" style="display:none;">
-            <div class="card-header">
+        <div class="card shadow-sm border-0" id="ensembleCard" style="display:none;">
+            <div class="card-header shadow-sm border-0">
                 <h5><i class="fas fa-layer-group me-2"></i>因子组合与回测</h5>
                 <small class="text-muted">选择优质因子进行组合，自动处理反向因子（IC为负时取负）</small>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div class="row">
                     <div class="col-md-6">
                         <div class="mb-3">
@@ -617,12 +807,12 @@
                             <div class="row g-2">
                                 <div class="col-6">
                                     <input type="number" class="form-control form-control-sm" 
-                                           id="nGroups" value="5" placeholder="分组数">
+                                           id="nGroups" value="3" placeholder="分组数">
                                     <div class="form-text small">多空分组数</div>
                                 </div>
                                 <div class="col-6">
                                     <input type="number" class="form-control form-control-sm" 
-                                           id="transactionCost" value="0.001" step="0.0001" placeholder="交易成本">
+                                           id="transactionCost" value="0.0005" step="any" placeholder="交易成本">
                                     <div class="form-text small">手续费率</div>
                                 </div>
                             </div>
@@ -655,7 +845,7 @@
                         <div class="row g-2 mt-2">
                             <div class="col-8">
                                 <label class="form-label small text-muted mb-0">高相关阈值</label>
-                                <input type="number" class="form-control form-control-sm" id="corrThreshold" value="0.7" step="0.05" min="0" max="1">
+                                <input type="number" class="form-control form-control-sm" id="corrThreshold" value="0.7" step="any" min="0" max="1">
                             </div>
                             <div class="col-4 d-flex align-items-end">
                                 <div class="form-text small">高于此值标红</div>
@@ -666,8 +856,8 @@
             </div>
         </div>
         
-        <div class="card mt-3" id="correlationCard" style="display:none;">
-            <div class="card-header d-flex justify-content-between align-items-center">
+        <div class="card mt-3 shadow-sm border-0" id="correlationCard" style="display:none;">
+            <div class="card-header d-flex justify-content-between align-items-center shadow-sm border-0">
                 <h5 class="mb-0"><i class="fas fa-project-diagram me-2"></i>因子相关性分析</h5>
                 <div class="d-flex align-items-center gap-2">
                     <button class="btn btn-sm btn-outline-danger" id="pruneHighCorrBtn" onclick="pruneHighCorrelationFactors()" disabled>
@@ -680,19 +870,22 @@
                     </div>
                 </div>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div id="correlationContent"></div>
             </div>
         </div>
 
-        <div class="card mt-3" id="backtestResultCard" style="display:none;">
-            <div class="card-header">
+        <div class="card mt-3 shadow-sm border-0" id="backtestResultCard" style="display:none;">
+            <div class="card-header shadow-sm border-0">
                 <h5><i class="fas fa-chart-line me-2"></i>回测结果</h5>
             </div>
-            <div class="card-body">
+            <div class="card-body shadow-sm border-0">
                 <div class="d-flex justify-content-end mb-2">
                     <button class="btn btn-sm btn-outline-success" id="exportFactorWeightsBtn" onclick="exportBacktestFactorWeights()" style="display:none;">
                         <i class="fas fa-file-export me-1"></i>导出因子权重
+                    </button>
+                    <button class="btn btn-sm btn-outline-primary ms-2" id="exportScanConfigBtn" onclick="exportScanConfig()" style="display:none;">
+                        <i class="fas fa-bell me-1"></i>导出扫描配置
                     </button>
                 </div>
                 <div id="backtestResultContent"></div>
@@ -752,6 +945,19 @@ $(document).ready(function() {
         startCrossSectionalEvaluation();
     });
     
+    $('#enableDataCleaningCheck').on('change', function() {
+        $('#dataCleaningOptions').toggle(this.checked);
+    });
+    $('#liquidityFilterRatioInput').on('input change', function() {
+        const val = parseFloat(this.value);
+        if (isNaN(val) || val <= 0) {
+            $('#liquidityFilterHint').text('不过滤');
+        } else {
+            const keepPct = Math.round((1 - val) * 100);
+            $('#liquidityFilterHint').text('保留前' + keepPct + '%');
+        }
+    });
+    
     $(document).on('show.bs.collapse', '.collapse', function() {
         $(this).closest('.factor-category').find('.collapse-icon').removeClass('rotated');
     });
@@ -786,6 +992,13 @@ function toggleMaxLookbackInput() {
         $('#maxLookbackWrapper').show();
     } else {
         $('#maxLookbackWrapper').hide();
+    }
+    if (mode === 'offset_resample') {
+        $('#barModeHintDefault').hide();
+        $('#barModeHintOffsetResample').show();
+    } else {
+        $('#barModeHintDefault').show();
+        $('#barModeHintOffsetResample').hide();
     }
 }
 
@@ -911,12 +1124,8 @@ function renderFactors(factors) {
             desc: '仅需OHLCV数据即可计算',
             factors: [],
             subgroups: {
-                basic_kline_single_bar: {
-                    name: '单bar因子（适配 intrabar）',
-                    factors: []
-                },
-                basic_kline_window: {
-                    name: '窗口因子（MA/EMA/RSI 等，建议 strict）',
+                basic_kline_general: {
+                    name: '通用技术因子',
                     factors: []
                 },
                 basic_kline_qlib158: {
@@ -960,6 +1169,13 @@ function renderFactors(factors) {
             color: 'info',
             desc: '需要资金费率（Funding Rate）历史',
             factors: []
+        },
+        'onchain': {
+            name: '链上数据因子',
+            icon: 'fa-link',
+            color: 'success',
+            desc: '需要链上数据（流通供应量等）',
+            factors: []
         }
     };
     
@@ -971,7 +1187,6 @@ function renderFactors(factors) {
         const req = f.data_requirement || 'basic_kline';
         if (categories[req]) {
             if (req === 'basic_kline') {
-                // qlib158 / qlib360 / wq101 走各自独立子分组（不再落入 single_bar/window）
                 const fam = getAlphaFamily(f);
                 let subgroupKey;
                 if (fam === 'qlib158') {
@@ -981,9 +1196,7 @@ function renderFactors(factors) {
                 } else if (fam === 'wq101') {
                     subgroupKey = 'basic_kline_wq101';
                 } else {
-                    subgroupKey = isWindowBasedKlineFactor(f)
-                        ? 'basic_kline_window'
-                        : 'basic_kline_single_bar';
+                    subgroupKey = 'basic_kline_general';
                 }
                 categories[req].subgroups[subgroupKey].factors.push(f);
                 categories[req].factors.push(f);
@@ -992,7 +1205,7 @@ function renderFactors(factors) {
             }
         } else {
             categories['basic_kline'].factors.push(f);
-            categories['basic_kline'].subgroups.basic_kline_single_bar.factors.push(f);
+            categories['basic_kline'].subgroups.basic_kline_general.factors.push(f);
         }
     });
     
@@ -1002,10 +1215,8 @@ function renderFactors(factors) {
         const collapseId = `collapse_${key}`;
         let factorsHtml = '';
         if (key === 'basic_kline') {
-            // 渲染顺序：单 bar → 窗口 → qlib158 → qlib360 → wq101
             const subgroupOrder = [
-                'basic_kline_single_bar',
-                'basic_kline_window',
+                'basic_kline_general',
                 'basic_kline_qlib158',
                 'basic_kline_qlib360',
                 'basic_kline_wq101'
@@ -1092,8 +1303,7 @@ function renderFactors(factors) {
 }
 
 const BASIC_KLINE_SUBGROUPS = [
-    'basic_kline_single_bar',
-    'basic_kline_window',
+    'basic_kline_general',
     'basic_kline_qlib158',
     'basic_kline_qlib360',
     'basic_kline_wq101'
@@ -1220,6 +1430,63 @@ function applyLocalSymbolsState() {
         updateRangeSlider(new Date(Math.min(...starts)), new Date(Math.max(...ends)));
     } else {
         initRangeSlider();
+    }
+}
+
+function recommendStartDate() {
+    const selectedSymbols = $('#symbolsSelect').val() || [];
+    if (selectedSymbols.length === 0) {
+        alert('请先选择交易对');
+        return;
+    }
+    if (!localDataRows || localDataRows.length === 0) {
+        alert('本地数据未加载，请先刷新数据');
+        return;
+    }
+
+    const timeframe = $('#timeframeSelect').val();
+    const rowsForTimeframe = localDataRows.filter(r => String(r.timeframe || '') === String(timeframe || ''));
+
+    const symbolStartDates = [];
+    const missingSymbols = [];
+
+    selectedSymbols.forEach(sym => {
+        const row = rowsForTimeframe.find(r => r.symbol === sym);
+        if (row && row.date_range && row.date_range.start) {
+            symbolStartDates.push({
+                symbol: sym,
+                startDate: row.date_range.start,
+                endDate: row.date_range.end || '?'
+            });
+        } else {
+            missingSymbols.push(sym);
+        }
+    });
+
+    if (symbolStartDates.length === 0) {
+        alert('所选交易对均无本地数据');
+        return;
+    }
+
+    const allStarts = symbolStartDates.map(s => new Date(s.startDate).getTime());
+    const recommendedTs = Math.max(...allStarts);
+    const recommendedDate = new Date(recommendedTs);
+    const dateStr = recommendedDate.toISOString().slice(0, 10);
+
+    let msg = `推荐开始日期: ${dateStr}\n\n`;
+    msg += `已选 ${selectedSymbols.length} 个交易对中，${symbolStartDates.length} 个有本地数据`;
+    if (missingSymbols.length > 0) {
+        msg += `，${missingSymbols.length} 个无数据: ${missingSymbols.slice(0, 5).join(', ')}${missingSymbols.length > 5 ? ' 等' : ''}`;
+    }
+    msg += `\n\n该日期可确保所有有数据的交易对均有覆盖`;
+
+    const earliestSymbols = symbolStartDates.filter(s => new Date(s.startDate).getTime() === recommendedTs);
+    if (earliestSymbols.length > 0 && earliestSymbols.length <= 5) {
+        msg += `\n\n最晚开始的交易对: ${earliestSymbols.map(s => `${s.symbol} (${s.startDate.slice(0,10)})`).join(', ')}`;
+    }
+
+    if (confirm(msg + '\n\n是否应用此日期？')) {
+        $('#startDate').val(dateStr).trigger('change');
     }
 }
 
@@ -1369,6 +1636,180 @@ function clearSymbolSelection() {
 function updateSelectedCount() {
     const count = $('#symbolsSelect option:selected').length;
     $('#selectedSymbolCount').text(count);
+}
+
+let _universeFilterData = null;
+
+function runUniverseFilter() {
+    const minRank = parseInt($('#universeMinRank').val()) || 200;
+    const minVol = parseFloat($('#universeMinVolume').val()) || 1000000;
+    const minAge = parseInt($('#universeMinAge').val()) || 90;
+    const excludeStable = $('#universeExcludeStable').is(':checked');
+    const excludeBlack = $('#universeExcludeBlack').is(':checked');
+    const tradeType = $('#tradeTypeSelect').val();
+    const exchange = $('#exchangeSelect').val();
+
+    const $btn = $('#universeFilterBtn');
+    $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin me-1"></i>筛选中...');
+
+    const $status = $('#universeFilterStatus');
+    $status.show().html('<i class="fas fa-spinner fa-spin me-1"></i>正在从 CoinGecko 获取市值数据并逐个检查成交额与上市时间，请耐心等待...');
+
+    $('#universeFilterResults').hide();
+    $('#universeExportBtn').hide();
+    _universeFilterData = null;
+
+    $.ajax({
+        url: '/api/data/universe-filter',
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({
+            min_market_cap_rank: minRank,
+            min_avg_volume_usd: minVol,
+            min_age_days: minAge,
+            exclude_stablecoins: excludeStable,
+            exclude_blacklist: excludeBlack,
+            trade_type: tradeType,
+            exchange: exchange,
+        }),
+        success: function(res) {
+            if (res.success) {
+                _universeFilterData = res.data;
+                const d = res.data;
+                $status.html(
+                    `<span class="text-success"><i class="fas fa-check-circle me-1"></i>筛选完成</span>：` +
+                    `CoinGecko获取 ${d.total_fetched_from_cg || '?'} 个，扫描 ${d.total_scanned} 个，通过 ${d.passed} 个` +
+                    (d.skipped_stable ? `，稳定币 ${d.skipped_stable}` : '') +
+                    (d.skipped_black ? `，黑名单 ${d.skipped_black}` : '') +
+                    (d.skipped_no_market ? `，无交易对 ${d.skipped_no_market}` : '') +
+                    (d.skipped_volume ? `，成交额不足 ${d.skipped_volume}` : '') +
+                    (d.skipped_age ? `，上市不足 ${d.skipped_age}` : '')
+                );
+                if (d.no_market_details && d.no_market_details.length > 0) {
+                    const showCount = Math.min(15, d.no_market_details.length);
+                    const more = d.no_market_details.length > showCount ? ` 等${d.no_market_details.length}个` : '';
+                    const items = d.no_market_details.slice(0, showCount).map(x => `${x.symbol}(${x.coin_id}, #${x.rank})`).join(', ');
+                    $status.append(
+                        `<br><span class="text-muted" style="font-size:0.78rem;">无交易对: ${items}${more}</span>`
+                    );
+                }
+                $('#universeResultCount').text(d.passed);
+                $('#universeFilterResults').show();
+                $('#universeExportBtn').show();
+                renderUniverseDetailTable(d.symbols);
+            } else {
+                $status.html(`<span class="text-danger"><i class="fas fa-exclamation-circle me-1"></i>${res.error || '筛选失败'}</span>`);
+            }
+        },
+        error: function(xhr) {
+            let msg = '网络请求失败';
+            try {
+                const r = JSON.parse(xhr.responseText);
+                msg = r.error || msg;
+            } catch(e) {}
+            $status.html(`<span class="text-danger"><i class="fas fa-exclamation-circle me-1"></i>${msg}</span>`);
+        },
+        complete: function() {
+            $btn.prop('disabled', false).html('<i class="fas fa-search me-1"></i>筛选币种池');
+        }
+    });
+}
+
+function renderUniverseDetailTable(symbols) {
+    const $body = $('#universeDetailBody');
+    $body.empty();
+    symbols.forEach(function(s, i) {
+        const volStr = s.avg_30d_volume != null ? '$' + (s.avg_30d_volume >= 1e6 ? (s.avg_30d_volume / 1e6).toFixed(2) + 'M' : s.avg_30d_volume >= 1e3 ? (s.avg_30d_volume / 1e3).toFixed(0) + 'K' : s.avg_30d_volume.toFixed(0)) : '-';
+        $body.append(
+            `<tr><td>${i+1}</td><td>${s.symbol}</td><td>${s.market_cap_rank}</td><td>${volStr}</td><td>${s.age_days != null ? s.age_days : '-'}</td><td>${s.first_trade_date || '-'}</td></tr>`
+        );
+    });
+}
+
+function toggleUniverseDetail() {
+    $('#universeDetailTable').toggle();
+}
+
+function applyUniverseToSymbols() {
+    if (!_universeFilterData || !_universeFilterData.symbols || _universeFilterData.symbols.length === 0) {
+        alert('没有可应用的筛选结果');
+        return;
+    }
+
+    const universeSymbols = _universeFilterData.symbols.map(s => s.symbol);
+
+    clearSymbolSelection();
+
+    const symbolAliasMap = buildSymbolAliasMap(allSymbols);
+    const matchedSymbols = [];
+    const unmatchedSymbols = [];
+
+    universeSymbols.forEach(s => {
+        const normalizedInput = normalizeSymbolForMatch(s);
+        const matched = symbolAliasMap.get(s) || symbolAliasMap.get(normalizedInput);
+        if (matched) {
+            matchedSymbols.push(matched);
+        } else {
+            unmatchedSymbols.push(s);
+        }
+    });
+
+    if (matchedSymbols.length > 0) {
+        $('#symbolsSelect option').each(function() {
+            if (matchedSymbols.includes($(this).val())) {
+                $(this).prop('selected', true);
+            }
+        });
+        updateSelectedCount();
+    }
+
+    const $importResult = $('#importResult');
+    let resultHtml = '';
+    if (matchedSymbols.length > 0) {
+        resultHtml += `<span class="text-success">币种池应用成功：匹配 ${matchedSymbols.length} 个交易对</span>`;
+    }
+    if (unmatchedSymbols.length > 0) {
+        const showCount = Math.min(10, unmatchedSymbols.length);
+        const more = unmatchedSymbols.length > showCount ? ` 等${unmatchedSymbols.length}个` : '';
+        resultHtml += `<br><span class="text-warning">未匹配 ${unmatchedSymbols.length} 个（本地无数据）: ${unmatchedSymbols.slice(0, showCount).join(', ')}${more}</span>`;
+    }
+    $importResult.html(resultHtml);
+}
+
+function exportUniverseToSymbolList() {
+    if (!_universeFilterData || !_universeFilterData.symbols || _universeFilterData.symbols.length === 0) {
+        alert('没有可导出的筛选结果');
+        return;
+    }
+
+    const symbols = _universeFilterData.symbols.map(s => s.symbol);
+    const jsonStr = JSON.stringify(symbols);
+
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const ts = new Date().toISOString().slice(0, 10);
+    a.download = `universe_${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    const csvHeaders = '交易对,市值排名,30日均额(USD),上市天数,首交易日';
+    const csvRows = _universeFilterData.symbols.map(s =>
+        `${s.symbol},${s.market_cap_rank},${s.avg_30d_volume || ''},${s.age_days || ''},${s.first_trade_date || ''}`
+    );
+    const csvStr = csvHeaders + '\n' + csvRows.join('\n');
+    const csvBlob = new Blob(['\uFEFF' + csvStr], { type: 'text/csv;charset=utf-8' });
+    const csvUrl = URL.createObjectURL(csvBlob);
+    const csvA = document.createElement('a');
+    csvA.href = csvUrl;
+    csvA.download = `universe_${ts}.csv`;
+    document.body.appendChild(csvA);
+    csvA.click();
+    document.body.removeChild(csvA);
+    URL.revokeObjectURL(csvUrl);
 }
 
 function formatDateInputValue(date) {
@@ -1542,6 +1983,7 @@ function startCrossSectionalEvaluation(isContinue = false) {
     $('#progressBox').show();
     $('#resultsPlaceholder').hide();
     $('#resultsContainer').show();
+    $('#filterResultsBtn').show();
     $('#detailCard').hide();
     
     if (!isContinue) {
@@ -1600,6 +2042,9 @@ function startCrossSectionalEvaluation(isContinue = false) {
         min_valid_count: minValidCount,
         min_group_size: minGroupSize,
         treat_zero_as_invalid: treatZeroAsInvalid,
+        enable_data_cleaning: $('#enableDataCleaningCheck').is(':checked'),
+        remove_zero_volume: $('#removeZeroVolumeCheck').is(':checked'),
+        liquidity_filter_ratio: parseFloat($('#liquidityFilterRatioInput').val()) || 0,
         n_ic_segments: nIcSegments,
         parallel_backend: parallelBackend,
         request_id: _currentRequestId
@@ -1901,17 +2346,35 @@ function _extractSideMetrics(side) {
         n_symbols: side.n_symbols,
         n_periods_returns: side.n_periods_returns,
         ic_mean: summary.ic_mean ?? ic.ic_mean,
-        rank_ic_mean: summary.rank_ic_mean ?? ic.rank_ic_mean,
+        ic_std: summary.ic_std ?? ic.ic_std,
         icir: summary.icir ?? ic.icir,
+        rank_ic_mean: summary.rank_ic_mean ?? ic.rank_ic_mean,
+        rank_icir: ic.rank_icir,
+        ic_positive_ratio: summary.ic_positive_ratio ?? ic.ic_positive_ratio,
         ic_tstat: summary.ic_tstat ?? ic.ic_tstat,
+        rank_ic_tstat: summary.rank_ic_tstat ?? ic.rank_ic_tstat,
         ic_segment_same_sign_count: summary.ic_segment_same_sign_count ?? ic.ic_segment_same_sign_count,
         ic_segments_total: summary.ic_segments_total ?? ic.ic_segments_total,
+        ic_segment_consistency: summary.ic_segment_consistency ?? ic.ic_segment_consistency,
         turnover: summary.turnover ?? returns.turnover,
+        turnover_estimated: returns.turnover_estimated ?? false,
+        turnover_cost_per_period: summary.turnover_cost_per_period ?? returns.turnover_cost_per_period,
         long_short_return: summary.long_short_return ?? returns.long_short_return,
+        long_return: summary.long_return ?? returns.long_return,
+        short_return: summary.short_return ?? returns.short_return,
         sharpe_ratio: summary.sharpe_ratio ?? returns.sharpe_ratio,
+        annualized_sharpe: summary.annualized_sharpe ?? returns.annualized_sharpe,
         win_rate: summary.win_rate ?? returns.win_rate,
-        avg_coverage: summary.avg_coverage ?? coverage.avg_coverage_returns,
-        skip_rate: summary.skip_rate ?? coverage.returns_skip_rate,
+        avg_coverage_ic: coverage.avg_coverage_ic,
+        avg_coverage_returns: summary.avg_coverage ?? coverage.avg_coverage_returns,
+        ic_skip_rate: coverage.ic_skip_rate,
+        returns_skip_rate: summary.skip_rate ?? coverage.returns_skip_rate,
+        n_periods_ic: coverage.n_periods_ic,
+        n_periods_returns: side.n_periods_returns ?? coverage.n_periods_returns,
+        group_mono_ratio: returns.group_mono_ratio,
+        group_mono_perfect_ratio: returns.group_mono_perfect_ratio,
+        monotonicity_abs_mean: returns.monotonicity_abs_mean,
+        monotonicity_mean: returns.monotonicity_mean,
     };
 }
 
@@ -1951,12 +2414,13 @@ function appendResultRow(r, idx) {
     }
 
     // 顶层（兼容字段）对应 OOS；非 OOS 模式下就是整段
-    let icMean, rankIc, icir, icTstat, segConsistency, turnoverText, lsReturn, sharpe, winRate;
+    let icMean, rankIc, icir, rankIcir, icTstat, segConsistency, turnoverText, lsReturn, sharpe, winRate, groupMono, groupMonoPerfect, monotonicityAbsMean, avgCoverageCell, skipRateCell;
     if (isOosMode) {
         // 并排 IS → OOS
         icMean = _formatIsOosCell(isSide?.ic_mean, oosSide?.ic_mean, v => formatNumber(v));
         rankIc = _formatIsOosCell(isSide?.rank_ic_mean, oosSide?.rank_ic_mean, v => formatNumber(v));
         icir = _formatIsOosCell(isSide?.icir, oosSide?.icir, v => formatNumber(v));
+        rankIcir = _formatIsOosCell(isSide?.rank_icir, oosSide?.rank_icir, v => formatNumber(v));
         icTstat = _formatIsOosCell(isSide?.ic_tstat, oosSide?.ic_tstat, v => formatNumber(v, 2));
         segConsistency = _formatIsOosCell(
             _formatSegConsistency(isSide?.ic_segment_same_sign_count, isSide?.ic_segments_total),
@@ -1965,29 +2429,39 @@ function appendResultRow(r, idx) {
         );
         turnoverText = _formatIsOosCell(
             isSide?.turnover, oosSide?.turnover,
-            v => (v === null || v === undefined || isNaN(v)) ? '-' : Number(v).toFixed(3)
+            v => (v === null || v === undefined || isNaN(v)) ? '-' : Number(v).toFixed(3) + ((oosSide?.turnover_estimated || isSide?.turnover_estimated) ? '*' : '')
         );
         lsReturn = _formatIsOosCell(isSide?.long_short_return, oosSide?.long_short_return, v => formatPercent(v));
-        sharpe = _formatIsOosCell(isSide?.sharpe_ratio, oosSide?.sharpe_ratio, v => formatNumber(v));
+        sharpe = _formatIsOosCell(isSide?.annualized_sharpe, oosSide?.annualized_sharpe, v => formatNumber(v));
         winRate = _formatIsOosCell(isSide?.win_rate, oosSide?.win_rate, v => formatPercent(v, 1));
+        groupMono = _formatIsOosCell(isSide?.group_mono_ratio, oosSide?.group_mono_ratio, v => formatNumber(v));
+        groupMonoPerfect = _formatIsOosCell(isSide?.group_mono_perfect_ratio, oosSide?.group_mono_perfect_ratio, v => formatPercent(v, 1));
+        monotonicityAbsMean = _formatIsOosCell(isSide?.monotonicity_abs_mean, oosSide?.monotonicity_abs_mean, v => formatNumber(v));
+        avgCoverageCell = _formatIsOosCell(isSide?.avg_coverage_returns, oosSide?.avg_coverage_returns, v => formatPercent(v, 1));
+        skipRateCell = _formatIsOosCell(isSide?.returns_skip_rate, oosSide?.returns_skip_rate, v => formatPercent(v, 1));
     } else {
         icMean = formatNumber(summary.ic_mean ?? ic.ic_mean);
         rankIc = formatNumber(summary.rank_ic_mean ?? ic.rank_ic_mean);
         icir = formatNumber(summary.icir ?? ic.icir);
+        rankIcir = formatNumber(ic.rank_icir);
         const icTstatRaw = summary.ic_tstat ?? ic.ic_tstat;
         icTstat = formatNumber(icTstatRaw, 2);
         const segTotal = summary.ic_segments_total ?? ic.ic_segments_total;
         const segSameSign = summary.ic_segment_same_sign_count ?? ic.ic_segment_same_sign_count;
         segConsistency = _formatSegConsistency(segSameSign, segTotal);
         const turnoverRaw = summary.turnover ?? returns.turnover;
+        const turnoverEstimated = returns.turnover_estimated ?? false;
         turnoverText = (turnoverRaw === null || turnoverRaw === undefined || isNaN(turnoverRaw))
-            ? '-' : Number(turnoverRaw).toFixed(3);
+            ? '-' : Number(turnoverRaw).toFixed(3) + (turnoverEstimated ? '*' : '');
         lsReturn = formatPercent(summary.long_short_return ?? returns.long_short_return);
-        sharpe = formatNumber(summary.sharpe_ratio ?? returns.sharpe_ratio);
+        sharpe = formatNumber(summary.annualized_sharpe ?? returns.annualized_sharpe);
         winRate = formatPercent(summary.win_rate ?? returns.win_rate, 1);
+        groupMono = formatNumber(summary.group_mono_ratio ?? returns.group_mono_ratio);
+        groupMonoPerfect = formatPercent(summary.group_mono_perfect_ratio ?? returns.group_mono_perfect_ratio, 1);
+        monotonicityAbsMean = formatNumber(summary.monotonicity_abs_mean ?? returns.monotonicity_abs_mean);
+        avgCoverageCell = formatPercent(summary.avg_coverage ?? coverage.avg_coverage_returns, 1);
+        skipRateCell = formatPercent(summary.skip_rate ?? coverage.returns_skip_rate, 1);
     }
-    const avgCoverage = formatPercent(summary.avg_coverage ?? coverage.avg_coverage_returns, 1);
-    const skipRate = formatPercent(summary.skip_rate ?? coverage.returns_skip_rate, 1);
     
     const rowClass = r.success ? '' : 'table-warning';
     const statusIcon = r.success ? 
@@ -2012,7 +2486,9 @@ function appendResultRow(r, idx) {
     const reverseBadge = isNegative ? '<span class="badge bg-secondary ms-1" title="Rank IC 为负；如开启自动反向，组合回测会按 -因子 方向加权">Rank&nbsp;IC&lt;0</span>' : '';
     const oosBadge = isOosMode ? '<span class="badge bg-info text-dark ms-1" title="该因子 OOS 段评估成功，筛选以 OOS 为准">OOS</span>' : '';
 
-    const skipRateVal = summary.skip_rate ?? coverage.returns_skip_rate ?? 0;
+    const skipRateVal = isOosMode
+        ? (oosSide ? (oosSide.returns_skip_rate ?? 0) : 0)
+        : (summary.skip_rate ?? coverage.returns_skip_rate ?? 0);
     const skipBadge = skipRateVal > 0.5 ? 
         '<span class="badge bg-danger ms-1">高跳过</span>' : 
         (skipRateVal > 0.3 ? '<span class="badge bg-warning text-dark ms-1">中跳过</span>' : '');
@@ -2026,17 +2502,21 @@ function appendResultRow(r, idx) {
             <td>${statusIcon} ${r.factor_id} ${reverseBadge} ${oosBadge}</td>
             <td>${r.n_symbols || '-'}</td>
             <td>${r.n_periods_returns ?? '-'}</td>
-            <td>${avgCoverage}</td>
-            <td>${skipRate} ${skipBadge}</td>
+            <td>${avgCoverageCell}</td>
+            <td>${skipRateCell}${skipBadge}</td>
             <td>${icMean}</td>
             <td>${rankIc}</td>
             <td>${icir}</td>
+            <td>${rankIcir}</td>
             <td>${icTstat}</td>
             <td>${segConsistency}</td>
             <td>${turnoverText}</td>
             <td>${lsReturn}</td>
             <td>${sharpe}</td>
             <td>${winRate}</td>
+            <td>${groupMono}</td>
+            <td>${groupMonoPerfect}</td>
+            <td>${monotonicityAbsMean}</td>
             <td>
                 <button class="btn btn-sm btn-outline-primary" onclick="showDetail('${String(r.factor_id).replace(/'/g, "\\'")}')">
                     <i class="fas fa-eye"></i>
@@ -2062,23 +2542,41 @@ function showDetail(factorIdOrIdx) {
     const coverage = r.coverage || {};
     
     $('#detailFactorName').text(r.factor_id);
-    $('#detailIcMean').text(formatNumber(ic.ic_mean));
-    $('#detailIcStd').text(formatNumber(ic.ic_std));
-    $('#detailIcir').text(formatNumber(ic.icir));
-    $('#detailIcTstat').text(formatNumber(ic.ic_tstat, 2));
-    $('#detailRankIcMean').text(formatNumber(ic.rank_ic_mean));
-    $('#detailRankIcTstat').text(formatNumber(ic.rank_ic_tstat, 2));
-    $('#detailIcPositiveRatio').text(formatPercent(ic.ic_positive_ratio, 1));
+    
+    const isOosMode = !!r.oos_enabled;
+    const isSide = isOosMode ? _extractSideMetrics(r.is) : null;
+    const oosSide = isOosMode ? _extractSideMetrics(r.oos) : null;
 
-    const segTotal = ic.ic_segments_total;
-    const segSameSign = ic.ic_segment_same_sign_count;
-    if (segTotal && segTotal > 0 && segSameSign != null) {
-        const ratio = segSameSign / segTotal;
-        $('#detailIcSegConsistency').text(
-            `${segSameSign}/${segTotal} (${(ratio * 100).toFixed(0)}%)`
-        );
+    const setDetailHtml = (id, isVal, oosVal, defaultVal, formatter) => {
+        if (isOosMode) {
+            $(`#${id}`).html(_formatIsOosCell(isVal, oosVal, formatter));
+        } else {
+            $(`#${id}`).text(formatter(defaultVal));
+        }
+    };
+
+    setDetailHtml('detailIcMean', isSide?.ic_mean, oosSide?.ic_mean, ic.ic_mean, formatNumber);
+    setDetailHtml('detailIcStd', isSide?.ic_std, oosSide?.ic_std, ic.ic_std, formatNumber);
+    setDetailHtml('detailIcir', isSide?.icir, oosSide?.icir, ic.icir, formatNumber);
+    setDetailHtml('detailIcTstat', isSide?.ic_tstat, oosSide?.ic_tstat, ic.ic_tstat, v => formatNumber(v, 2));
+    setDetailHtml('detailRankIcMean', isSide?.rank_ic_mean, oosSide?.rank_ic_mean, ic.rank_ic_mean, formatNumber);
+    setDetailHtml('detailRankIcir', isSide?.rank_icir, oosSide?.rank_icir, ic.rank_icir, formatNumber);
+    setDetailHtml('detailRankIcTstat', isSide?.rank_ic_tstat, oosSide?.rank_ic_tstat, ic.rank_ic_tstat, v => formatNumber(v, 2));
+    setDetailHtml('detailIcPositiveRatio', isSide?.ic_positive_ratio, oosSide?.ic_positive_ratio, ic.ic_positive_ratio, v => formatPercent(v, 1));
+
+    if (isOosMode) {
+        const isCons = _formatSegConsistency(isSide?.ic_segment_same_sign_count, isSide?.ic_segments_total);
+        const oosCons = _formatSegConsistency(oosSide?.ic_segment_same_sign_count, oosSide?.ic_segments_total);
+        $('#detailIcSegConsistency').html(_formatIsOosCell(isCons, oosCons, v => v));
     } else {
-        $('#detailIcSegConsistency').text('-');
+        const segTotal = ic.ic_segments_total;
+        const segSameSign = ic.ic_segment_same_sign_count;
+        if (segTotal && segTotal > 0 && segSameSign != null) {
+            const ratio = segSameSign / segTotal;
+            $('#detailIcSegConsistency').text(`${segSameSign}/${segTotal} (${(ratio * 100).toFixed(0)}%)`);
+        } else {
+            $('#detailIcSegConsistency').text('-');
+        }
     }
 
     const segments = Array.isArray(ic.ic_segments) ? ic.ic_segments : [];
@@ -2116,43 +2614,77 @@ function showDetail(factorIdOrIdx) {
         $('#detailIcSegmentsWrapper').hide();
     }
     
-    $('#detailLsReturn').text(formatPercent(returns.long_short_return));
-    $('#detailLongReturn').text(formatPercent(returns.long_return));
-    $('#detailShortReturn').text(formatPercent(returns.short_return));
-    $('#detailSharpe').text(formatNumber(returns.sharpe_ratio));
-    $('#detailWinRate').text(formatPercent(returns.win_rate, 1));
-    const detailTurnoverRaw = returns.turnover;
-    $('#detailTurnover').text(
-        (detailTurnoverRaw === null || detailTurnoverRaw === undefined || isNaN(detailTurnoverRaw))
-            ? '-'
-            : Number(detailTurnoverRaw).toFixed(3)
-    );
-    const detailTurnoverCostRaw = returns.turnover_cost_per_period;
-    $('#detailTurnoverCost').text(
-        (detailTurnoverCostRaw === null || detailTurnoverCostRaw === undefined || isNaN(detailTurnoverCostRaw))
-            ? '-'
-            : (Number(detailTurnoverCostRaw) * 100).toFixed(4) + '%'
-    );
-    
-    $('#detailCoverageIc').text(formatPercent(coverage.avg_coverage_ic, 1));
-    $('#detailCoverageReturns').text(formatPercent(coverage.avg_coverage_returns, 1));
-    $('#detailSkipRateIc').text(formatPercent(coverage.ic_skip_rate, 1));
-    $('#detailSkipRateReturns').text(formatPercent(coverage.returns_skip_rate, 1));
-    $('#detailPeriodsTotal').text(coverage.n_periods_total ?? '-');
-    $('#detailPeriodsIc').text(coverage.n_periods_ic ?? '-');
-    $('#detailPeriodsReturns').text(coverage.n_periods_returns ?? '-');
+    setDetailHtml('detailLsReturn', isSide?.long_short_return, oosSide?.long_short_return, returns.long_short_return, formatPercent);
+    setDetailHtml('detailLongReturn', isSide?.long_return, oosSide?.long_return, returns.long_return, formatPercent);
+    setDetailHtml('detailShortReturn', isSide?.short_return, oosSide?.short_return, returns.short_return, formatPercent);
+    setDetailHtml('detailSharpe', isSide?.annualized_sharpe, oosSide?.annualized_sharpe, returns.annualized_sharpe, formatNumber);
+    setDetailHtml('detailWinRate', isSide?.win_rate, oosSide?.win_rate, returns.win_rate, v => formatPercent(v, 1));
 
-    // OOS 模式：在顶部显示 IS 段简报（IC / Rank IC / ICIR / LS 收益 / Sharpe）
+    const turnoverFormatter = (v, estimated) => (v === null || v === undefined || isNaN(v)) ? '-' : Number(v).toFixed(3) + (estimated ? ' (估算)' : '');
+    if (isOosMode) {
+        const isTurnoverText = turnoverFormatter(isSide?.turnover, isSide?.turnover_estimated);
+        const oosTurnoverText = turnoverFormatter(oosSide?.turnover, oosSide?.turnover_estimated);
+        $('#detailTurnover').html(`<span class="text-muted small" title="IS 段">${isTurnoverText}</span><span class="text-muted small mx-1">→</span><span class="fw-bold text-primary" title="OOS 段">${oosTurnoverText}</span>`);
+    } else {
+        $('#detailTurnover').text(turnoverFormatter(returns.turnover, returns.turnover_estimated));
+    }
+    
+    setDetailHtml('detailTurnoverCost', isSide?.turnover_cost_per_period, oosSide?.turnover_cost_per_period, returns.turnover_cost_per_period, v => (v === null || v === undefined || isNaN(v)) ? '-' : (Number(v) * 100).toFixed(4) + '%');
+    setDetailHtml('detailGroupMonoRatio', isSide?.group_mono_ratio, oosSide?.group_mono_ratio, returns.group_mono_ratio, formatNumber);
+    setDetailHtml('detailGroupMonoPerfectRatio', isSide?.group_mono_perfect_ratio, oosSide?.group_mono_perfect_ratio, returns.group_mono_perfect_ratio, v => formatPercent(v, 1));
+    setDetailHtml('detailMonotonicityAbsMean', isSide?.monotonicity_abs_mean, oosSide?.monotonicity_abs_mean, returns.monotonicity_abs_mean, formatNumber);
+    
+    setDetailHtml('detailCoverageIc', isSide?.avg_coverage_ic, oosSide?.avg_coverage_ic, coverage.avg_coverage_ic, v => formatPercent(v, 1));
+    setDetailHtml('detailCoverageReturns', isSide?.avg_coverage_returns, oosSide?.avg_coverage_returns, coverage.avg_coverage_returns, v => formatPercent(v, 1));
+    setDetailHtml('detailSkipRateIc', isSide?.ic_skip_rate, oosSide?.ic_skip_rate, coverage.ic_skip_rate, v => formatPercent(v, 1));
+    setDetailHtml('detailSkipRateReturns', isSide?.returns_skip_rate, oosSide?.returns_skip_rate, coverage.returns_skip_rate, v => formatPercent(v, 1));
+    
+    $('#detailPeriodsTotal').text(coverage.n_periods_total ?? '-');
+    setDetailHtml('detailPeriodsIc', isSide?.n_periods_ic, oosSide?.n_periods_ic, coverage.n_periods_ic, v => v ?? '-');
+    setDetailHtml('detailPeriodsReturns', isSide?.n_periods_returns, oosSide?.n_periods_returns, coverage.n_periods_returns, v => v ?? '-');
+
+    // OOS 模式：在顶部显示 IS 段的子段分布，面板整体展现 IS -> OOS
     if (r.oos_enabled) {
-        const isSide = _extractSideMetrics(r.is);
-        $('#detailIsIcMean').text(isSide ? formatNumber(isSide.ic_mean) : '-');
-        $('#detailIsRankIc').text(isSide ? formatNumber(isSide.rank_ic_mean) : '-');
-        $('#detailIsIcir').text(isSide ? formatNumber(isSide.icir) : '-');
-        $('#detailIsLsReturn').text(isSide ? formatPercent(isSide.long_short_return) : '-');
-        $('#detailIsSharpe').text(isSide ? formatNumber(isSide.sharpe_ratio) : '-');
         $('#detailOosSummary').show();
+
+        const isIcData = r.is && r.is.ic ? r.is.ic : {};
+        const isSegments = Array.isArray(isIcData.ic_segments) ? isIcData.ic_segments : [];
+        const isOverallIcSign = Math.sign(isIcData.ic_mean || 0);
+        const isSegBody = $('#detailIsIcSegmentsBody');
+        isSegBody.empty();
+        if (isSegments.length > 0) {
+            isSegments.forEach(seg => {
+                const segIcMean = seg.ic_mean;
+                const segRankIc = seg.rank_ic_mean;
+                const rangeText = (seg.start_date && seg.end_date)
+                    ? `${String(seg.start_date).slice(0, 16)} ~ ${String(seg.end_date).slice(0, 16)}`
+                    : '-';
+                let sameSignBadge;
+                if (isOverallIcSign === 0 || segIcMean == null || !isFinite(segIcMean)) {
+                    sameSignBadge = '<span class="text-muted">-</span>';
+                } else if (Math.sign(segIcMean) === isOverallIcSign) {
+                    sameSignBadge = '<span class="badge bg-success">同号</span>';
+                } else {
+                    sameSignBadge = '<span class="badge bg-danger">反号</span>';
+                }
+                isSegBody.append(`
+                    <tr>
+                        <td>${seg.segment ?? '-'}</td>
+                        <td class="small">${rangeText}</td>
+                        <td>${seg.n_periods ?? '-'}</td>
+                        <td>${formatNumber(segIcMean)}</td>
+                        <td>${formatNumber(segRankIc)}</td>
+                        <td>${sameSignBadge}</td>
+                    </tr>
+                `);
+            });
+            $('#detailIsSegmentsWrapper').show();
+        } else {
+            $('#detailIsSegmentsWrapper').hide();
+        }
     } else {
         $('#detailOosSummary').hide();
+        $('#detailIsSegmentsWrapper').hide();
     }
 
     $('#detailCard').show();
@@ -2166,6 +2698,121 @@ function formatNumber(val, decimals = 4) {
 function formatPercent(val, decimals = 4) {
     if (val === null || val === undefined || isNaN(val)) return '-';
     return (Number(val) * 100).toFixed(decimals) + '%';
+}
+
+function filterRunningResults() {
+    if (evaluationResults.length === 0) {
+        alert('没有可筛选的评估结果');
+        return;
+    }
+
+    const hasOos = evaluationResults.some(r => r && r.oos_enabled);
+    if (hasOos) {
+        $('#isFilterSection').show();
+    }
+
+    const availableFactorIds = getAvailableFactorIdSet();
+    const converted = [];
+
+    evaluationResults.forEach(r => {
+        if (!r || !r.success) return;
+        if (!availableFactorIds.has(r.factor_id)) return;
+
+        const summary = r.summary || {};
+        const ic = r.ic || {};
+        const returns = r.returns || {};
+        const coverage = r.coverage || {};
+
+        const f = {
+            id: r.factor_id,
+            dataPoints: r.n_periods_returns || 0,
+            ic: summary.ic_mean ?? ic.ic_mean ?? 0,
+            rankIc: summary.rank_ic_mean ?? ic.rank_ic_mean ?? 0,
+            icir: ic.rank_icir ?? summary.icir ?? ic.icir ?? 0,
+            icTstat: summary.ic_tstat ?? ic.ic_tstat ?? null,
+            rankIcTstat: summary.rank_ic_tstat ?? ic.rank_ic_tstat ?? null,
+            segConsistency: summary.ic_segment_consistency ?? ic.ic_segment_consistency ?? null,
+            segSameSign: summary.ic_segment_same_sign_count ?? ic.ic_segment_same_sign_count ?? null,
+            segTotal: summary.ic_segments_total ?? ic.ic_segments_total ?? null,
+            lsReturn: summary.long_short_return ?? returns.long_short_return ?? 0,
+            winRate: summary.win_rate ?? returns.win_rate ?? 0,
+            sharpe: summary.annualized_sharpe ?? returns.annualized_sharpe ?? null,
+            turnover: summary.turnover ?? returns.turnover ?? null,
+            oosEnabled: !!r.oos_enabled,
+            is: {},
+            selected: true
+        };
+
+        if (r.oos_enabled) {
+            const isSide = _extractSideMetrics(r.is);
+            if (isSide) {
+                f.is.ic = isSide.ic_mean ?? null;
+                f.is.icStd = isSide.ic_std ?? null;
+                f.is.icir = isSide.icir ?? null;
+                f.is.rankIc = isSide.rank_ic_mean ?? null;
+                f.is.rankIcir = isSide.rank_icir ?? null;
+                f.is.icPositiveRatio = isSide.ic_positive_ratio ?? null;
+                f.is.icTstat = isSide.ic_tstat ?? null;
+                f.is.rankIcTstat = isSide.rank_ic_tstat ?? null;
+                f.is.segSameSign = isSide.ic_segment_same_sign_count ?? null;
+                f.is.segTotal = isSide.ic_segments_total ?? null;
+                f.is.segConsistency = isSide.ic_segment_consistency ?? null;
+                f.is.turnover = isSide.turnover ?? null;
+                f.is.lsReturn = isSide.long_short_return ?? null;
+                f.is.longReturn = isSide.long_return ?? null;
+                f.is.shortReturn = isSide.short_return ?? null;
+                f.is.sharpe = isSide.annualized_sharpe ?? null;
+                f.is.winRate = isSide.win_rate ?? null;
+                f.is.monoRatio = isSide.group_mono_ratio ?? null;
+                f.is.monoPerfectRatio = isSide.group_mono_perfect_ratio ?? null;
+                f.is.monotonicityAbsMean = isSide.monotonicity_abs_mean ?? null;
+                f.is.avgCoverage = isSide.avg_coverage_returns ?? null;
+                f.is.skipRate = isSide.returns_skip_rate ?? null;
+                f.is.dataPoints = isSide.n_periods_returns ?? null;
+            }
+
+            const oosSide = _extractSideMetrics(r.oos);
+            if (oosSide) {
+                f.ic = oosSide.ic_mean ?? 0;
+                f.rankIc = oosSide.rank_ic_mean ?? 0;
+                f.icir = oosSide.icir ?? 0;
+                f.icTstat = oosSide.ic_tstat ?? null;
+                f.rankIcTstat = oosSide.rank_ic_tstat ?? null;
+                f.segConsistency = oosSide.ic_segment_consistency ?? null;
+                f.segSameSign = oosSide.ic_segment_same_sign_count ?? null;
+                f.segTotal = oosSide.ic_segments_total ?? null;
+                f.lsReturn = oosSide.long_short_return ?? 0;
+                f.winRate = oosSide.win_rate ?? 0;
+                f.sharpe = oosSide.annualized_sharpe ?? null;
+                f.turnover = oosSide.turnover ?? null;
+                f.dataPoints = oosSide.n_periods_returns ?? 0;
+            }
+        }
+
+        converted.push(f);
+    });
+
+    const mergeMode = (window.importedFactors && window.importedFactors.length > 0) ? 'merge' : 'replace';
+    const mergeResult = _mergeIntoImportedFactors(converted, mergeMode);
+
+    renderImportedFactorsTable();
+    $('#importedFactorsContainer').show();
+    $('#ensembleCard').show();
+    updateImportedFactorCount();
+
+    selectGoodFactors();
+
+    const selectedCount = window.importedFactorsSelected.size;
+    const totalCount = window.importedFactors.length;
+    if (selectedCount > 0) {
+        if (mergeMode === 'merge') {
+            alert(`合并完成：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个，当前共 ${totalCount} 个因子，已选 ${selectedCount} 个`);
+        } else {
+            alert(`筛选完成：${selectedCount}/${totalCount} 个因子符合条件`);
+        }
+    }
+
+    $('#csvImportCard')[0].scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 function exportResults() {
@@ -2185,13 +2832,19 @@ function exportResults() {
         'IC_t值', 'Rank IC_t值', '子段同号数', '子段总数', '子段一致性(0-1)',
         '组合换手率(0-1)', '换手成本/期(0-1)',
         '多空收益(0-1)', '多头收益(0-1)', '空头收益(0-1)',
-        '夏普比率', '胜率(0-1)'
+        '年化夏普(Rf=0)', '胜率(0-1)',
+        '分组单调比例(0-1)', '完全单调比例(0-1)', 'Spearman单调性(-1~1)'
     ];
     const oosHeaders = hasOosRows ? [
         'OOS_启用',
-        'IS_IC均值', 'IS_ICIR', 'IS_Rank IC均值', 'IS_IC_t值',
-        'IS_子段一致性(0-1)', 'IS_组合换手率(0-1)',
-        'IS_多空收益(0-1)', 'IS_夏普比率', 'IS_胜率(0-1)',
+        'IS_IC均值', 'IS_IC标准差', 'IS_ICIR', 'IS_Rank IC均值', 'IS_Rank ICIR',
+        'IS_IC正比例(0-1)', 'IS_IC_t值', 'IS_Rank IC_t值',
+        'IS_子段同号数', 'IS_子段总数', 'IS_子段一致性(0-1)',
+        'IS_组合换手率(0-1)', 'IS_换手成本/期(0-1)',
+        'IS_多空收益(0-1)', 'IS_多头收益(0-1)', 'IS_空头收益(0-1)',
+        'IS_年化夏普(Rf=0)', 'IS_胜率(0-1)',
+        'IS_分组单调比例(0-1)', 'IS_完全单调比例(0-1)', 'IS_Spearman单调性(-1~1)',
+        'IS_平均覆盖率(0-1)', 'IS_跳过率(0-1)',
         'IS_时间点',
     ] : [];
     const headers = baseHeaders.concat(oosHeaders);
@@ -2235,8 +2888,11 @@ function exportResults() {
             summary.long_short_return ?? returns.long_short_return ?? '',
             summary.long_return ?? returns.long_return ?? '',
             summary.short_return ?? returns.short_return ?? '',
-            summary.sharpe_ratio ?? returns.sharpe_ratio ?? '',
+            summary.annualized_sharpe ?? returns.annualized_sharpe ?? '',
             summary.win_rate ?? returns.win_rate ?? '',
+            returns.group_mono_ratio ?? '',
+            returns.group_mono_perfect_ratio ?? '',
+            returns.monotonicity_abs_mean ?? '',
         ];
 
         if (hasOosRows) {
@@ -2244,16 +2900,28 @@ function exportResults() {
             row.push(
                 r.oos_enabled ? '1' : '0',
                 isSide ? (isSide.ic_mean ?? '') : '',
+                isSide ? (isSide.ic_std ?? '') : '',
                 isSide ? (isSide.icir ?? '') : '',
                 isSide ? (isSide.rank_ic_mean ?? '') : '',
+                isSide ? (isSide.rank_icir ?? '') : '',
+                isSide ? (isSide.ic_positive_ratio ?? '') : '',
                 isSide ? (isSide.ic_tstat ?? '') : '',
-                (isSide && isSide.ic_segments_total)
-                    ? (isSide.ic_segment_same_sign_count / isSide.ic_segments_total).toFixed(4)
-                    : '',
+                isSide ? (isSide.rank_ic_tstat ?? '') : '',
+                isSide ? (isSide.ic_segment_same_sign_count ?? '') : '',
+                isSide ? (isSide.ic_segments_total ?? '') : '',
+                isSide ? (isSide.ic_segment_consistency ?? '') : '',
                 isSide ? (isSide.turnover ?? '') : '',
+                isSide ? (isSide.turnover_cost_per_period ?? '') : '',
                 isSide ? (isSide.long_short_return ?? '') : '',
-                isSide ? (isSide.sharpe_ratio ?? '') : '',
+                isSide ? (isSide.long_return ?? '') : '',
+                isSide ? (isSide.short_return ?? '') : '',
+                isSide ? (isSide.annualized_sharpe ?? '') : '',
                 isSide ? (isSide.win_rate ?? '') : '',
+                isSide ? (isSide.group_mono_ratio ?? '') : '',
+                isSide ? (isSide.group_mono_perfect_ratio ?? '') : '',
+                isSide ? (isSide.monotonicity_abs_mean ?? '') : '',
+                isSide ? (isSide.avg_coverage_returns ?? '') : '',
+                isSide ? (isSide.returns_skip_rate ?? '') : '',
                 isSide ? (isSide.n_periods_returns ?? '') : '',
             );
         }
@@ -2290,6 +2958,30 @@ function parseCsvLine(line) {
     }
     out.push(cur);
     return out.map(s => s.trim());
+}
+
+function _mergeIntoImportedFactors(newFactors, mode) {
+    if (mode === 'replace' || !window.importedFactors || window.importedFactors.length === 0) {
+        window.importedFactors = newFactors;
+        window.importedFactorsSelected = new Set(newFactors.map(f => f.id));
+        return { merged: newFactors.length, added: newFactors.length, updated: 0, duplicates: 0 };
+    }
+    const existingMap = new Map();
+    window.importedFactors.forEach(f => existingMap.set(f.id, f));
+    let added = 0;
+    let updated = 0;
+    newFactors.forEach(f => {
+        if (existingMap.has(f.id)) {
+            existingMap.set(f.id, f);
+            updated++;
+        } else {
+            existingMap.set(f.id, f);
+            added++;
+        }
+    });
+    window.importedFactors = Array.from(existingMap.values());
+    window.importedFactorsSelected = new Set(window.importedFactors.map(f => f.id));
+    return { merged: window.importedFactors.length, added, updated, duplicates: updated };
 }
 
 // ========== 因子组合功能 ==========
@@ -2413,9 +3105,40 @@ $('#csvFileInput').on('change', function(e) {
                 rankIc: findHeader('Rank IC均值'),
                 icir: findHeader('ICIR'),
                 rankIcir: findHeader('Rank ICIR'),
+                icTstat: findHeader('IC_t值'),
+                rankIcTstat: findHeader('Rank IC_t值'),
+                segConsistency: findHeader('子段一致性(0-1)', '子段一致性'),
+                segSameSign: findHeader('子段同号数'),
+                segTotal: findHeader('子段总数'),
                 lsReturn: findHeader('多空收益(0-1)', '多空收益'),
                 winRate: findHeader('胜率(0-1)', '胜率'),
-                turnover: findHeader('组合换手率(0-1)', '组合换手率', '换手率(0-1)', '换手率')
+                sharpe: findHeader('年化夏普(Rf=0)', '年化夏普'),
+                turnover: findHeader('组合换手率(0-1)', '组合换手率', '换手率(0-1)', '换手率'),
+                monotonicityAbsMean: findHeader('Spearman单调性(-1~1)', 'Spearman单调性'),
+                oosEnabled: findHeader('OOS_启用'),
+                isIc: findHeader('IS_IC均值'),
+                isIcStd: findHeader('IS_IC标准差'),
+                isIcir: findHeader('IS_ICIR'),
+                isRankIc: findHeader('IS_Rank IC均值'),
+                isRankIcir: findHeader('IS_Rank ICIR'),
+                isIcPositiveRatio: findHeader('IS_IC正比例(0-1)'),
+                isIcTstat: findHeader('IS_IC_t值'),
+                isRankIcTstat: findHeader('IS_Rank IC_t值'),
+                isSegSameSign: findHeader('IS_子段同号数'),
+                isSegTotal: findHeader('IS_子段总数'),
+                isSegConsistency: findHeader('IS_子段一致性(0-1)'),
+                isTurnover: findHeader('IS_组合换手率(0-1)', 'IS_组合换手率'),
+                isLsReturn: findHeader('IS_多空收益(0-1)', 'IS_多空收益'),
+                isLongReturn: findHeader('IS_多头收益(0-1)', 'IS_多头收益'),
+                isShortReturn: findHeader('IS_空头收益(0-1)', 'IS_空头收益'),
+                isSharpe: findHeader('IS_年化夏普(Rf=0)', 'IS_年化夏普'),
+                isWinRate: findHeader('IS_胜率(0-1)', 'IS_胜率'),
+                isMonoRatio: findHeader('IS_分组单调比例(0-1)', 'IS_分组单调比例'),
+                isMonoPerfectRatio: findHeader('IS_完全单调比例(0-1)', 'IS_完全单调比例'),
+                isMonotonicityAbsMean: findHeader('IS_Spearman单调性(-1~1)', 'IS_Spearman单调性'),
+                isAvgCoverage: findHeader('IS_平均覆盖率(0-1)', 'IS_平均覆盖率'),
+                isSkipRate: findHeader('IS_跳过率(0-1)', 'IS_跳过率'),
+                isDataPoints: findHeader('IS_时间点'),
             };
 
             if (colIndices.factorId === -1) {
@@ -2453,26 +3176,64 @@ $('#csvFileInput').on('change', function(e) {
                         };
                         const safeInt = (idx) => idx !== -1 ? (parseInt(cols[idx]) || 0) : 0;
                         const safeFloat = (idx) => idx !== -1 ? (parseFloat(cols[idx]) || 0) : 0;
+                        const safeOptFloat = (idx) => (idx !== -1 && String(cols[idx] ?? '').trim() !== '') ? (parseFloat(cols[idx]) || 0) : null;
                         const rawTurnover = (colIndices.turnover !== -1) ? cols[colIndices.turnover] : '';
                         const parsedTurnover = (rawTurnover === undefined || rawTurnover === null || String(rawTurnover).trim() === '')
                             ? null
                             : (isNaN(parseFloat(rawTurnover)) ? null : parseFloat(rawTurnover));
-                        // Rank IC 缺失时回落到 IC 以兼容旧 CSV
                         const rankIcFromCsv = (colIndices.rankIc !== -1 && String(cols[colIndices.rankIc] ?? '').trim() !== '')
                             ? parseFloat(cols[colIndices.rankIc])
                             : null;
                         const rankIcirFromCsv = (colIndices.rankIcir !== -1 && String(cols[colIndices.rankIcir] ?? '').trim() !== '')
                             ? parseFloat(cols[colIndices.rankIcir])
                             : null;
+                        const oosEnabled = (colIndices.oosEnabled !== -1) ? (parseInt(cols[colIndices.oosEnabled]) === 1) : false;
+                        const isData = {};
+                        if (oosEnabled) {
+                            isData.ic = safeOptFloat(colIndices.isIc);
+                            isData.icStd = safeOptFloat(colIndices.isIcStd);
+                            isData.icir = safeOptFloat(colIndices.isIcir);
+                            isData.rankIc = safeOptFloat(colIndices.isRankIc);
+                            isData.rankIcir = safeOptFloat(colIndices.isRankIcir);
+                            isData.icPositiveRatio = safeOptFloat(colIndices.isIcPositiveRatio);
+                            isData.icTstat = safeOptFloat(colIndices.isIcTstat);
+                            isData.rankIcTstat = safeOptFloat(colIndices.isRankIcTstat);
+                            isData.segSameSign = safeOptFloat(colIndices.isSegSameSign);
+                            isData.segTotal = safeOptFloat(colIndices.isSegTotal);
+                            isData.segConsistency = safeOptFloat(colIndices.isSegConsistency);
+                            isData.turnover = (colIndices.isTurnover !== -1 && String(cols[colIndices.isTurnover] ?? '').trim() !== '')
+                                ? parseFloat(cols[colIndices.isTurnover]) : null;
+                            isData.lsReturn = safeOptFloat(colIndices.isLsReturn);
+                            isData.longReturn = safeOptFloat(colIndices.isLongReturn);
+                            isData.shortReturn = safeOptFloat(colIndices.isShortReturn);
+                            isData.sharpe = safeOptFloat(colIndices.isSharpe);
+                            isData.winRate = safeOptFloat(colIndices.isWinRate);
+                            isData.monoRatio = safeOptFloat(colIndices.isMonoRatio);
+                            isData.monoPerfectRatio = safeOptFloat(colIndices.isMonoPerfectRatio);
+                            isData.monotonicityAbsMean = safeOptFloat(colIndices.isMonotonicityAbsMean);
+                            isData.avgCoverage = safeOptFloat(colIndices.isAvgCoverage);
+                            isData.skipRate = safeOptFloat(colIndices.isSkipRate);
+                            isData.dataPoints = (colIndices.isDataPoints !== -1 && String(cols[colIndices.isDataPoints] ?? '').trim() !== '')
+                                ? parseInt(cols[colIndices.isDataPoints]) || null : null;
+                        }
                         importedFactors.push({
                             id: factorId,
                             dataPoints: safeInt(colIndices.dataPoints),
                             ic: safeFloat(colIndices.ic),
                             rankIc: (rankIcFromCsv !== null && !isNaN(rankIcFromCsv)) ? rankIcFromCsv : safeFloat(colIndices.ic),
                             icir: (rankIcirFromCsv !== null && !isNaN(rankIcirFromCsv)) ? rankIcirFromCsv : safeFloat(colIndices.icir),
+                            icTstat: safeOptFloat(colIndices.icTstat),
+                            rankIcTstat: safeOptFloat(colIndices.rankIcTstat),
+                            segConsistency: safeOptFloat(colIndices.segConsistency),
+                            segSameSign: safeOptFloat(colIndices.segSameSign),
+                            segTotal: safeOptFloat(colIndices.segTotal),
                             lsReturn: parsePercentValue(cols[colIndices.lsReturn]),
                             winRate: parsePercentValue(cols[colIndices.winRate]),
+                            sharpe: safeOptFloat(colIndices.sharpe),
                             turnover: parsedTurnover,
+                            monotonicityAbsMean: safeOptFloat(colIndices.monotonicityAbsMean),
+                            oosEnabled: oosEnabled,
+                            is: isData,
                             selected: true
                         });
                     }
@@ -2499,13 +3260,30 @@ $('#csvFileInput').on('change', function(e) {
                 return;
             }
             
-            window.importedFactors = importedFactors;
-            window.importedFactorsSelected = new Set(importedFactors.map(f => f.id));
+            const csvImportMode = $('#csvImportMode').val() || 'replace';
+            const mergeResult = _mergeIntoImportedFactors(importedFactors, csvImportMode);
             
+            const hasOosInImport = window.importedFactors.some(f => f.oosEnabled);
+            if (hasOosInImport) {
+                $('#isFilterSection').show();
+            } else {
+                $('#isFilterSection').hide();
+            }
+
             renderImportedFactorsTable();
             $('#importedFactorsContainer').show();
             $('#ensembleCard').show();
             updateImportedFactorCount();
+
+            if (csvImportMode === 'merge' && mergeResult.duplicates > 0) {
+                const msg = `合并完成：新增 ${mergeResult.added} 个，更新 ${mergeResult.updated} 个，当前共 ${mergeResult.merged} 个因子`;
+                $('#importFactorValidationMsg')
+                    .removeClass('text-success text-warning')
+                    .addClass('text-info')
+                    .text(msg);
+            }
+            
+            $('#csvFileInput').val('');
             
         } catch (err) {
             alert('解析CSV文件失败: ' + err.message);
@@ -2519,18 +3297,26 @@ function renderImportedFactorsTable() {
     $('#importedFactorsBody').empty();
     
     factors.forEach((f, idx) => {
-        // 方向判定（是否需要反向）现在默认以 Rank IC 符号为准
         const directionVal = (f.rankIc !== undefined && f.rankIc !== null && !isNaN(f.rankIc)) ? f.rankIc : f.ic;
         const isNegativeIC = directionVal < 0;
+        const oosBadge = f.oosEnabled ? '<span class="badge bg-info text-dark ms-1">OOS</span>' : '';
         const statusBadge = isNegativeIC ? 
-            '<span class="badge bg-warning text-dark">需反向</span>' : 
-            '<span class="badge bg-success">正常</span>';
+            `<span class="badge bg-warning text-dark">需反向</span>${oosBadge}` : 
+            `<span class="badge bg-success">正常</span>${oosBadge}`;
         
         const rowClass = f.selected ? '' : 'table-secondary';
         const rankIcText = (f.rankIc !== undefined && f.rankIc !== null && !isNaN(f.rankIc)) ? formatNumber(f.rankIc) : '-';
         const turnoverText = (f.turnover !== null && f.turnover !== undefined && !isNaN(f.turnover))
             ? Number(f.turnover).toFixed(3)
             : '-';
+        const icTstatText = (f.icTstat !== null && f.icTstat !== undefined && !isNaN(f.icTstat))
+            ? Number(f.icTstat).toFixed(2) : '-';
+        const segConsistencyText = (f.segConsistency !== null && f.segConsistency !== undefined && !isNaN(f.segConsistency))
+            ? Number(f.segConsistency).toFixed(2) : '-';
+        const isRankIcText = (f.is && f.is.rankIc !== null && f.is.rankIc !== undefined && !isNaN(f.is.rankIc))
+            ? formatNumber(f.is.rankIc) : '-';
+        const isSegConsistencyText = (f.is && f.is.segConsistency !== null && f.is.segConsistency !== undefined && !isNaN(f.is.segConsistency))
+            ? Number(f.is.segConsistency).toFixed(2) : '-';
         
         $('#importedFactorsBody').append(`
             <tr class="${rowClass}" data-factor-index="${idx}">
@@ -2543,9 +3329,13 @@ function renderImportedFactorsTable() {
                 <td>${formatNumber(f.ic)}</td>
                 <td>${rankIcText}</td>
                 <td>${formatNumber(f.icir)}</td>
+                <td>${icTstatText}</td>
+                <td>${segConsistencyText}</td>
                 <td>${formatPercent(f.lsReturn)}</td>
                 <td>${formatPercent(f.winRate, 1)}</td>
                 <td>${turnoverText}</td>
+                <td>${isRankIcText}</td>
+                <td>${isSegConsistencyText}</td>
                 <td>${statusBadge}</td>
             </tr>
         `);
@@ -2612,49 +3402,148 @@ function deselectAllImported() {
     toggleSelectAllImported(document.getElementById('selectAllImported'));
 }
 
+function clearImportedFactors() {
+    window.importedFactors = [];
+    window.importedFactorsSelected = new Set();
+    renderImportedFactorsTable();
+    updateImportedFactorCount();
+    $('#importedFactorsContainer').hide();
+}
+
 function updateFilterDescription() {
     const icVal = parseFloat($('#filterIcThreshold').val());
     const icirVal = parseFloat($('#filterIcirThreshold').val());
+    const icMeanVal = parseFloat($('#filterIcMeanThreshold').val());
+    const icTstatVal = parseFloat($('#filterIcTstatThreshold').val());
+    const segConsistencyVal = parseFloat($('#filterSegConsistencyThreshold').val());
     const winRateVal = parseFloat($('#filterWinRateThreshold').val());
+    const sharpeVal = parseFloat($('#filterSharpeThreshold').val());
     const lsReturnVal = parseFloat($('#filterLsReturnThreshold').val());
     const turnoverVal = parseFloat($('#filterTurnoverThreshold').val());
     const dataPointsVal = parseInt($('#filterDataPointsThreshold').val());
     
     const icThreshold = isNaN(icVal) ? 0.02 : icVal;
     const icirThreshold = isNaN(icirVal) ? 0.1 : icirVal;
+    const icMeanThreshold = isNaN(icMeanVal) ? 0 : icMeanVal;
+    const icTstatThreshold = isNaN(icTstatVal) ? 0 : icTstatVal;
+    const segConsistencyThreshold = isNaN(segConsistencyVal) ? 0 : segConsistencyVal;
     const winRateThreshold = isNaN(winRateVal) ? 52 : winRateVal;
+    const sharpeThreshold = isNaN(sharpeVal) ? 0 : sharpeVal;
     const lsReturnThreshold = isNaN(lsReturnVal) ? 0.01 : lsReturnVal;
     const turnoverThreshold = isNaN(turnoverVal) ? null : turnoverVal;
     const dataPointsThreshold = isNaN(dataPointsVal) ? 0 : dataPointsVal;
     const filterLogic = $('#filterLogic').val() || 'or';
     
     const logicText = filterLogic === 'and' ? '且' : '或';
-    const turnoverText = (turnoverThreshold !== null && turnoverThreshold > 0)
-        ? `，且换手率 < ${turnoverThreshold}`
-        : '';
-    // 若 OOS 已启用，提示筛选口径
-    const oosActive = !!($('#oosStartDate').val() || '').trim();
-    const oosHint = oosActive ? '（OOS 模式：阈值仅作用于 OOS 侧数值）' : '';
-    const description = `(|Rank IC| > ${icThreshold} 且 |Rank ICIR| > ${icirThreshold}) ${logicText} (胜率 > ${winRateThreshold}% 且 多空收益 > ${lsReturnThreshold}%)${turnoverText}，且时间点 >= ${dataPointsThreshold}${oosHint}`;
+    const parts = [];
+    parts.push(`|Rank IC| > ${icThreshold}`);
+    if (icirThreshold > 0) parts.push(`|Rank ICIR| > ${icirThreshold}`);
+    if (icMeanThreshold > 0) parts.push(`|IC均值| > ${icMeanThreshold}`);
+    if (icTstatThreshold > 0) parts.push(`|IC t值| > ${icTstatThreshold}`);
+    if (segConsistencyThreshold > 0) parts.push(`子段一致 > ${segConsistencyThreshold}`);
+    parts.push(`胜率 > ${winRateThreshold}%`);
+    if (sharpeThreshold > 0) parts.push(`年化夏普 > ${sharpeThreshold}`);
+    parts.push(`多空收益 > ${lsReturnThreshold}%`);
+    if (turnoverThreshold !== null && turnoverThreshold > 0) parts.push(`换手率 < ${turnoverThreshold}`);
+    parts.push(`时间点 >= ${dataPointsThreshold}`);
+    const oosActive = !!($('#oosStartDate').val() || '').trim() || (window.importedFactors && window.importedFactors.some(f => f.oosEnabled));
+    const oosHint = oosActive ? '（OOS 模式：阈值作用于 OOS 侧数值）' : '';
+    const description = parts.join(` ${logicText} `) + oosHint;
     $('#filterDescription').text(description);
 }
 
-$('#filterIcThreshold, #filterIcirThreshold, #filterWinRateThreshold, #filterLsReturnThreshold, #filterTurnoverThreshold, #filterDataPointsThreshold, #filterLogic').on('input change', updateFilterDescription);
+$('#filterIcThreshold, #filterIcirThreshold, #filterIcMeanThreshold, #filterIcTstatThreshold, #filterSegConsistencyThreshold, #filterWinRateThreshold, #filterSharpeThreshold, #filterLsReturnThreshold, #filterTurnoverThreshold, #filterDataPointsThreshold, #filterLogic, #filterIsIcThreshold, #filterIsIcMeanThreshold, #filterIsIcirThreshold, #filterIsSegConsistencyThreshold, #filterIsIcTstatThreshold, #filterIsSharpeThreshold, #filterIsWinRateThreshold, #filterIsLsReturnThreshold').on('input change', updateFilterDescription);
 
-function selectGoodFactors() {
+function _applyFactorFilter(f) {
     const icVal = parseFloat($('#filterIcThreshold').val());
     const icirVal = parseFloat($('#filterIcirThreshold').val());
+    const icMeanVal = parseFloat($('#filterIcMeanThreshold').val());
+    const icTstatVal = parseFloat($('#filterIcTstatThreshold').val());
+    const segConsistencyVal = parseFloat($('#filterSegConsistencyThreshold').val());
     const winRateVal = parseFloat($('#filterWinRateThreshold').val());
+    const sharpeVal = parseFloat($('#filterSharpeThreshold').val());
     const lsReturnVal = parseFloat($('#filterLsReturnThreshold').val());
     const turnoverVal = parseFloat($('#filterTurnoverThreshold').val());
     const dataPointsVal = parseInt($('#filterDataPointsThreshold').val());
-    
+
     const icThreshold = isNaN(icVal) ? 0.02 : icVal;
     const icirThreshold = isNaN(icirVal) ? 0.1 : icirVal;
+    const icMeanThreshold = isNaN(icMeanVal) ? 0 : icMeanVal;
+    const icTstatThreshold = isNaN(icTstatVal) ? 0 : icTstatVal;
+    const segConsistencyThreshold = isNaN(segConsistencyVal) ? 0 : segConsistencyVal;
     const winRateThreshold = (isNaN(winRateVal) ? 52 : winRateVal) / 100;
+    const sharpeThreshold = isNaN(sharpeVal) ? 0 : sharpeVal;
     const lsReturnThreshold = (isNaN(lsReturnVal) ? 0.01 : lsReturnVal) / 100;
     const turnoverThreshold = isNaN(turnoverVal) ? null : turnoverVal;
     const dataPointsThreshold = isNaN(dataPointsVal) ? 0 : dataPointsVal;
+    const filterLogic = $('#filterLogic').val() || 'or';
+
+    if ((f.dataPoints || 0) < dataPointsThreshold) return { pass: false, reason: 'dataPoints' };
+    if (turnoverThreshold !== null && turnoverThreshold > 0 && f.turnover !== null && f.turnover !== undefined && !isNaN(f.turnover) && Number(f.turnover) >= turnoverThreshold) {
+        return { pass: false, reason: 'turnover' };
+    }
+
+    const rankIcValue = (f.rankIc !== undefined && f.rankIc !== null && !isNaN(f.rankIc)) ? f.rankIc : f.ic;
+    const isReversedFactor = rankIcValue < 0;
+    const effectiveWinRate = isReversedFactor ? (1 - f.winRate) : f.winRate;
+    const effectiveLsReturn = isReversedFactor ? (-f.lsReturn) : f.lsReturn;
+    const effectiveSharpe = isReversedFactor ? (f.sharpe !== null && f.sharpe !== undefined ? -f.sharpe : null) : f.sharpe;
+
+    const icForFilter = (f.rankIc !== undefined && f.rankIc !== null && !isNaN(f.rankIc)) ? f.rankIc : f.ic;
+    const meetsIcCondition = Math.abs(icForFilter) > icThreshold && Math.abs(f.icir) > icirThreshold;
+    const meetsIcMeanCondition = icMeanThreshold > 0 ? Math.abs(f.ic || 0) > icMeanThreshold : true;
+    const meetsIcTstatCondition = icTstatThreshold > 0 ? Math.abs(f.icTstat || 0) > icTstatThreshold : true;
+    const meetsSegConsistencyCondition = segConsistencyThreshold > 0 ? (f.segConsistency || 0) > segConsistencyThreshold : true;
+    const meetsReturnCondition = effectiveWinRate > winRateThreshold && effectiveLsReturn > lsReturnThreshold;
+    const meetsSharpeCondition = sharpeThreshold > 0 ? (effectiveSharpe !== null && effectiveSharpe > sharpeThreshold) : true;
+
+    let isGood = false;
+    if (filterLogic === 'and') {
+        isGood = meetsIcCondition && meetsIcMeanCondition && meetsIcTstatCondition && meetsSegConsistencyCondition && meetsReturnCondition && meetsSharpeCondition;
+    } else {
+        isGood = meetsIcCondition || meetsReturnCondition;
+    }
+    if (sharpeThreshold > 0 && !meetsSharpeCondition) isGood = false;
+
+    if (!isGood) return { pass: false, reason: 'main' };
+
+    if (f.oosEnabled && f.is && Object.keys(f.is).length > 0) {
+        const isIcVal = parseFloat($('#filterIsIcThreshold').val());
+        const isIcMeanVal = parseFloat($('#filterIsIcMeanThreshold').val());
+        const isIcirVal = parseFloat($('#filterIsIcirThreshold').val());
+        const isSegConsistencyVal = parseFloat($('#filterIsSegConsistencyThreshold').val());
+        const isIcTstatVal = parseFloat($('#filterIsIcTstatThreshold').val());
+        const isSharpeVal = parseFloat($('#filterIsSharpeThreshold').val());
+        const isWinRateVal = parseFloat($('#filterIsWinRateThreshold').val());
+        const isLsReturnVal = parseFloat($('#filterIsLsReturnThreshold').val());
+
+        const isIcThreshold = isNaN(isIcVal) ? 0 : isIcVal;
+        const isIcMeanThreshold = isNaN(isIcMeanVal) ? 0 : isIcMeanVal;
+        const isIcirThreshold = isNaN(isIcirVal) ? 0 : isIcirVal;
+        const isSegConsistencyThreshold = isNaN(isSegConsistencyVal) ? 0 : isSegConsistencyVal;
+        const isIcTstatThreshold = isNaN(isIcTstatVal) ? 0 : isIcTstatVal;
+        const isSharpeThreshold = isNaN(isSharpeVal) ? 0 : isSharpeVal;
+        const isWinRateThreshold = (isNaN(isWinRateVal) ? 0 : isWinRateVal) / 100;
+        const isLsReturnThreshold = (isNaN(isLsReturnVal) ? 0 : isLsReturnVal) / 100;
+
+        if (isIcThreshold > 0 && (f.is.rankIc === null || Math.abs(f.is.rankIc) <= isIcThreshold)) return { pass: false, reason: 'is_rankIc' };
+        if (isIcMeanThreshold > 0 && (f.is.ic === null || Math.abs(f.is.ic) <= isIcMeanThreshold)) return { pass: false, reason: 'is_ic' };
+        if (isIcirThreshold > 0 && (f.is.icir === null || Math.abs(f.is.icir) <= isIcirThreshold)) return { pass: false, reason: 'is_icir' };
+        if (isSegConsistencyThreshold > 0 && (f.is.segConsistency === null || f.is.segConsistency <= isSegConsistencyThreshold)) return { pass: false, reason: 'is_seg' };
+        if (isIcTstatThreshold > 0 && (f.is.icTstat === null || Math.abs(f.is.icTstat) <= isIcTstatThreshold)) return { pass: false, reason: 'is_tstat' };
+        if (isSharpeThreshold > 0 && (f.is.sharpe === null || Math.abs(f.is.sharpe) <= isSharpeThreshold)) return { pass: false, reason: 'is_sharpe' };
+        if (isWinRateThreshold > 0 && (f.is.winRate === null || f.is.winRate <= isWinRateThreshold)) return { pass: false, reason: 'is_winRate' };
+        if (isLsReturnThreshold > 0 && (f.is.lsReturn === null || f.is.lsReturn <= isLsReturnThreshold)) return { pass: false, reason: 'is_lsReturn' };
+    }
+
+    return { pass: true };
+}
+
+function selectGoodFactors() {
+    const dataPointsVal = parseInt($('#filterDataPointsThreshold').val());
+    const dataPointsThreshold = isNaN(dataPointsVal) ? 0 : dataPointsVal;
+    const turnoverVal = parseFloat($('#filterTurnoverThreshold').val());
+    const turnoverThreshold = isNaN(turnoverVal) ? null : turnoverVal;
     const filterLogic = $('#filterLogic').val() || 'or';
     
     window.importedFactorsSelected = new Set();
@@ -2662,48 +3551,21 @@ function selectGoodFactors() {
     let matchedCount = 0;
     let filteredByDataPoints = 0;
     let filteredByTurnover = 0;
+    let filteredByIs = 0;
     
     window.importedFactors.forEach(f => {
-        const meetsDataPoints = (f.dataPoints || 0) >= dataPointsThreshold;
-        if (!meetsDataPoints) {
-            filteredByDataPoints++;
+        const result = _applyFactorFilter(f);
+        if (!result.pass) {
+            if (result.reason === 'dataPoints') filteredByDataPoints++;
+            else if (result.reason === 'turnover') filteredByTurnover++;
+            else if (result.reason && result.reason.startsWith('is_')) filteredByIs++;
             f.selected = false;
             return;
         }
-        // 换手率是"硬门槛"：超过阈值一律淘汰（与胜率/收益的逻辑独立）
-        if (turnoverThreshold !== null && turnoverThreshold > 0) {
-            if (f.turnover !== null && f.turnover !== undefined && !isNaN(f.turnover)) {
-                if (Number(f.turnover) >= turnoverThreshold) {
-                    filteredByTurnover++;
-                    f.selected = false;
-                    return;
-                }
-            }
-        }
         
-        // 方向判断切换为 Rank IC 符号：Rank IC 对异常值与非线性单调关系更稳健
-        const rankIcValue = (f.rankIc !== undefined && f.rankIc !== null && !isNaN(f.rankIc)) ? f.rankIc : f.ic;
-        const isReversedFactor = rankIcValue < 0;
-        const effectiveWinRate = isReversedFactor ? (1 - f.winRate) : f.winRate;
-        const effectiveLsReturn = isReversedFactor ? (-f.lsReturn) : f.lsReturn;
-        
-        // IC 阈值现在走 |Rank IC| 口径：rankIc 不可用时才回落到 ic
-        const icForFilter = (f.rankIc !== undefined && f.rankIc !== null && !isNaN(f.rankIc)) ? f.rankIc : f.ic;
-        const meetsIcCondition = Math.abs(icForFilter) > icThreshold && Math.abs(f.icir) > icirThreshold;
-        const meetsReturnCondition = effectiveWinRate > winRateThreshold && Math.abs(effectiveLsReturn) > lsReturnThreshold;
-        
-        let isGood = false;
-        if (filterLogic === 'and') {
-            isGood = meetsIcCondition && meetsReturnCondition;
-        } else {
-            isGood = meetsIcCondition || meetsReturnCondition;
-        }
-        
-        f.selected = isGood;
-        if (isGood) {
-            window.importedFactorsSelected.add(f.id);
-            matchedCount++;
-        }
+        f.selected = true;
+        window.importedFactorsSelected.add(f.id);
+        matchedCount++;
     });
     
     renderImportedFactorsTable();
@@ -2716,8 +3578,12 @@ function selectGoodFactors() {
     if (selectedCount === 0) {
         message = `未找到符合筛选条件的因子\n\n`;
         message += `筛选条件：\n`;
-        message += `• |Rank IC| > ${icThreshold} 且 |Rank ICIR| > ${icirThreshold}\n`;
-        message += `• ${filterLogic === 'and' ? '且' : '或'} 胜率 > ${(winRateThreshold * 100).toFixed(0)}% 且 多空收益 > ${(lsReturnThreshold * 100).toFixed(2)}%\n`;
+        message += `• |Rank IC| > ${parseFloat($('#filterIcThreshold').val())} 且 |Rank ICIR| > ${parseFloat($('#filterIcirThreshold').val())}\n`;
+        message += `• ${filterLogic === 'and' ? '且' : '或'} 胜率 > ${parseFloat($('#filterWinRateThreshold').val())}% 且 多空收益 > ${parseFloat($('#filterLsReturnThreshold').val())}%\n`;
+        const sharpeThresholdMsg = parseFloat($('#filterSharpeThreshold').val());
+        if (sharpeThresholdMsg > 0) {
+            message += `• 年化夏普 > ${sharpeThresholdMsg}\n`;
+        }
         if (turnoverThreshold !== null && turnoverThreshold > 0) {
             message += `• 换手率 < ${turnoverThreshold}\n`;
         }
@@ -2726,9 +3592,12 @@ function selectGoodFactors() {
         if (filteredByTurnover > 0) {
             message += `，${filteredByTurnover} 个因换手率超限被过滤`;
         }
+        if (filteredByIs > 0) {
+            message += `，${filteredByIs} 个因 IS 段指标不足被过滤`;
+        }
         alert(message);
     } else {
-        console.log(`筛选完成：${selectedCount}/${totalFactors} 个因子符合条件，${filteredByDataPoints} 个因时间点不足被过滤，${filteredByTurnover} 个因换手率超限被过滤`);
+        console.log(`筛选完成：${selectedCount}/${totalFactors} 个因子符合条件，${filteredByDataPoints} 个因时间点不足被过滤，${filteredByTurnover} 个因换手率超限被过滤，${filteredByIs} 个因 IS 段指标不足被过滤`);
     }
 }
 
@@ -2886,6 +3755,9 @@ function runEnsembleBacktest() {
             min_valid_count: parseInt($('#minValidCountInput').val(), 10) || 30,
             min_group_size: parseInt($('#minGroupSizeInput').val(), 10) || 5,
             treat_zero_as_invalid: $('#treatZeroAsInvalidCheck').is(':checked'),
+            enable_data_cleaning: $('#enableDataCleaningCheck').is(':checked'),
+            remove_zero_volume: $('#removeZeroVolumeCheck').is(':checked'),
+            liquidity_filter_ratio: parseFloat($('#liquidityFilterRatioInput').val()) || 0,
             request_id: _currentEnsembleRequestId
         })
     })
@@ -2960,16 +3832,20 @@ function displayBacktestResults(result) {
             rows.push(`<tr><td>扣成本后每期多空收益</td><td>${formatPercent(csPerf.long_short_return_after_cost)}</td></tr>`);
             rows.push(`<tr><td>每期换手成本</td><td>${formatPercent(csPerf.turnover_cost_per_period)}</td></tr>`);
         }
+        if (csPerf.turnover != null && Number.isFinite(csPerf.turnover)) {
+            const turnoverLabel = csPerf.turnover_estimated ? '组合换手率(估算)' : '组合换手率';
+            rows.push(`<tr><td title="每期多空端口仓位变动比例；0≈不换仓，1≈完全换仓${csPerf.turnover_estimated ? '；仅1个时间点，假设100%换仓估算' : ''}">${turnoverLabel}</td><td>${Number(csPerf.turnover).toFixed(3)}</td></tr>`);
+        }
         rows.push(`<tr><td>平均每期多头收益</td><td>${formatPercent(csPerf.long_return)}</td></tr>`);
         rows.push(`<tr><td>平均每期空头收益</td><td>${formatPercent(csPerf.short_return)}</td></tr>`);
         rows.push(`<tr><td>胜率（毛）</td><td>${formatPercent(csPerf.win_rate, 1)}</td></tr>`);
-        rows.push(`<tr><td>夏普比率（毛）</td><td>${formatNumber(csPerf.sharpe_ratio)}</td></tr>`);
+        rows.push(`<tr><td>夏普比率(单期,Rf=0)</td><td>${formatNumber(csPerf.sharpe_ratio)}</td></tr>`);
         if (showAfterCost) {
-            rows.push(`<tr><td>夏普比率（扣成本）</td><td>${formatNumber(csPerf.sharpe_ratio_after_cost)}</td></tr>`);
+            rows.push(`<tr><td>夏普比率(扣成本,Rf=0)</td><td>${formatNumber(csPerf.sharpe_ratio_after_cost)}</td></tr>`);
         }
-        rows.push(`<tr><td>年化夏普（毛）</td><td>${formatNumber(csPerf.annualized_sharpe)}</td></tr>`);
+        rows.push(`<tr><td>年化夏普(Rf=0)</td><td>${formatNumber(csPerf.annualized_sharpe)}</td></tr>`);
         if (showAfterCost) {
-            rows.push(`<tr><td>年化夏普（扣成本）</td><td>${formatNumber(csPerf.annualized_sharpe_after_cost)}</td></tr>`);
+            rows.push(`<tr><td>年化夏普(扣成本,Rf=0)</td><td>${formatNumber(csPerf.annualized_sharpe_after_cost)}</td></tr>`);
         }
         rows.push(`<tr><td>总收益（毛）</td><td>${formatPercent(csPerf.total_return)}</td></tr>`);
         if (showAfterCost) {
@@ -2983,13 +3859,23 @@ function displayBacktestResults(result) {
         rows.push(`<tr><td>分组数(生效)</td><td>${result.n_groups_effective ?? '-'}</td></tr>`);
         rows.push(`<tr><td>IC均值</td><td>${formatNumber(csIc.ic_mean)}</td></tr>`);
         rows.push(`<tr><td>Rank IC均值</td><td>${formatNumber(csIc.rank_ic_mean)}</td></tr>`);
+        rows.push(`<tr><td colspan="2" class="text-muted" style="font-size:0.75em;">注：IC 衡量因子对 t+predict_step 期收益的预测力；IC 衰减(lag)反映信号持续性，而非对不同绝对 horizon 的预测力</td></tr>`);
         rows.push(`<tr><td>预测步长</td><td>${result.predict_step ?? '-'}</td></tr>`);
         rows.push(`<tr><td>采样步长</td><td>${result.sample_step ?? '-'}</td></tr>`);
+        if (csPerf.group_mono_ratio != null && Number.isFinite(csPerf.group_mono_ratio)) {
+            rows.push(`<tr><td title="分组单调比例：每期中相邻分组收益排序与多空方向一致的比例均值">分组单调比例</td><td>${formatNumber(csPerf.group_mono_ratio)}</td></tr>`);
+        }
+        if (csPerf.group_mono_perfect_ratio != null && Number.isFinite(csPerf.group_mono_perfect_ratio)) {
+            rows.push(`<tr><td title="完全单调比例：所有期中分组收益完全单调递增/递减的期数占比">完全单调比例</td><td>${formatPercent(csPerf.group_mono_perfect_ratio, 1)}</td></tr>`);
+        }
+        if (csPerf.monotonicity_abs_mean != null && Number.isFinite(csPerf.monotonicity_abs_mean)) {
+            rows.push(`<tr><td title="Spearman 单调性：组编号与组平均收益的 Spearman 秩相关系数绝对值均值">Spearman 单调性</td><td>${formatNumber(csPerf.monotonicity_abs_mean)}</td></tr>`);
+        }
 
         html += `
             <h6 class="mt-3">截面组合表现（同一时点跨币种分组）${showAfterCost ? '' : '<small class="text-muted ms-2">交易成本=0，已隐藏"扣成本"指标</small>'}</h6>
             <div class="table-responsive">
-                <table class="table table-sm table-hover">
+                <table class="table table-sm table-hover align-middle text-center">
                     <tbody>
                         ${rows.join('')}
                     </tbody>
@@ -3011,7 +3897,7 @@ function displayBacktestResults(result) {
         html += `
             <h6 class="mt-3">回测摘要</h6>
             <div class="table-responsive">
-                <table class="table table-sm table-hover">
+                <table class="table table-sm table-hover align-middle text-center">
                     <thead>
                         <tr>${headers.map(h => `<th>${h}</th>`).join('')}</tr>
                     </thead>
@@ -3049,11 +3935,13 @@ function displayBacktestResults(result) {
     $('#backtestResultCard').show();
 
     window.lastBacktestFactorWeightMap = factorWeightMap;
+    window.lastBacktestReversedFactors = reversedFactors;
     if (factorWeightMap && Object.keys(factorWeightMap).length > 0) {
         $('#exportFactorWeightsBtn').show();
     } else {
         $('#exportFactorWeightsBtn').hide();
     }
+    $('#exportScanConfigBtn').show();
 }
 
 function exportBacktestFactorWeights() {
@@ -3087,6 +3975,102 @@ function exportBacktestFactorWeights() {
 let correlationResult = null;
 let correlationIcResult = null;  // Rank IC 时序相关性（方案 B+），与因子值相关性独立缓存
 let currentCorrTab = 'pearson';  // 'pearson' | 'spearman' | 'rank_ic'
+
+async function exportScanConfig() {
+    let selectedFactors = [];
+
+    if (window.importedFactors && window.importedFactorsSelected) {
+        selectedFactors = window.importedFactors.filter(f => window.importedFactorsSelected.has(f.id));
+    } else if (window.importedFactors && window.importedFactors.length > 0) {
+        selectedFactors = window.importedFactors.filter(f => f.selected);
+    } else {
+        const selectedRows = $('#resultsBody .result-factor-checkbox:checked').closest('tr');
+        selectedRows.each(function() {
+            const factorId = $(this).data('factor-id');
+            const ic = parseFloat($(this).data('ic'));
+            const rankIcAttr = $(this).attr('data-rank-ic');
+            const rankIc = (rankIcAttr !== undefined && rankIcAttr !== '' && !isNaN(parseFloat(rankIcAttr)))
+                ? parseFloat(rankIcAttr) : null;
+            selectedFactors.push({id: factorId, ic: ic, rankIc: rankIc});
+        });
+    }
+
+    if (selectedFactors.length === 0) {
+        alert('请先选择因子或运行截面评估');
+        return;
+    }
+
+    const weightMap = window.lastBacktestFactorWeightMap || {};
+    const reversedFactors = window.lastBacktestReversedFactors || [];
+
+    const factorWeights = {};
+    const factorDirections = {};
+    selectedFactors.forEach(f => {
+        const fid = f.id;
+        const w = weightMap[fid] !== undefined ? weightMap[fid] : 1.0;
+        factorWeights[fid] = typeof w === 'number' && isFinite(w) ? w : 1.0;
+        factorDirections[fid] = reversedFactors.includes(fid) ? -1 : 1;
+    });
+
+    const symbols = $('#symbolsSelect').val() || [];
+
+    const config = {
+        _meta: {
+            type: 'realtime_scan_config',
+            version: 2,
+            exported_from: 'cross_sectional_evaluation',
+            exported_at: new Date().toISOString(),
+        },
+        factor_ids: selectedFactors.map(f => f.id),
+        factor_weights: factorWeights,
+        factor_directions: factorDirections,
+        combine_mode: Object.keys(weightMap).length > 0 ? 'weighted' : 'average',
+        symbols: symbols,
+        base_timeframe: $('#timeframeSelect').val() || '15m',
+        factor_timeframe: $('#factorTimeframeSelect').val() || '1h',
+        factor_bar_mode: $('#factorBarModeSelect').val() || 'completed',
+        normalize_method: 'rank_centered',
+        outlier_method: 'none',
+        outlier_mad_n: 5.0,
+        long_count: 5,
+        short_count: 5,
+        min_valid_count: parseInt($('#minValidCountInput').val()) || 10,
+        max_lookback: parseInt($('#maxLookbackInput').val()) || 200,
+        n_groups: parseInt($('#nGroups').val()) || 5,
+        exchange: $('#exchangeSelect').val() || 'binance',
+        trade_type: $('#tradeTypeSelect').val() || 'futures',
+        data_source: 'local',
+    };
+
+    let finalConfig = config;
+    try {
+        const resp = await fetch('/api/factors/save_scan_config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ config: config }),
+        });
+        const data = await resp.json();
+        if (data.success && data.config) {
+            finalConfig = data.config;
+            console.log('扫描配置已保存到服务端:', data.filename);
+        } else {
+            console.warn('保存到服务端失败:', data.message);
+        }
+    } catch (err) {
+        console.warn('保存到服务端请求失败:', err);
+    }
+
+    const json = JSON.stringify(finalConfig, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `scan_config_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
 
 function runFactorCorrelation() {
     let selectedFactors = [];
@@ -3175,6 +4159,9 @@ function runFactorCorrelation() {
             min_valid_count: parseInt($('#minValidCountInput').val(), 10) || 30,
             min_group_size: parseInt($('#minGroupSizeInput').val(), 10) || 5,
             treat_zero_as_invalid: $('#treatZeroAsInvalidCheck').is(':checked'),
+            enable_data_cleaning: $('#enableDataCleaningCheck').is(':checked'),
+            remove_zero_volume: $('#removeZeroVolumeCheck').is(':checked'),
+            liquidity_filter_ratio: parseFloat($('#liquidityFilterRatioInput').val()) || 0,
             request_id: _currentCorrRequestId
         })
     })
@@ -3310,6 +4297,9 @@ function runFactorIcCorrelation() {
             min_valid_count: parseInt($('#minValidCountInput').val(), 10) || 30,
             min_group_size: parseInt($('#minGroupSizeInput').val(), 10) || 5,
             treat_zero_as_invalid: $('#treatZeroAsInvalidCheck').is(':checked'),
+            enable_data_cleaning: $('#enableDataCleaningCheck').is(':checked'),
+            remove_zero_volume: $('#removeZeroVolumeCheck').is(':checked'),
+            liquidity_filter_ratio: parseFloat($('#liquidityFilterRatioInput').val()) || 0,
             n_ic_segments: parseInt($('#icSegmentsInput').val(), 10) || 4,
             request_id: _currentCorrRequestId
         })
@@ -3355,7 +4345,7 @@ function renderCorrelationResult() {
     html += `<div class="small text-muted mb-2">${label} 相关系数 | ${res.n_symbols} 币种 | ${res.n_data_points} 数据点 | 阈值 ${threshold}</div>`;
 
     if (factorIds.length <= 20) {
-        html += '<div class="table-responsive"><table class="table table-sm table-bordered" style="font-size:0.75rem;">';
+        html += '<div class="table-responsive"><table class="table table-sm table-bordered table-hover align-middle text-center" style="font-size:0.75rem;">';
         html += '<thead><tr><th></th>';
         factorIds.forEach(fid => {
             const shortName = fid.length > 12 ? fid.substring(0, 12) + '…' : fid;
@@ -3371,14 +4361,14 @@ function renderCorrelationResult() {
                 if (val === null || val === undefined) {
                     html += '<td class="text-center text-muted">-</td>';
                 } else if (i === j) {
-                    html += '<td class="text-center fw-bold" style="background:#e9ecef;">1.00</td>';
+                    html += '<td class="text-center fw-bold" style="background: rgba(255, 255, 255, 0.1);">1.00</td>';
                 } else {
                     const absVal = Math.abs(val);
                     let bgStyle = '';
                     if (absVal >= threshold) {
-                        bgStyle = 'background:#f8d7da;color:#842029;';
+                        bgStyle = 'background: rgba(255, 59, 48, 0.2); color: var(--accent-red);';
                     } else if (absVal >= threshold * 0.8) {
-                        bgStyle = 'background:#fff3cd;color:#664d03;';
+                        bgStyle = 'background: rgba(255, 160, 0, 0.2); color: #ffa000;';
                     }
                     html += `<td class="text-center" style="${bgStyle}">${val.toFixed(2)}</td>`;
                 }
@@ -3393,7 +4383,7 @@ function renderCorrelationResult() {
     if (highPairs.length > 0) {
         // 后端筛选条件改为 max(|pearson|, |spearman|) ≥ 阈值，这里同步标题与排序键
         html += `<h6 class="mt-3">高相关因子对（max(|Pearson|, |Spearman|) ≥ ${threshold}）</h6>`;
-        html += '<div class="table-responsive"><table class="table table-sm table-hover">';
+        html += '<div class="table-responsive"><table class="table table-sm table-hover align-middle text-center">';
         html += '<thead><tr><th>因子1</th><th>因子2</th><th>Pearson</th><th>Spearman</th><th>max|·|</th><th>建议</th></tr></thead><tbody>';
         highPairs.forEach(pair => {
             const pAbs = pair.pearson !== null && pair.pearson !== undefined ? Math.abs(pair.pearson) : 0;
@@ -3453,7 +4443,7 @@ function renderRankIcCorrelationResult() {
     }
 
     if (factorIds.length <= 20 && matrix.length > 0) {
-        html += '<div class="table-responsive"><table class="table table-sm table-bordered" style="font-size:0.75rem;">';
+        html += '<div class="table-responsive"><table class="table table-sm table-bordered table-hover align-middle text-center" style="font-size:0.75rem;">';
         html += '<thead><tr><th></th>';
         factorIds.forEach(fid => {
             const shortName = fid.length > 12 ? fid.substring(0, 12) + '…' : fid;
@@ -3468,14 +4458,14 @@ function renderRankIcCorrelationResult() {
                 if (val === null || val === undefined) {
                     html += '<td class="text-center text-muted">-</td>';
                 } else if (i === j) {
-                    html += '<td class="text-center fw-bold" style="background:#e9ecef;">1.00</td>';
+                    html += '<td class="text-center fw-bold" style="background: rgba(255, 255, 255, 0.1);">1.00</td>';
                 } else {
                     const absVal = Math.abs(val);
                     let bgStyle = '';
                     if (absVal >= threshold) {
-                        bgStyle = 'background:#f8d7da;color:#842029;';
+                        bgStyle = 'background: rgba(255, 59, 48, 0.2); color: var(--accent-red);';
                     } else if (absVal >= threshold * 0.8) {
-                        bgStyle = 'background:#fff3cd;color:#664d03;';
+                        bgStyle = 'background: rgba(255, 160, 0, 0.2); color: #ffa000;';
                     }
                     html += `<td class="text-center" style="${bgStyle}">${val.toFixed(2)}</td>`;
                 }
@@ -3491,7 +4481,7 @@ function renderRankIcCorrelationResult() {
 
     if (highPairs.length > 0) {
         html += `<h6 class="mt-3">高相关因子对（Rank IC 时序，max(|Pearson|, |Spearman|) ≥ ${threshold}）</h6>`;
-        html += '<div class="table-responsive"><table class="table table-sm table-hover">';
+        html += '<div class="table-responsive"><table class="table table-sm table-hover align-middle text-center">';
         html += '<thead><tr><th>因子1</th><th>因子2</th><th>Pearson</th><th>Spearman</th><th>max|·|</th><th>建议</th></tr></thead><tbody>';
         highPairs.forEach(pair => {
             const pAbs = pair.pearson !== null && pair.pearson !== undefined ? Math.abs(pair.pearson) : 0;

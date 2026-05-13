@@ -487,6 +487,73 @@ function updateRangeInfo(message) {
     }
 }
 
+function recommendStartDate() {
+    const symbolsSelect = document.getElementById('symbolsSelect');
+    const selectedSymbols = Array.from(symbolsSelect?.selectedOptions || []).map(opt => opt.value);
+    if (selectedSymbols.length === 0) {
+        showAlert('warning', '请先选择交易对');
+        return;
+    }
+    if (!localDataRows || localDataRows.length === 0) {
+        showAlert('warning', '本地数据未加载，请先刷新数据');
+        return;
+    }
+
+    const timeframesSelect = document.getElementById('timeframesSelect');
+    const selectedTimeframes = Array.from(timeframesSelect?.selectedOptions || []).map(opt => opt.value);
+    let rows = localDataRows;
+    if (selectedTimeframes.length > 0) {
+        rows = rows.filter(r => selectedTimeframes.includes(r.timeframe));
+    }
+
+    const symbolStartDates = [];
+    const missingSymbols = [];
+
+    selectedSymbols.forEach(sym => {
+        const matchingRows = rows.filter(r => r.symbol === sym);
+        const row = matchingRows.length > 0 ? matchingRows[0] : null;
+        if (row && row.date_range && row.date_range.start) {
+            symbolStartDates.push({
+                symbol: sym,
+                startDate: row.date_range.start,
+                endDate: row.date_range.end || '?'
+            });
+        } else {
+            missingSymbols.push(sym);
+        }
+    });
+
+    if (symbolStartDates.length === 0) {
+        showAlert('error', '所选交易对均无本地数据');
+        return;
+    }
+
+    const allStarts = symbolStartDates.map(s => new Date(s.startDate).getTime());
+    const recommendedTs = Math.max(...allStarts);
+    const recommendedDate = new Date(recommendedTs);
+    const dateStr = recommendedDate.toISOString().slice(0, 10);
+
+    let msg = `推荐开始日期: ${dateStr}\n\n`;
+    msg += `已选 ${selectedSymbols.length} 个交易对中，${symbolStartDates.length} 个有本地数据`;
+    if (missingSymbols.length > 0) {
+        msg += `，${missingSymbols.length} 个无数据: ${missingSymbols.slice(0, 5).join(', ')}${missingSymbols.length > 5 ? ' 等' : ''}`;
+    }
+    msg += `\n\n该日期可确保所有有数据的交易对均有覆盖`;
+
+    const earliestSymbols = symbolStartDates.filter(s => new Date(s.startDate).getTime() === recommendedTs);
+    if (earliestSymbols.length > 0 && earliestSymbols.length <= 5) {
+        msg += `\n\n最晚开始的交易对: ${earliestSymbols.map(s => `${s.symbol} (${s.startDate.slice(0,10)})`).join(', ')}`;
+    }
+
+    if (confirm(msg + '\n\n是否应用此日期？')) {
+        const startDateDisplay = document.getElementById('startDateDisplay');
+        const startDateHidden = document.getElementById('startDate');
+        if (startDateDisplay) startDateDisplay.value = dateStr;
+        if (startDateHidden) startDateHidden.value = dateStr;
+        onManualDateInputChanged();
+    }
+}
+
 async function loadStablecoins() {
     try {
         const response = await fetch('/api/data/stablecoins');
@@ -2087,6 +2154,21 @@ function updateHistoryTable(sessions) {
     
     console.log('找到历史表格元素，开始更新...');
     
+    // 根据当前页面预设模式过滤历史记录
+    if (window.__MINING_PAGE_PRESET__ && window.__MINING_PAGE_PRESET__.mode && sessions && sessions.length > 0) {
+        const presetMode = window.__MINING_PAGE_PRESET__.mode;
+        sessions = sessions.filter(session => {
+            const modeRaw = session.mode || session.config?.mode || session.results?.mode || 'unknown';
+            const safeMode = String(modeRaw).replace(/[<>]/g, '');
+            if (presetMode === 'standard') {
+                return safeMode === 'standard';
+            } else if (presetMode === 'cross_sectional') {
+                return safeMode === 'cross_sectional' || safeMode === 'cross_sectional_rl' || safeMode === 'cross_sectional_gp';
+            }
+            return true;
+        });
+    }
+    
     // 清空现有内容
     historyTableBody.innerHTML = '';
     
@@ -2177,9 +2259,16 @@ function updateHistoryTable(sessions) {
             
             // 安全地构建HTML
             const safeTimeStr = timeStr.replace(/[<>]/g, '');
+            
             const safeSymbols = symbols.map(s => String(s || '').replace(/[<>]/g, '')).join(', ') || '未知';
+            const displaySymbols = safeSymbols.length > 20 ? safeSymbols.substring(0, 20) + '...' : safeSymbols;
+            
             const safeTimeframes = timeframes.map(t => String(t || '').replace(/[<>]/g, '')).join(', ') || '未知';
+            const displayTimeframes = safeTimeframes.length > 15 ? safeTimeframes.substring(0, 15) + '...' : safeTimeframes;
+            
             const safeSelectedAlgorithms = selectedAlgorithms.map(a => String(a || '').replace(/[<>]/g, '')).join(', ') || '未知';
+            const displaySelectedAlgorithms = safeSelectedAlgorithms.length > 20 ? safeSelectedAlgorithms.substring(0, 20) + '...' : safeSelectedAlgorithms;
+            
             const safeFactorsCount = String(factorsCount);
             const safeStatus = String(session.status || '未知').replace(/[<>]/g, '');
             
@@ -2195,9 +2284,9 @@ function updateHistoryTable(sessions) {
             row.innerHTML = `
                 <td>${safeTimeStr}</td>
                 <td><span class="badge bg-${modeBadge}">${modeLabel}</span></td>
-                <td>${safeSymbols}</td>
-                <td>${safeTimeframes}</td>
-                <td>${safeSelectedAlgorithms}</td>
+                <td title="${safeSymbols}">${displaySymbols}</td>
+                <td title="${safeTimeframes}">${displayTimeframes}</td>
+                <td title="${safeSelectedAlgorithms}">${displaySelectedAlgorithms}</td>
                 <td>${safeFactorsCount}</td>
                 <td>
                     <span class="badge bg-${session.status === 'completed' ? 'success' : session.status === 'running' ? 'warning' : session.status === 'stopped' ? 'secondary' : 'secondary'}">
@@ -2672,11 +2761,11 @@ async function loadAlgorithms() {
             renderAlgorithmSelector(result.algorithms);
         } else {
             console.error('加载算法失败:', result.error);
-            showNotification('加载算法失败: ' + result.error, 'error');
+            showAlert('error', '加载算法失败: ' + result.error);
         }
     } catch (error) {
         console.error('加载算法异常:', error);
-        showNotification('加载算法异常: ' + error.message, 'error');
+        showAlert('error', '加载算法异常: ' + error.message);
     }
 }
 
@@ -2759,13 +2848,13 @@ function getSelectedAlgorithms() {
  */
 function collectMiningParams() {
     const params = {
-        symbols: getSelectedSymbols(),
-        timeframes: getSelectedTimeframes(),
+        symbols: getSelectedValues('symbolsSelect'),
+        timeframes: getSelectedValues('timeframesSelect'),
         selected_algorithms: getSelectedAlgorithms(),
-        start_date: document.getElementById('start_date').value,
-        end_date: document.getElementById('end_date').value,
-        max_factors: parseInt(document.getElementById('max_factors').value) || 15,
-        optimization_method: document.getElementById('optimization_method').value || 'greedy'
+        start_date: document.getElementById('startDate')?.value || '',
+        end_date: document.getElementById('endDate')?.value || '',
+        max_factors: parseInt(document.getElementById('maxFactors')?.value) || 15,
+        optimization_method: document.getElementById('optimizationMethod')?.value || 'greedy'
     };
     
     // 收集算法参数
@@ -2911,6 +3000,12 @@ async function handleRLCrossSectionalMining() {
             min_coverage: Number.isFinite(rlMinCoverageRaw) ? rlMinCoverageRaw : 0.2,
         };
 
+        const rlIncludeExtras = [];
+        if (document.getElementById('rlExtrasBasis')?.checked) rlIncludeExtras.push('basis');
+        if (document.getElementById('rlExtrasMetrics')?.checked) rlIncludeExtras.push('metrics');
+        if (document.getElementById('rlExtrasFunding')?.checked) rlIncludeExtras.push('funding');
+        rlConfig.include_extras = rlIncludeExtras;
+
         console.log('RL截面挖掘配置:', rlConfig);
 
         updateStartButton(true);
@@ -2967,6 +3062,10 @@ async function handleCrossSectionalMining() {
         }
 
         const gpMinCoverageRaw = parseFloat(document.getElementById('csMinCoverage')?.value);
+        const gpIncludeExtras = [];
+        if (document.getElementById('csExtrasBasis')?.checked) gpIncludeExtras.push('basis');
+        if (document.getElementById('csExtrasMetrics')?.checked) gpIncludeExtras.push('metrics');
+        if (document.getElementById('csExtrasFunding')?.checked) gpIncludeExtras.push('funding');
         const gpConfig = {
             symbols: symbols,
             timeframe: timeframes[0],
@@ -2983,6 +3082,7 @@ async function handleCrossSectionalMining() {
             max_factors: parseInt(document.getElementById('csMaxFactors')?.value) || 15,
             max_correlation: parseFloat(document.getElementById('csMaxCorrelation')?.value) || 0.7,
             min_coverage: Number.isFinite(gpMinCoverageRaw) ? gpMinCoverageRaw : 0.2,
+            include_extras: gpIncludeExtras,
         };
 
         console.log('截面挖掘配置:', gpConfig);
